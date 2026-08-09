@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:id="@+id/empty_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:padding="32dp"
+        android:text="@string/no_volumes"
+        android:textSize="16sp"
+        android:visibility="gone" />
+
+    <!-- Detected-but-locked volumes: lets the user unlock manually even when no
+         popup/broadcast fired (e.g. the drive was reformatted and the system
+         hook already knows the node). -->
+    <TextView
+        android:id="@+id/detected_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingTop="8dp"
+        android:paddingBottom="4dp"
+        android:text="@string/detected_volumes_header"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:textColor="#888888"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/detected_empty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:padding="16dp"
+        android:text="@string/no_detected_volumes"
+        android:textSize="13sp"
+        android:textColor="#888888"
+        android:visibility="gone" />
+
+    <ListView
+        android:id="@+id/detected_list"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+
+    <ListView
+        android:id="@+id/volume_list"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingTop="8dp">
+
+        <Button
+            android:id="@+id/refresh"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/refresh" />
+
+        <Button
+            android:id="@+id/view_log"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/view_log" />
+
+        <Button
+            android:id="@+id/scan"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/scan" />
+    </LinearLayout>
+
+</LinearLayout>

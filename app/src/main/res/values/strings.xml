@@ -1,0 +1,26 @@
+<resources>
+    <string name="app_name">BitLocker</string>
+    <string name="unlock_title">Unlock BitLocker Drive</string>
+    <string name="settings_title">BitLocker Manager</string>
+    <string name="password_hint">BitLocker password</string>
+    <string name="recovery_key_hint">48-digit recovery key (XXXXXX-XXXXXX-…-XXXXXX)</string>
+    <string name="remember_password">Remember password on this device</string>
+    <string name="auto_unlock">Auto-unlock on scan</string>
+    <string name="use_recovery_key">Use recovery key instead</string>
+    <string name="unlock_prompt">This drive is BitLocker-encrypted.\n\nDevice: %1$s</string>
+    <string name="unlock_action">Unlock</string>
+    <string name="password_required">Please enter a password or recovery key</string>
+    <string name="invalid_recovery_key">Recovery key must be 48 digits in 8 groups of 6</string>
+    <string name="unlock_success">Drive unlocked</string>
+    <string name="unlock_failed">Wrong password or recovery key</string>
+    <string name="no_volumes">No BitLocker volumes are currently unlocked.\n\nTap Scan to look for an inserted BitLocker-encrypted USB drive or SD card.</string>
+    <string name="detected_volumes_header">Locked volumes detected</string>
+    <string name="detected_unlock">Unlock</string>
+    <string name="detected_hint">BitLocker-encrypted. Tap Unlock to enter the password.</string>
+    <string name="no_detected_volumes">No locked BitLocker volumes detected. Tap Scan to look for inserted drives.</string>
+    <string name="refresh">Refresh</string>
+    <string name="lock">Lock</string>
+    <string name="locked">Volume locked</string>
+    <string name="view_log">View log</string>
+    <string name="scan">Scan</string>
+</resources>

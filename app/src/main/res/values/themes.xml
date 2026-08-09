@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Pure platform themes: no androidx.appcompat dependency on the startup
+         path. Eliminates the AppCompat class/resource resolution that can crash
+         at process start on some ROMs. -->
+    <style name="Theme.BitLockerDroid" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">@color/bitlocker_blue</item>
+        <item name="android:colorPrimaryDark">@color/bitlocker_dark</item>
+        <item name="android:colorAccent">@color/bitlocker_blue</item>
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+
+    <style name="Theme.BitLockerDroid.Dialog" parent="@android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorPrimary">@color/bitlocker_blue</item>
+        <item name="android:colorPrimaryDark">@color/bitlocker_dark</item>
+        <item name="android:colorAccent">@color/bitlocker_blue</item>
+    </style>
+</resources>

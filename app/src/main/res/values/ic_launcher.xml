@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Fallback for pre-adaptive-icon targets (not needed at minSdk 33 but keeps
+         resource resolution robust). -->
+    <item type="mipmap" name="ic_launcher">@drawable/ic_launcher</item>
+</resources>

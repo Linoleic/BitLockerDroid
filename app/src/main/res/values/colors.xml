@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bitlocker_blue">#1E6FBA</color>
+    <color name="bitlocker_dark">#0D4F8C</color>
+    <dimen name="dialog_padding">20dp</dimen>
+</resources>
