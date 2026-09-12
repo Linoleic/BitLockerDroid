@@ -31,6 +31,14 @@ interface VolumeReader {
 
     /** Volume label (e.g. "NO NAME"), or null if the volume has none. */
     fun volumeLabel(): String?
+
+    /** Volume serial number — unique per formatted volume. Used in document
+     *  IDs so that swapping to a different drive (even one reusing the same
+     *  vold node path) yields fresh document IDs and the file manager reloads. */
+    fun volumeSerial(): Long
+
+    /** Invalidates any in-memory cached directory or entry structures. */
+    fun invalidateCache() {}
 }
 
 /** Metadata of a directory or file record (used by the provider). */
@@ -45,5 +53,6 @@ class VolumeEntry(
 class VolumeDirEntry(
     val name: String,
     val ref: Long,
-    val isDirectory: Boolean
+    val isDirectory: Boolean,
+    val size: Long = 0L
 )

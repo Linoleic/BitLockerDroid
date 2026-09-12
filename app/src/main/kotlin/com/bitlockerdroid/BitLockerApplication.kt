@@ -34,25 +34,29 @@ class BitLockerApplication : Application() {
             ContextProvider.app = applicationContext
             LogFile.init(applicationContext)
             LogFile.write("app", "=== Application onCreate ===")
+            com.bitlockerdroid.util.PreferenceHelper.purgeLegacyNodeKeys(applicationContext)
+            com.bitlockerdroid.util.RootAccess.ensureDaemonInstalled(applicationContext)
+            com.bitlockerdroid.util.RootAccess.ensureFuseDaemonInstalled(applicationContext)
+            Thread {
+                com.bitlockerdroid.service.VirtualStorageMountManager.syncStateWithSystem()
+                com.bitlockerdroid.service.UnlockManager.restoreRemembered(applicationContext)
+            }.start()
         } catch (e: Throwable) {
             // Do not crash the app on logging/init issues.
             writeCrashRaw("init error: " + Log.getStackTraceString(e), "init")
         }
     }
 
-    /** Writes directly to files that any process can write, bypassing LogFile. */
+    /** Writes crash stacks to the app-private files directory. */
     private fun writeCrashRaw(stack: String, thread: String) {
         val header = "\n=== CRASH on $thread @ ${System.currentTimeMillis()} ===\n$stack\n"
         val bytes = header.toByteArray(Charsets.UTF_8)
-        for (path in arrayOf(
-            "/data/local/tmp/bitlockerdroid_crash.txt",
-            "/sdcard/Download/bitlockerdroid_crash.txt"
-        )) {
-            try {
-                FileOutputStream(File(path), true).use { it.write(bytes) }
-            } catch (e: Throwable) {
-                // ignore
-            }
+        try {
+            val logDir = File(filesDir, "logs")
+            logDir.mkdirs()
+            FileOutputStream(File(logDir, "crash.txt"), true).use { it.write(bytes) }
+        } catch (e: Throwable) {
+            // ignore
         }
     }
 }

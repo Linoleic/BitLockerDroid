@@ -22,6 +22,39 @@ class NtfsReader(
 
     override val rootRef: Long get() = ROOT_DIR_RECORD
 
+    override fun volumeSerial(): Long {
+        // NTFS keeps the volume serial number in $Volume's $VOLUME_INFORMATION
+        // attribute (0x70), resident, serial at +8 (8 bytes). Read it from the
+        // $Volume MFT record (3).
+        val rec = readRecord(3L) ?: return 0L
+        val bytePos = boot.mftStartByte + 3L * MFT_RECORD_SIZE
+        val raw = ByteArray(MFT_RECORD_SIZE)
+        if (source.read(bytePos, raw, 0, MFT_RECORD_SIZE) < 56) return 0L
+        var attrOff = le16(raw, 20).toLong()
+        while (attrOff > 0 && attrOff < raw.size - 16) {
+            val type = le32(raw, attrOff.toInt())
+            if (type == 0xffffffffL) break
+            val length = le32(raw, attrOff.toInt() + 4).toInt()
+            if (length < 16 || attrOff + length > raw.size) break
+            if (type == 0x70L) {
+                val nonResident = raw[attrOff.toInt() + 8].toInt() and 0xff
+                if (nonResident == 0) {
+                    val valueLen = le32(raw, attrOff.toInt() + 16).toInt()
+                    val valueOff = le16(raw, attrOff.toInt() + 20)
+                    val start = attrOff.toInt() + valueOff
+                    if (start + 16 <= raw.size && valueLen >= 16) {
+                        var v = 0L
+                        for (i in 0 until 8) v = v or (((raw[start + 8 + i].toLong() and 0xff) shl (8 * i)))
+                        return v
+                    }
+                }
+                return 0L
+            }
+            attrOff += length
+        }
+        return 0L
+    }
+
     override fun volumeLabel(): String? {
         // $Volume MFT record (3) holds $VOLUME_NAME (0x60), a resident
         // UTF-16LE string (NUL-terminated).
@@ -71,24 +104,48 @@ class NtfsReader(
 
     private val cache = HashMap<Long, NtfsFileRecord?>()
 
+    override fun invalidateCache() {
+        synchronized(cache) {
+            cache.clear()
+        }
+    }
+
     private fun readRecord(recordNumber: Long): NtfsFileRecord? {
-        cache[recordNumber]?.let { return it }
+        synchronized(cache) {
+            if (cache.containsKey(recordNumber)) return cache[recordNumber]
+        }
 
         val bytePos = boot.mftStartByte + recordNumber * MFT_RECORD_SIZE
         val rec = ByteArray(MFT_RECORD_SIZE)
         val n = source.read(bytePos, rec, 0, MFT_RECORD_SIZE)
         if (n < 56) {
-            cache[recordNumber] = null
+            synchronized(cache) { cache[recordNumber] = null }
             return null
         }
 
         val record = NtfsFileRecordParser.parse(recordNumber, rec)
-        cache[recordNumber] = record
+        synchronized(cache) { cache[recordNumber] = record }
         return record
     }
 
     /** Public accessor used by the DocumentsProvider. */
     fun readFileRecord(recordNumber: Long): NtfsFileRecord? = readRecord(recordNumber)
+
+    /** Reconstructs the full path from the root directory to [recordNumber]. */
+    fun resolvePath(recordNumber: Long): String {
+        if (recordNumber == ROOT_DIR_RECORD) return "/"
+        val parts = ArrayList<String>()
+        var cur = recordNumber
+        var depth = 0
+        while (cur != ROOT_DIR_RECORD && depth < 32) {
+            val rec = readRecord(cur) ?: break
+            val name = rec.fileName ?: break
+            parts.add(0, name)
+            cur = rec.parentRecord
+            depth++
+        }
+        return "/" + parts.joinToString("/")
+    }
 
     /**
      * Lists directory entries for the MFT record [dirRecord].
@@ -169,16 +226,24 @@ class NtfsReader(
                 if (keyStart + 66 <= end) {
                     val fileNameLen = buf[keyStart + 64].toInt() and 0xff
                     val nameType = buf[keyStart + 65].toInt() and 0xff
-                    if (fileNameLen > 0 && nameType != 1 &&
+                    // nameType: 0=POSIX, 1=Win32, 2=DOS, 3=Win32 & DOS.
+                    // Skip 2 (DOS 8.3 alias) to avoid duplicate entries for long filenames.
+                    if (fileNameLen > 0 && nameType != 2 &&
                         keyStart + 66 + fileNameLen * 2 <= end) {
                         val nb = buf.copyOfRange(keyStart + 66, keyStart + 66 + fileNameLen * 2)
                         val name = String(nb, Charsets.UTF_16LE)
-                        // file reference: low 48 bits = MFT record number
-                        val recNum = fileRef and 0x0000FFFFFFFFFFFFL
-                        // determine if directory by reading the record
-                        val child = readRecord(recNum)
-                        val isDir = child?.isDirectory ?: false
-                        out.add(VolumeDirEntry(name, recNum, isDir))
+                        if (name != "." && name != "..") {
+                            // file reference: low 48 bits = MFT record number
+                            val recNum = fileRef and 0x0000FFFFFFFFFFFFL
+                            // Hide NTFS internal system metadata files (MFT 0..15, $*, System Volume Information)
+                            val isSystemMeta = recNum < 16L || name.startsWith("$") || name.equals("System Volume Information", ignoreCase = true)
+                            if (!isSystemMeta) {
+                                // determine if directory by reading the record
+                                val child = readRecord(recNum)
+                                val isDir = child?.isDirectory ?: false
+                                out.add(VolumeDirEntry(name, recNum, isDir, child?.fileSize ?: 0L))
+                            }
+                        }
                     }
                 }
             }

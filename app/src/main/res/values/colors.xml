@@ -2,5 +2,6 @@
 <resources>
     <color name="bitlocker_blue">#1E6FBA</color>
     <color name="bitlocker_dark">#0D4F8C</color>
+    <color name="ic_launcher_background">#006874</color>
     <dimen name="dialog_padding">20dp</dimen>
 </resources>

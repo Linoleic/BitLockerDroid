@@ -82,13 +82,14 @@ static dis_ctx_t *dis_open_volume_common(const char *path, off_t offset,
 		return NULL;
 	}
 
-	ctx->fd = open(path, O_RDONLY | O_CLOEXEC);
-	/* If we cannot open the block device directly (SELinux), all reads will
-	 * go through su dd in dis_blk_read(); keep the fd but don't fail. */
-	if (ctx->fd < 0)
-		ctx->fd = -1;
-
 	snprintf(ctx->device_path, sizeof(ctx->device_path), "%s", path);
+
+	/* Initialize persistent I/O subsystem (direct or root daemon) */
+	if (dis_io_init(ctx) != 0) {
+		DLOG("dis_io_init failed for %s", path);
+		dis_close_volume(ctx);
+		return NULL;
+	}
 
 	/* 1. parse volume header + metadata */
 	int ret = dis_metadata_parse(ctx);
@@ -136,7 +137,11 @@ static dis_ctx_t *dis_open_volume_common(const char *path, off_t offset,
 		/* data_offset = physical offset where the NTFS data starts
 		 * (boot_backup); logical reads are absolute (physical = logical). */
 		info->data_offset = ctx->information->boot_sectors_backup;
-		memcpy(info->volume_guid, ctx->volume_header.guid, 16);
+		if (ctx->dataset) {
+			memcpy(info->volume_guid, ctx->dataset->guid, 16);
+		} else {
+			memcpy(info->volume_guid, ctx->volume_header.guid, 16);
+		}
 		memcpy(info->fvek, ctx->fvek, ctx->fvek_len);
 		info->fvek_len = (uint8_t)ctx->fvek_len;
 	}
@@ -201,16 +206,21 @@ int dis_read_decrypted(dis_ctx_t *ctx, uint8_t *buffer, off_t offset, size_t siz
 	if (!buf)
 		return -ENOMEM;
 
+	/* Batch-read all encrypted sectors in a single block I/O operation */
+	int r = dis_blk_read(ctx, buf, sector_start * sector_size, total);
+	if (r != (int)total) {
+		memset(buf, 0, total);
+		free(buf);
+		return -EIO;
+	}
+
 	int ok = 1;
 	for (size_t i = 0; i < sector_count; i++) {
-		uint8_t sector[4096];
 		uint8_t *dst = buf + i * sector_size;
-
-		if (!dis_sector_read(ctx, sector, (sector_start + i) * sector_size)) {
+		if (!dis_decrypt_sector(ctx, dst, (sector_start + i) * sector_size)) {
 			ok = 0;
 			break;
 		}
-		memcpy(dst, sector, sector_size);
 	}
 
 	if (!ok) {
@@ -223,6 +233,125 @@ int dis_read_decrypted(dis_ctx_t *ctx, uint8_t *buffer, off_t offset, size_t siz
 
 	memset(buf, 0, total);
 	free(buf);
+
+	return (int)size;
+}
+
+int dis_write_encrypted(dis_ctx_t *ctx, const uint8_t *buffer, off_t offset, size_t size)
+{
+	if (!ctx || !buffer) {
+		dis_set_error("Invalid arguments to dis_write_encrypted");
+		return -EINVAL;
+	}
+
+	if (size == 0)
+		return 0;
+
+	if (offset < 0) {
+		dis_set_error("Negative offset %lld", (long long)offset);
+		return -EINVAL;
+	}
+
+	if ((uint64_t)(offset + size) > ctx->volume_size) {
+		dis_set_error("Offset %lld + size %zu exceeds volume size %llu",
+			(long long)offset, size, (unsigned long long)ctx->volume_size);
+		return -EINVAL;
+	}
+
+	/* Write barrier: protect BitLocker volume header (sectors 0..15) and metadata blocks */
+	size_t header_bytes = 8192;
+	if (ctx->information && ctx->information->nb_backup_sectors > 0) {
+		header_bytes = (size_t)ctx->information->nb_backup_sectors * ctx->sector_size;
+	}
+	if (offset < (off_t)header_bytes) {
+		dis_set_error("Write barrier violation: offset %lld is in protected BitLocker header area",
+			(long long)offset);
+		return -EPERM;
+	}
+	if (ctx->information) {
+		for (int i = 0; i < 3; i++) {
+			off_t info_off = (off_t)ctx->information->information_off[i];
+			if (info_off != 0 && offset >= info_off && offset < info_off + 0x10000) {
+				dis_set_error("Write barrier violation: offset %lld is in protected FVE metadata block %d",
+					(long long)offset, i);
+				return -EPERM;
+			}
+		}
+	}
+
+	uint16_t sector_size = ctx->sector_size;
+	off_t sector_start = offset / sector_size;
+	off_t sector_end = (offset + (off_t)size + sector_size - 1) / sector_size;
+	size_t sector_count = (size_t)(sector_end - sector_start);
+	size_t total = sector_count * sector_size;
+
+	uint8_t *enc_buf = malloc(total);
+	if (!enc_buf)
+		return -ENOMEM;
+
+	/* If first sector is partial, read & decrypt it for RMW */
+	off_t first_sec_addr = sector_start * sector_size;
+	size_t first_sec_off = (size_t)(offset - first_sec_addr);
+	off_t last_sec_addr = (sector_end - 1) * sector_size;
+	size_t last_sec_tail = (size_t)((last_sec_addr + sector_size) - (offset + size));
+
+	if (sector_count == 1) {
+		if (first_sec_off > 0 || last_sec_tail > 0) {
+			if (dis_blk_read(ctx, enc_buf, first_sec_addr, sector_size) != (int)sector_size) {
+				free(enc_buf);
+				return -EIO;
+			}
+			if (!dis_decrypt_sector(ctx, enc_buf, first_sec_addr)) {
+				free(enc_buf);
+				return -EIO;
+			}
+		}
+	} else {
+		if (first_sec_off > 0) {
+			if (dis_blk_read(ctx, enc_buf, first_sec_addr, sector_size) != (int)sector_size) {
+				free(enc_buf);
+				return -EIO;
+			}
+			if (!dis_decrypt_sector(ctx, enc_buf, first_sec_addr)) {
+				free(enc_buf);
+				return -EIO;
+			}
+		}
+		if (last_sec_tail > 0) {
+			uint8_t *last_dst = enc_buf + (sector_count - 1) * sector_size;
+			if (dis_blk_read(ctx, last_dst, last_sec_addr, sector_size) != (int)sector_size) {
+				free(enc_buf);
+				return -EIO;
+			}
+			if (!dis_decrypt_sector(ctx, last_dst, last_sec_addr)) {
+				free(enc_buf);
+				return -EIO;
+			}
+		}
+	}
+
+	/* Copy new payload into the decrypted buffer */
+	memcpy(enc_buf + first_sec_off, buffer, size);
+
+	/* Encrypt all sectors in place */
+	for (size_t i = 0; i < sector_count; i++) {
+		uint8_t *sec_ptr = enc_buf + i * sector_size;
+		if (!dis_encrypt_sector(ctx, sec_ptr, (sector_start + i) * sector_size)) {
+			memset(enc_buf, 0, total);
+			free(enc_buf);
+			return -EIO;
+		}
+	}
+
+	/* Batch write all encrypted sectors to disk in one call */
+	int wr = dis_blk_write(ctx, enc_buf, sector_start * sector_size, total);
+	memset(enc_buf, 0, total);
+	free(enc_buf);
+
+	if (wr != (int)total) {
+		dis_set_error("Batch block write failed: expected %zu, got %d", total, wr);
+		return -EIO;
+	}
 
 	return (int)size;
 }
@@ -254,13 +383,58 @@ int dis_decrypt_region(dis_ctx_t *ctx, const uint8_t *in, uint8_t *out,
 	return (int)size;
 }
 
+/*
+ * Encrypt a region of plaintext data that has already been provided in `in`.
+ * `offset` is the volume-relative byte offset of `in`. Writes encrypted data
+ * to `out`. Enforces write barrier. Returns number of bytes written or -1.
+ */
+int dis_encrypt_region(dis_ctx_t *ctx, const uint8_t *in, uint8_t *out,
+	off_t offset, size_t size)
+{
+	if (!ctx || !in || !out || size == 0)
+		return -1;
+
+	uint16_t sector_size = ctx->sector_size;
+	if (offset % sector_size != 0 || size % sector_size != 0)
+		return -1;
+
+	/* Write barrier: protect BitLocker volume header (sectors 0..15) and metadata blocks */
+	size_t header_bytes = 8192;
+	if (ctx->information && ctx->information->nb_backup_sectors > 0) {
+		header_bytes = (size_t)ctx->information->nb_backup_sectors * ctx->sector_size;
+	}
+	if (offset < (off_t)header_bytes) {
+		dis_set_error("Write barrier violation: offset %lld is in protected BitLocker header area", (long long)offset);
+		return -1;
+	}
+	if (ctx->information) {
+		for (int i = 0; i < 3; i++) {
+			off_t info_off = (off_t)ctx->information->information_off[i];
+			if (info_off != 0 && offset >= info_off && offset < info_off + 0x10000) {
+				dis_set_error("Write barrier violation: offset %lld is in protected FVE metadata block %d",
+					(long long)offset, i);
+				return -1;
+			}
+		}
+	}
+
+	size_t n = size / sector_size;
+	for (size_t i = 0; i < n; i++) {
+		uint8_t *sector = (uint8_t *)in + i * sector_size;
+		uint8_t *dst = out + i * sector_size;
+		memcpy(dst, sector, sector_size);
+		if (!dis_encrypt_sector(ctx, dst, offset + i * sector_size))
+			return -1;
+	}
+	return (int)size;
+}
+
 void dis_close_volume(dis_ctx_t *ctx)
 {
 	if (!ctx)
 		return;
 
-	if (ctx->fd >= 0)
-		close(ctx->fd);
+	dis_io_destroy(ctx);
 
 	dis_metadata_free(ctx);
 

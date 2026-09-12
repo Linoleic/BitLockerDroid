@@ -14,6 +14,7 @@ import com.bitlockerdroid.ntfs.VolumeDirEntry
 import com.bitlockerdroid.ntfs.VolumeReader
 import com.bitlockerdroid.service.DislockerCore
 import com.bitlockerdroid.service.UnlockManager
+import com.bitlockerdroid.util.LogFile
 
 /**
  * DocumentsProvider exposing unlocked BitLocker volumes to the system file
@@ -33,16 +34,31 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         /** Segment separator for document IDs. */
         private const val SEP = ":"
 
-        const val ROOT_ID = "bitlocker"
-
-        /** Encode the device path into the docId so the provider can resolve it
-         *  even if this process was killed and the session map is empty. */
-        fun docIdFor(devicePath: String, record: Long): String {
+        /**
+         * Stable per-volume root id. DocumentsUI opens a root Uri
+         * (content://authority/root/<rootId>) without calling findDocumentPath,
+         * so the Open button can jump straight into a volume. The id must be
+         * unique per volume because multiple drives can be unlocked at once.
+         */
+        fun rootIdFor(devicePath: String, serial: Long): String {
             val b64 = android.util.Base64.encodeToString(
                 devicePath.toByteArray(Charsets.UTF_8),
                 android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP
             )
-            return "$b64$SEP$record"
+            return "$b64$SEP$serial"
+        }
+
+        /** Encode the device path + volume serial into the docId so the
+         *  provider can resolve it even if this process was killed and the
+         *  session map is empty. The serial distinguishes volumes that reuse
+         *  the same vold node path (e.g. after swapping the USB drive), so the
+         *  file manager treats a new drive as a fresh root and reloads. */
+        fun docIdFor(devicePath: String, serial: Long, record: Long): String {
+            val b64 = android.util.Base64.encodeToString(
+                devicePath.toByteArray(Charsets.UTF_8),
+                android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP
+            )
+            return "$b64$SEP$serial$SEP$record"
         }
 
         private fun devicePathFrom(docId: String): String? {
@@ -58,7 +74,42 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         }
 
         private fun recordFrom(docId: String): Long {
-            return docId.substringAfter(SEP, "").toLongOrNull() ?: -1L
+            // docId = b64path : serial : record
+            val parts = docId.split(SEP)
+            if (parts.size >= 3) {
+                val lastPart = parts[2]
+                if (lastPart.contains('/')) {
+                    val parentRecord = lastPart.substringBefore('/').toLongOrNull() ?: -1L
+                    val subPath = lastPart.substringAfter('/')
+                    val dev = devicePathFrom(docId)
+                    val core = dev?.let { UnlockManager.get(it) }
+                    if (core != null && parentRecord != -1L) {
+                        val parentPath = core.resolvePath(parentRecord) ?: "/"
+                        val fullPath = if (parentPath == "/") "/$subPath" else "$parentPath/$subPath"
+                        val existing = core.getRecordForPath(fullPath)
+                        if (existing != null) return existing
+                        val entries = try { core.reader.listDirectory(parentRecord) } catch (_: Exception) { emptyList() }
+                        val found = entries.find { it.name.equals(subPath, ignoreCase = true) }
+                        if (found != null) {
+                            core.registerPath(found.ref, fullPath, parentRecord)
+                            return found.ref
+                        }
+                        return -1L
+                    }
+                }
+                return lastPart.toLongOrNull() ?: -1L
+            }
+            return -1L
+        }
+
+        fun notifyRootsChanged(context: android.content.Context) {
+            try {
+                val rootsUri = DocumentsContract.buildRootsUri(AUTHORITY)
+                context.contentResolver.notifyChange(rootsUri, null)
+                Log.i(TAG, "notifyRootsChanged: notified system that roots changed")
+            } catch (e: Exception) {
+                Log.w(TAG, "notifyRootsChanged failed", e)
+            }
         }
     }
 
@@ -69,6 +120,84 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
     private val appContext: android.content.Context
         get() = super.getContext() ?: com.bitlockerdroid.util.ContextProvider.app
 
+    data class PendingSync(val file: java.io.File, val path: String, val record: Long)
+    private val pendingWrites = java.util.concurrent.ConcurrentHashMap<Long, PendingSync>()
+    private val activeWrites = java.util.concurrent.ConcurrentHashMap<String, Thread>()
+
+    private val syncThread = android.os.HandlerThread("SafSyncThread").apply { start() }
+    private val syncHandler = android.os.Handler(syncThread.looper)
+
+
+
+    override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
+        LogFile.write("provider", "call method=$method arg=$arg")
+        if (method == "create_document") {
+            val parentDocId = arg ?: extras?.getString("parent_doc_id") ?: return null
+            val mimeType = extras?.getString("mime_type") ?: "text/plain"
+            val displayName = extras?.getString("display_name") ?: "test.txt"
+            val newDocId = createDocument(parentDocId, mimeType, displayName)
+            val out = Bundle()
+            out.putString("document_id", newDocId)
+            out.putString("uri", "content://$AUTHORITY/document/$newDocId")
+            return out
+        }
+        if (method == "delete_document") {
+            val docId = arg ?: extras?.getString("document_id") ?: return null
+            deleteDocument(docId)
+            val out = Bundle()
+            out.putBoolean("success", true)
+            return out
+        }
+        if (method == "rename_document") {
+            val docId = if (arg != null && arg.contains('|')) arg.substringBefore('|') else (arg ?: extras?.getString("document_id") ?: return null)
+            val newName = if (arg != null && arg.contains('|')) arg.substringAfter('|') else (extras?.getString("display_name") ?: return null)
+            val resId = renameDocument(docId, newName)
+            val out = Bundle()
+            out.putString("document_id", resId)
+            return out
+        }
+        if (method == "copy_document") {
+            val srcId = extras?.getString("source_document_id") ?: (if (arg != null && arg.contains('|')) arg.substringBefore('|') else return null)
+            val targetParentId = extras?.getString("target_parent_document_id") ?: (if (arg != null && arg.contains('|')) arg.substringAfter('|') else return null)
+            val newDocId = copyDocument(srcId, targetParentId)
+            val out = Bundle()
+            out.putString("document_id", newDocId)
+            return out
+        }
+        if (method == "lock_volume") {
+            val dev = arg ?: extras?.getString("device_path") ?: return null
+            UnlockManager.lock(dev)
+            val out = Bundle()
+            out.putBoolean("success", true)
+            return out
+        }
+        if (method == "refresh_scan") {
+            UnlockManager.clearManualLockSuppression()
+            com.bitlockerdroid.service.BitLockerDetector.scanAndDetect(appContext)
+            val out = Bundle()
+            out.putBoolean("success", true)
+            return out
+        }
+        if (method == "move_document") {
+            val parts = arg?.split('|') ?: emptyList()
+            val srcId = extras?.getString("source_document_id") ?: (if (parts.size >= 3) parts[0] else return null)
+            val srcParentId = extras?.getString("source_parent_document_id") ?: (if (parts.size >= 3) parts[1] else return null)
+            val targetParentId = extras?.getString("target_parent_document_id") ?: (if (parts.size >= 3) parts[2] else return null)
+            val newDocId = moveDocument(srcId, srcParentId, targetParentId)
+            val out = Bundle()
+            out.putString("document_id", newDocId)
+            return out
+        }
+        try {
+            val res = super.call(method, arg, extras)
+            LogFile.write("provider", "call SUCCESS method=$method arg=$arg")
+            return res
+        } catch (t: Throwable) {
+            LogFile.write("provider", "call EXCEPTION method=$method arg=$arg: ${Log.getStackTraceString(t)}")
+            throw t
+        }
+    }
+
     override fun queryRoots(projection: Array<out String>?): Cursor {
         val result = MatrixCursor(resolveRootProjection(projection))
         // If this process was killed since unlock, restore saved volumes.
@@ -78,30 +207,62 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         }
         val volumes = UnlockManager.unlockedVolumes
         for (v in volumes) {
-            val rootRef = UnlockManager.get(v.devicePath)?.reader?.rootRef ?: 0L
+            val core = UnlockManager.get(v.devicePath)
+            val rootRef = core?.reader?.rootRef ?: 0L
+            val serial = try { core?.reader?.volumeSerial() ?: 0L } catch (e: Exception) { 0L }
             val row = result.newRow()
-            row.add(Root.COLUMN_ROOT_ID, ROOT_ID)
-            row.add(Root.COLUMN_DOCUMENT_ID, docIdFor(v.devicePath, rootRef))
+            row.add(Root.COLUMN_ROOT_ID, rootIdFor(v.devicePath, serial))
+            row.add(Root.COLUMN_DOCUMENT_ID, docIdFor(v.devicePath, serial, rootRef))
             row.add(Root.COLUMN_QUERY_ARGS, Bundle())
             row.add(Root.COLUMN_TITLE, v.label)
             row.add(Root.COLUMN_SUMMARY, "BitLocker encrypted volume")
             row.add(Root.COLUMN_MIME_TYPES, "*/*")
-            row.add(Root.COLUMN_ICON, com.bitlockerdroid.R.drawable.ic_notification)
-            row.add(Root.COLUMN_FLAGS, Root.FLAG_LOCAL_ONLY or 0)
+            if (v.freeBytes > 0L) {
+                row.add(Root.COLUMN_AVAILABLE_BYTES, v.freeBytes)
+            }
+            if (v.size > 0L) {
+                row.add(Root.COLUMN_CAPACITY_BYTES, v.size)
+            }
+            val canWrite = (core?.writer?.isMounted == true) && !com.bitlockerdroid.util.PreferenceHelper.mountReadOnly
+            var rootFlags = Root.FLAG_LOCAL_ONLY or Root.FLAG_SUPPORTS_IS_CHILD
+            if (canWrite) {
+                rootFlags = rootFlags or Root.FLAG_SUPPORTS_CREATE
+            }
+            row.add(Root.COLUMN_FLAGS, rootFlags)
         }
+        result.setNotificationUri(appContext.contentResolver, DocumentsContract.buildRootsUri(AUTHORITY))
         return result
     }
 
     override fun getDocumentType(documentId: String): String {
         val core = coreFor(documentId) ?: return Document.MIME_TYPE_DIR
-        val rec = try { core.reader.readEntry(recordFrom(documentId)) } catch (e: Exception) { null }
-        return if (rec?.isDirectory == true) Document.MIME_TYPE_DIR else "application/octet-stream"
+        val rec = try { core.getEntry(recordFrom(documentId)) } catch (e: Exception) { null }
+        if (rec?.isDirectory == true) return Document.MIME_TYPE_DIR
+        val name = rec?.fileName ?: if (documentId.contains('/')) documentId.substringAfterLast('/') else ""
+        val ext = name.substringAfterLast('.', "")
+        if (ext.isNotEmpty()) {
+            val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.lowercase())
+            if (mime != null) return mime
+        }
+        return "application/octet-stream"
     }
 
     override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor {
-        val result = MatrixCursor(resolveDocumentProjection(projection))
-        addDocumentRow(result, documentId)
-        return result
+        LogFile.write("provider", "queryDocument: docId=$documentId proj=${projection?.joinToString()}")
+        try {
+            val result = MatrixCursor(resolveDocumentProjection(projection))
+            addDocumentRow(result, documentId)
+            if (result.count == 0) {
+                LogFile.write("provider", "queryDocument: WARNING 0 rows returned for $documentId")
+            } else {
+                LogFile.write("provider", "queryDocument: SUCCESS for $documentId (1 row)")
+            }
+            result.setNotificationUri(appContext.contentResolver, DocumentsContract.buildDocumentUri(AUTHORITY, documentId))
+            return result
+        } catch (t: Throwable) {
+            LogFile.write("provider", "queryDocument EXCEPTION docId=$documentId: ${Log.getStackTraceString(t)}")
+            throw t
+        }
     }
 
     override fun queryChildDocuments(
@@ -109,25 +270,396 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         projection: Array<out String>?,
         sortOrder: String?
     ): Cursor {
-        val result = MatrixCursor(resolveDocumentProjection(projection))
-        Log.i(TAG, "queryChildDocuments parent=$parentDocumentId unlocked=${UnlockManager.unlockedVolumes.size}")
-        val core = coreFor(parentDocumentId)
-        if (core == null) {
-            Log.i(TAG, "coreFor returned null for $parentDocumentId")
-            return result
-        }
+        LogFile.write("provider", "queryChildDocuments: parent=$parentDocumentId")
         try {
+            val result = MatrixCursor(resolveDocumentProjection(projection))
+            val core = coreFor(parentDocumentId)
+            if (core == null) {
+                LogFile.write("provider", "queryChildDocuments: coreFor returned null for $parentDocumentId")
+                return result
+            }
             val record = recordFrom(parentDocumentId)
-            Log.i(TAG, "listing dir record=$record")
+            val parentPath = core.resolvePath(record) ?: "/"
             val entries = core.reader.listDirectory(record)
-            Log.i(TAG, "listDirectory returned ${entries.size} entries")
+            LogFile.write("provider", "queryChildDocuments: listDirectory returned ${entries.size} entries for $parentPath")
+            val serial = try { core.reader.volumeSerial() } catch (e: Exception) { 0L }
             for (e in entries) {
-                addDocumentRow(result, docIdFor(core.devicePath, e.ref), e)
+                val childPath = if (parentPath == "/") "/${e.name}" else "$parentPath/${e.name}"
+                core.registerPath(e.ref, childPath, record)
+                addDocumentRow(result, docIdFor(core.devicePath, serial, e.ref), e)
+            }
+            result.setNotificationUri(appContext.contentResolver, DocumentsContract.buildChildDocumentsUri(AUTHORITY, parentDocumentId))
+            return result
+        } catch (t: Throwable) {
+            LogFile.write("provider", "queryChildDocuments EXCEPTION parent=$parentDocumentId: ${Log.getStackTraceString(t)}")
+            throw t
+        }
+    }
+
+    override fun isChildDocument(parentDocumentId: String, documentId: String): Boolean {
+        LogFile.write("provider", "isChildDocument: parent=$parentDocumentId child=$documentId")
+        try {
+            val core = coreFor(parentDocumentId) ?: return false
+            val parentRecord = recordFrom(parentDocumentId)
+            val record = recordFrom(documentId)
+            if (record == parentRecord) return false
+            if (parentRecord == core.reader.rootRef) {
+                LogFile.write("provider", "isChildDocument: true (parent is volume root)")
+                return true
+            }
+
+            val childPath = core.resolvePath(record)
+            val parentPath = core.resolvePath(parentRecord)
+            if (childPath != null && parentPath != null) {
+                val prefix = if (parentPath == "/") "/" else "$parentPath/"
+                if (childPath.startsWith(prefix)) {
+                    LogFile.write("provider", "isChildDocument: true by path prefix ($childPath in $parentPath)")
+                    return true
+                }
+            }
+
+            var cur = record
+            var depth = 0
+            while (cur != core.reader.rootRef && depth < 32) {
+                val p = core.parentOf(cur)
+                if (p == cur) break
+                cur = p
+                if (cur == parentRecord) {
+                    LogFile.write("provider", "isChildDocument: true by parentOf chain")
+                    return true
+                }
+                depth++
+            }
+            LogFile.write("provider", "isChildDocument: false for parent=$parentDocumentId child=$documentId")
+            return false
+        } catch (t: Throwable) {
+            LogFile.write("provider", "isChildDocument EXCEPTION: ${Log.getStackTraceString(t)}")
+            throw t
+        }
+    }
+
+    private fun buildUniqueDisplayName(dirEntries: List<com.bitlockerdroid.ntfs.VolumeDirEntry>, name: String, isDir: Boolean): String {
+        if (dirEntries.none { it.name.equals(name, ignoreCase = true) }) {
+            return name
+        }
+        val dotIndex = name.lastIndexOf('.')
+        val nameBase = if (dotIndex > 0 && !isDir) name.substring(0, dotIndex) else name
+        val ext = if (dotIndex > 0 && !isDir) name.substring(dotIndex) else ""
+        var counter = 1
+        while (dirEntries.any { it.name.equals("$nameBase ($counter)$ext", ignoreCase = true) }) {
+            counter++
+        }
+        return "$nameBase ($counter)$ext"
+    }
+
+    override fun createDocument(
+        parentDocumentId: String,
+        mimeType: String,
+        displayName: String
+    ): String? {
+        Log.i(TAG, "createDocument: parent=$parentDocumentId, mime=$mimeType, name=$displayName")
+        if (com.bitlockerdroid.util.PreferenceHelper.mountReadOnly) {
+            throw UnsupportedOperationException("Volume mounted in read-only mode")
+        }
+        val core = coreFor(parentDocumentId) ?: throw SecurityException("Volume is locked")
+        val writer = core.writer ?: throw UnsupportedOperationException("Writing not supported on this volume")
+        val parentRecord = recordFrom(parentDocumentId)
+        val parentPath = core.resolvePath(parentRecord) ?: "/"
+
+        val isDir = (mimeType == Document.MIME_TYPE_DIR)
+        val existingEntries = try { core.reader.listDirectory(parentRecord) } catch (_: Exception) { emptyList() }
+        val actualName = buildUniqueDisplayName(existingEntries, displayName, isDir)
+
+        val createdRef = writer.createFile(parentPath, actualName, isDir)
+        if (createdRef < 0) {
+            throw IllegalStateException("Failed to create $actualName in $parentPath: error=$createdRef")
+        }
+
+        val newPath = if (parentPath == "/") "/$actualName" else "$parentPath/$actualName"
+        core.invalidateCache()
+
+        val dirEntries = try { core.reader.listDirectory(parentRecord) } catch (_: Exception) { emptyList() }
+        val found = dirEntries.find { it.name.equals(actualName, ignoreCase = true) && it.isDirectory == isDir }
+        val newRecord = found?.ref ?: if (createdRef > 0) createdRef else (0x80000000L or (System.nanoTime() and 0x7FFFFFFFL))
+
+        core.registerPath(newRecord, newPath, parentRecord)
+        if (found != null && found.ref != newRecord) {
+            core.setRecordAlias(newRecord, found.ref)
+        }
+        core.registerCreatedEntry(
+            com.bitlockerdroid.ntfs.VolumeEntry(
+                ref = newRecord,
+                isDirectory = isDir,
+                fileName = actualName,
+                fileSize = 0L
+            )
+        )
+        notifyChange(parentDocumentId)
+
+        val serial = try { core.reader.volumeSerial() } catch (e: Exception) { 0L }
+        val newDocId = docIdFor(core.devicePath, serial, newRecord)
+        notifyChange(newDocId)
+        Log.i(TAG, "createDocument succeeded: newDocId=$newDocId, ref=$newRecord, path=$newPath")
+        return newDocId
+    }
+
+    override fun deleteDocument(documentId: String) {
+        LogFile.write("provider", "deleteDocument: docId=$documentId")
+        val core = coreFor(documentId) ?: throw SecurityException("Volume is locked")
+        val writer = core.writer ?: throw UnsupportedOperationException("Writing not supported on this volume")
+        val record = recordFrom(documentId)
+        val parentRecord = if (record != -1L) core.parentOf(record) else {
+            val parts = documentId.split(SEP)
+            if (parts.size >= 3 && parts[2].contains('/')) {
+                parts[2].substringBefore('/').toLongOrNull() ?: core.reader.rootRef
+            } else core.reader.rootRef
+        }
+        val path = if (record != -1L) core.resolvePath(record) else {
+            val parts = documentId.split(SEP)
+            if (parts.size >= 3 && parts[2].contains('/')) {
+                val pRec = parts[2].substringBefore('/').toLongOrNull() ?: core.reader.rootRef
+                val sub = parts[2].substringAfter('/')
+                val pPath = core.resolvePath(pRec) ?: "/"
+                if (pPath == "/") "/$sub" else "$pPath/$sub"
+            } else null
+        }
+
+        if (path == null) {
+            LogFile.write("provider", "deleteDocument: Cannot resolve path for docId=$documentId, already non-existent")
+            return
+        }
+
+        // Wait for any active write on this path before deleting
+        activeWrites[path]?.let { thread ->
+            try {
+                thread.join(3000)
+            } catch (_: Exception) {}
+        }
+
+        if (path == "/" || record == core.reader.rootRef) {
+            throw SecurityException("Cannot delete volume root directory")
+        }
+
+        val ok = writer.delete(path)
+        if (!ok) {
+            val fileName = path.substringAfterLast('/')
+            val exists = try {
+                core.reader.listDirectory(parentRecord).any { it.name.equals(fileName, ignoreCase = true) }
+            } catch (_: Exception) { false }
+            if (exists) {
+                LogFile.write("provider", "Failed to delete $path")
+                throw IllegalStateException("Failed to delete $path")
+            } else {
+                LogFile.write("provider", "deleteDocument: $path did not exist or was already deleted")
+            }
+        }
+
+        if (record != -1L) {
+            core.removePath(record)
+        }
+        core.invalidateCache()
+        notifyChange(documentId)
+        val serial = try { core.reader.volumeSerial() } catch (e: Exception) { 0L }
+        notifyChange(docIdFor(core.devicePath, serial, parentRecord))
+        LogFile.write("provider", "deleteDocument succeeded for $path")
+    }
+
+    override fun renameDocument(documentId: String, displayName: String): String? {
+        LogFile.write("provider", "renameDocument: docId=$documentId, displayName=$displayName")
+        val lowerName = displayName.lowercase()
+        if (lowerName.endsWith(".rollback") || lowerName.endsWith(".rollback.bak") ||
+            lowerName.endsWith(".force_replace_target") || lowerName.endsWith(".compress_rollback") ||
+            lowerName.contains(".rollback.")) {
+            LogFile.write("provider", "renameDocument: rejecting internal backup/rollback name: $displayName")
+            throw UnsupportedOperationException("Atomic rollback renaming not supported for document")
+        }
+        val core = coreFor(documentId) ?: throw SecurityException("Volume is locked")
+        val writer = core.writer ?: throw UnsupportedOperationException("Writing not supported on this volume")
+        val record = recordFrom(documentId)
+        val effRecord = core.resolveRecord(record)
+        val parentRecord = core.parentOf(record)
+        val oldPath = core.resolvePath(record)
+            ?: throw IllegalStateException("Cannot resolve path for rename")
+
+        // Wait for any active write on oldPath before renaming
+        activeWrites[oldPath]?.let { thread ->
+            try {
+                thread.join(3000)
+            } catch (_: Exception) {}
+        }
+
+        val parentPath = oldPath.substringBeforeLast('/', "")
+        val newPath = if (parentPath.isEmpty()) "/$displayName" else "$parentPath/$displayName"
+
+        if (oldPath.equals(newPath, ignoreCase = false)) {
+            LogFile.write("provider", "renameDocument: oldPath == newPath ($newPath), nothing to do")
+            return documentId
+        }
+
+        val oldTargetRecord = core.getRecordForPath(newPath)
+        val ok = writer.rename(oldPath, newPath)
+        if (!ok) {
+            LogFile.write("provider", "Failed to rename $oldPath -> $newPath")
+            throw IllegalStateException("Failed to rename $oldPath -> $newPath")
+        }
+
+        core.updatePathAfterRename(oldPath, newPath, record, parentRecord)
+        if (oldTargetRecord != null && oldTargetRecord != record && oldTargetRecord != effRecord) {
+            core.setRecordAlias(oldTargetRecord, effRecord)
+            core.updatePathAfterRename(newPath, newPath, oldTargetRecord, parentRecord)
+        }
+        core.invalidateCache()
+
+        // Re-read directory to immediately prime the cache with new name and new ref
+        try {
+            val dirEntries = core.reader.listDirectory(parentRecord)
+            val found = dirEntries.find { it.name.equals(displayName, ignoreCase = true) }
+            if (found != null) {
+                if (found.ref != effRecord) {
+                    core.setRecordAlias(record, found.ref)
+                    core.setRecordAlias(effRecord, found.ref)
+                    core.updatePathAfterRename(oldPath, newPath, found.ref, parentRecord)
+                }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "listDirectory failed", e)
+            Log.w(TAG, "Failed to re-prime dir entries after rename", e)
         }
-        return result
+
+        notifyChange(documentId)
+        val serial = try { core.reader.volumeSerial() } catch (e: Exception) { 0L }
+        notifyChange(docIdFor(core.devicePath, serial, parentRecord))
+        LogFile.write("provider", "renameDocument succeeded for $oldPath -> $newPath")
+        return documentId
+    }
+
+    override fun copyDocument(sourceDocumentId: String, targetParentDocumentId: String): String? {
+        Log.i(TAG, "copyDocument: src=$sourceDocumentId, targetParent=$targetParentDocumentId")
+        val sourceCore = coreFor(sourceDocumentId) ?: throw SecurityException("Source volume is locked")
+        val targetCore = coreFor(targetParentDocumentId) ?: throw SecurityException("Target volume is locked")
+        val writer = targetCore.writer ?: throw UnsupportedOperationException("Target volume is read-only")
+
+        val sourceRecord = recordFrom(sourceDocumentId)
+        val sourceEntry = sourceCore.getEntry(sourceRecord)
+            ?: throw IllegalStateException("Cannot read source entry")
+        val sourceName = sourceEntry.fileName ?: "file"
+        val isDir = sourceEntry.isDirectory
+
+        val targetParentRecord = recordFrom(targetParentDocumentId)
+        val targetParentPath = targetCore.resolvePath(targetParentRecord) ?: "/"
+
+        val existingTargetEntries = try { targetCore.reader.listDirectory(targetParentRecord) } catch (_: Exception) { emptyList() }
+        val actualTargetName = buildUniqueDisplayName(existingTargetEntries, sourceName, isDir)
+
+        val createdRef = writer.createFile(targetParentPath, actualTargetName, isDir)
+        if (createdRef < 0) {
+            throw IllegalStateException("Failed to create copy $actualTargetName in $targetParentPath: error=$createdRef")
+        }
+
+        val targetPath = if (targetParentPath == "/") "/$actualTargetName" else "$targetParentPath/$actualTargetName"
+        val newRecord = if (createdRef > 0) createdRef else (0x80000000L or (System.nanoTime() and 0x7FFFFFFFL))
+        targetCore.registerPath(newRecord, targetPath, targetParentRecord)
+
+        if (!isDir) {
+            val size = sourceEntry.fileSize
+            val buf = ByteArray(64 * 1024)
+            var offset = 0L
+            while (offset < size) {
+                val len = minOf(buf.size.toLong(), size - offset).toInt()
+                val n = sourceCore.readFile(sourceRecord, offset, buf, 0, len)
+                if (n <= 0) break
+                val w = writer.write(targetPath, offset, buf, n)
+                if (w < 0) {
+                    Log.e(TAG, "Failed writing copy chunk to $targetPath at offset $offset")
+                    break
+                }
+                offset += w
+            }
+        }
+
+        targetCore.invalidateCache()
+        notifyChange(targetParentDocumentId)
+
+        val serial = try { targetCore.reader.volumeSerial() } catch (e: Exception) { 0L }
+        val newDocId = docIdFor(targetCore.devicePath, serial, newRecord)
+        notifyChange(newDocId)
+        Log.i(TAG, "copyDocument succeeded: $sourceDocumentId -> $newDocId")
+        return newDocId
+    }
+
+    override fun moveDocument(
+        sourceDocumentId: String,
+        sourceParentDocumentId: String,
+        targetParentDocumentId: String
+    ): String? {
+        Log.i(TAG, "moveDocument: src=$sourceDocumentId, srcParent=$sourceParentDocumentId, targetParent=$targetParentDocumentId")
+        val sourceCore = coreFor(sourceDocumentId) ?: throw SecurityException("Source volume is locked")
+        val targetCore = coreFor(targetParentDocumentId) ?: throw SecurityException("Target volume is locked")
+
+        if (sourceCore.devicePath != targetCore.devicePath) {
+            return super.moveDocument(sourceDocumentId, sourceParentDocumentId, targetParentDocumentId)
+        }
+
+        val writer = targetCore.writer ?: throw UnsupportedOperationException("Volume is read-only")
+        val sourceRecord = recordFrom(sourceDocumentId)
+        val sourcePath = sourceCore.resolvePath(sourceRecord)
+            ?: throw IllegalStateException("Cannot resolve source path for move")
+
+        val targetParentRecord = recordFrom(targetParentDocumentId)
+        val targetParentPath = targetCore.resolvePath(targetParentRecord)
+            ?: throw IllegalStateException("Cannot resolve target parent path for move")
+
+        val displayName = sourcePath.substringAfterLast('/')
+        val existingTargetEntries = try { targetCore.reader.listDirectory(targetParentRecord) } catch (_: Exception) { emptyList() }
+        val sourceEntry = sourceCore.getEntry(sourceRecord)
+        val isDir = sourceEntry?.isDirectory ?: false
+        val actualTargetName = buildUniqueDisplayName(existingTargetEntries, displayName, isDir)
+        val targetPath = if (targetParentPath == "/") "/$actualTargetName" else "$targetParentPath/$actualTargetName"
+
+        val ok = writer.rename(sourcePath, targetPath)
+        if (!ok) {
+            throw IllegalStateException("Failed to move $sourcePath -> $targetPath")
+        }
+
+        targetCore.registerPath(sourceRecord, targetPath, targetParentRecord)
+        sourceCore.invalidateCache()
+        notifyChange(sourceDocumentId)
+        notifyChange(sourceParentDocumentId)
+        notifyChange(targetParentDocumentId)
+
+        Log.i(TAG, "moveDocument succeeded: $sourcePath -> $targetPath")
+        return sourceDocumentId
+    }
+
+    override fun removeDocument(documentId: String, parentDocumentId: String?) {
+        Log.i(TAG, "removeDocument: docId=$documentId, parent=$parentDocumentId")
+        deleteDocument(documentId)
+    }
+
+    override fun findDocumentPath(
+        parentDocumentId: String?,
+        childDocumentId: String
+    ): DocumentsContract.Path? {
+        Log.i(TAG, "findDocumentPath: parent=$parentDocumentId, child=$childDocumentId")
+        val core = coreFor(childDocumentId) ?: return null
+        val serial = try { core.reader.volumeSerial() } catch (e: Exception) { 0L }
+
+        val pathList = mutableListOf<String>()
+        var cur = recordFrom(childDocumentId)
+        val rootRef = core.reader.rootRef
+        val stopRecord = if (parentDocumentId != null) recordFrom(parentDocumentId) else rootRef
+
+        var depth = 0
+        while (depth < 64) {
+            pathList.add(0, docIdFor(core.devicePath, serial, cur))
+            if (cur == stopRecord || cur == rootRef) break
+            val p = core.parentOf(cur)
+            if (p == cur) break
+            cur = p
+            depth++
+        }
+
+        val rootId = rootIdFor(core.devicePath, serial)
+        return DocumentsContract.Path(rootId, pathList)
     }
 
     override fun openDocument(
@@ -135,92 +667,385 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         mode: String,
         signal: CancellationSignal?
     ): ParcelFileDescriptor {
-        if (mode.contains("w") || mode.contains("rw")) {
-            throw SecurityException("BitLocker documents are read-only")
-        }
+        LogFile.write("provider", "openDocument docId=$documentId mode=$mode")
+        try {
+            val core = coreFor(documentId) ?: throw SecurityException("Volume is locked")
+            val record = recordFrom(documentId)
+            val effRecord = core.resolveRecord(record)
 
-        val core = coreFor(documentId) ?: throw SecurityException("Volume is locked")
-        val record = recordFrom(documentId)
-        val size = core.reader.run {
-            readEntry(record)?.fileSize ?: 0L
-        }
+            if (mode.contains("w") || mode.contains("rw")) {
+                if (com.bitlockerdroid.util.PreferenceHelper.mountReadOnly) {
+                    throw SecurityException("Volume is mounted in read-only mode")
+                }
+                val writer = core.writer ?: throw SecurityException("Volume is read-only")
+                val path: String = (if (record != -1L) core.resolvePath(record) else null)
+                    ?: run {
+                        val parts = documentId.split(SEP)
+                        if (parts.size >= 3 && parts[2].contains('/')) {
+                            val pRec = parts[2].substringBefore('/').toLongOrNull() ?: core.reader.rootRef
+                            val sub = parts[2].substringAfter('/')
+                            val pPath = core.resolvePath(pRec) ?: "/"
+                            val full = if (pPath == "/") "/$sub" else "$pPath/$sub"
+                            val entries = try { core.reader.listDirectory(pRec) } catch (_: Exception) { emptyList() }
+                            val existing = entries.find { it.name.equals(sub, ignoreCase = true) }
+                            if (existing != null) {
+                                core.registerPath(existing.ref, full, pRec)
+                                full
+                            } else {
+                                val createdRef = writer.createFile(pPath, sub, false)
+                                if (createdRef >= 0) {
+                                    val newRec = if (createdRef > 0) createdRef else (0x80000000L or (System.nanoTime() and 0x7FFFFFFFL))
+                                    core.registerPath(newRec, full, pRec)
+                                    full
+                                } else null
+                            }
+                        } else null
+                    }
+                    ?: throw SecurityException("Cannot resolve path for document write (record=$record, effRecord=$effRecord)")
 
-        // Reliable pipe: the reader thread writes decrypted bytes; the write end
-        // signals EOF by close. We return the read side to the caller.
-        val pipe = ParcelFileDescriptor.createReliablePipe()
-        val readFd = pipe[0]
-        val writeFd = pipe[1]
+                // Wait for any previous write on this path
+                activeWrites[path]?.let { thread ->
+                    try {
+                        thread.join(3000)
+                    } catch (_: Exception) {}
+                }
 
-        Thread {
-            try {
-                ParcelFileDescriptor.AutoCloseOutputStream(writeFd).use { out ->
-                    val buf = ByteArray(64 * 1024)
-                    var offset = 0L
-                    while (offset < size) {
-                        val len = minOf(buf.size.toLong(), size - offset).toInt()
-                        val n = core.reader.readFile(record, offset, buf, 0, len)
-                        if (n <= 0) break
-                        out.write(buf, 0, n)
-                        offset += n
+                val append = mode.contains("a")
+                val truncate = mode.contains("t") || (mode.contains("w") && !append && !mode.contains("r"))
+
+                val pipe = ParcelFileDescriptor.createReliablePipe()
+                val readFd = pipe[0]
+                val writeFd = pipe[1]
+
+                val writerThread = Thread {
+                    var totalWritten = 0L
+                    try {
+                        ParcelFileDescriptor.AutoCloseInputStream(readFd).use { input ->
+                            val buf = ByteArray(64 * 1024)
+                            var curOffset = if (append) (core.getEntry(record)?.fileSize ?: 0L) else 0L
+                            while (true) {
+                                val n = input.read(buf)
+                                if (n <= 0) break
+                                val w = writer.write(path, curOffset, buf, n)
+                                if (w < 0) {
+                                    LogFile.write("provider", "Failed writing pipe chunk at $curOffset to $path: $w")
+                                    break
+                                }
+                                curOffset += w
+                                totalWritten = curOffset
+                            }
+                            if (truncate || (!append && totalWritten >= 0)) {
+                                writer.truncate(path, totalWritten)
+                            }
+                            LogFile.write("provider", "Pipe write complete for $path ($totalWritten bytes, append=$append, truncate=$truncate)")
+                        }
+                    } catch (e: Exception) {
+                        LogFile.write("provider", "Pipe write error for $path: ${Log.getStackTraceString(e)}")
+                    } finally {
+                        activeWrites.remove(path)
+                        core.invalidateCache()
+                        core.removeCreatedEntry(record)
+                        core.removeCreatedEntry(effRecord)
+                        val parentRecord = core.parentOf(record)
+                        try {
+                            val dirEntries = core.reader.listDirectory(parentRecord)
+                            val fileName = path.substringAfterLast('/')
+                            val found = dirEntries.find {
+                                (it.name.trim().equals(fileName.trim(), ignoreCase = true) ||
+                                it.name.equals(fileName, ignoreCase = true)) && !it.isDirectory
+                            }
+                            if (found != null) {
+                                if (found.ref != record) {
+                                    core.setRecordAlias(record, found.ref)
+                                    core.registerPath(found.ref, path, parentRecord)
+                                }
+                                core.registerPath(record, path, parentRecord)
+                                core.registerCreatedEntry(
+                                    com.bitlockerdroid.ntfs.VolumeEntry(
+                                        ref = record,
+                                        isDirectory = false,
+                                        fileName = fileName,
+                                        fileSize = totalWritten
+                                    )
+                                )
+                                core.registerCreatedEntry(
+                                    com.bitlockerdroid.ntfs.VolumeEntry(
+                                        ref = found.ref,
+                                        isDirectory = false,
+                                        fileName = fileName,
+                                        fileSize = totalWritten
+                                    )
+                                )
+                                LogFile.write("provider", "Alias registered: old=$record -> new=${found.ref} for $path (size=$totalWritten)")
+                            }
+                        } catch (e: Exception) {
+                            LogFile.write("provider", "Failed updating alias after pipe write: ${e.message}")
+                        }
+                        notifyChange(documentId)
+                        val serial = try { core.reader.volumeSerial() } catch (e: Exception) { 0L }
+                        notifyChange(docIdFor(core.devicePath, serial, parentRecord))
+                    }
+                }.apply { isDaemon = true; name = "saf-writer-$record" }
+
+                activeWrites[path] = writerThread
+                writerThread.start()
+
+                return writeFd
+            }
+
+            // Mode is READ
+            val readPath = if (record != -1L) core.resolvePath(record) else null
+            if (readPath != null) {
+                activeWrites[readPath]?.let { thread ->
+                    try {
+                        thread.join(3000)
+                    } catch (_: Exception) {}
+                }
+            }
+            var size = core.getEntry(record)?.fileSize ?: 0L
+            if (size == 0L) {
+                val p = core.resolvePath(record)
+                if (p != null && p != "/") {
+                    val pr = core.parentOf(record)
+                    val fn = p.substringAfterLast('/')
+                    val de = try { core.reader.listDirectory(pr) } catch (_: Exception) { emptyList() }
+                    val f = de.find { it.name.equals(fn, ignoreCase = true) && !it.isDirectory }
+                    if (f != null && f.size > 0L) {
+                        size = f.size
+                        core.setRecordAlias(record, f.ref)
                     }
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "pipe read failed", e)
-                try { writeFd.closeWithError("read failed") } catch (_: Exception) {}
             }
-        }.apply { isDaemon = true }.start()
+            LogFile.write("provider", "openDocument read: record=$record eff=$effRecord size=$size")
 
-        return readFd
+            // For files <= 20MB, create a seekable temp file so random-access editors like MT Manager work seamlessly!
+            if (size <= 20 * 1024 * 1024L) {
+                val readTemp = java.io.File.createTempFile("saf_read_", ".tmp", appContext.cacheDir)
+                if (size > 0L) {
+                    readTemp.outputStream().use { out ->
+                        val buf = ByteArray(64 * 1024)
+                        var offset = 0L
+                        while (offset < size) {
+                            val len = minOf(buf.size.toLong(), size - offset).toInt()
+                            val n = core.readFile(record, offset, buf, 0, len)
+                            if (n <= 0) break
+                            out.write(buf, 0, n)
+                            offset += n
+                        }
+                    }
+                }
+                return ParcelFileDescriptor.open(readTemp, ParcelFileDescriptor.MODE_READ_ONLY, syncHandler) {
+                    readTemp.delete()
+                }
+            }
+
+            // Large files (>20MB): stream through reliable pipe
+            val pipe = ParcelFileDescriptor.createReliablePipe()
+            val readFd = pipe[0]
+            val writeFd = pipe[1]
+
+            Thread {
+                try {
+                    ParcelFileDescriptor.AutoCloseOutputStream(writeFd).use { out ->
+                        val buf = ByteArray(64 * 1024)
+                        var offset = 0L
+                        while (offset < size) {
+                            val len = minOf(buf.size.toLong(), size - offset).toInt()
+                            val n = core.readFile(record, offset, buf, 0, len)
+                            if (n <= 0) break
+                            out.write(buf, 0, n)
+                            offset += n
+                        }
+                    }
+                } catch (e: Exception) {
+                    LogFile.write("provider", "pipe read failed: ${e.message}")
+                    try { writeFd.closeWithError("read failed") } catch (_: Exception) {}
+                }
+            }.apply { isDaemon = true }.start()
+
+            return readFd
+        } catch (t: Throwable) {
+            LogFile.write("provider", "openDocument EXCEPTION docId=$documentId mode=$mode: ${Log.getStackTraceString(t)}")
+            throw t
+        }
     }
 
     // ---------------- helpers ----------------
 
     private fun coreFor(docId: String): DislockerCore? {
         val path = devicePathFrom(docId)
-        if (path == null) {
-            Log.i(TAG, "coreFor: no path for $docId, unlocked=${UnlockManager.unlockedVolumes.map { it.devicePath }}")
-            return null
+        if (path != null) {
+            val direct = UnlockManager.get(path)
+            if (direct != null) return direct
         }
-        var core = UnlockManager.get(path)
-        if (core == null) {
+
+        // Serial-based fallback: if device node path changed (e.g. USB re-plug),
+        // match by volume serial extracted from docId (b64path:serial:record).
+        val parts = docId.split(SEP)
+        val serial = if (parts.size >= 2) parts[1].toLongOrNull() ?: 0L else 0L
+        if (serial != 0L) {
+            val matchingSession = UnlockManager.activeSessions.find {
+                (try { it.reader.volumeSerial() } catch (_: Exception) { 0L }) == serial
+            }
+            if (matchingSession != null) {
+                return matchingSession
+            }
+        }
+
+        // Single active session fallback
+        if (UnlockManager.activeSessions.size == 1) {
+            return UnlockManager.activeSessions[0]
+        }
+
+        if (path != null) {
             Log.i(TAG, "coreFor: no core for $path, trying auto re-unlock")
-            // The process may have been killed since unlock; try to restore the
-            // session from the saved password.
-            core = UnlockManager.ensureUnlocked(appContext, path, 0)
-            Log.i(TAG, "coreFor: auto re-unlock -> ${if (core != null) "ok" else "failed"}")
+            val core = UnlockManager.ensureUnlocked(appContext, path, 0)
+            if (core != null) return core
         }
-        return core
+
+        // Also try restoreRemembered across all detected devices
+        val restored = UnlockManager.restoreRemembered(appContext)
+        if (restored > 0) {
+            if (path != null) {
+                val core = UnlockManager.get(path)
+                if (core != null) return core
+            }
+            if (serial != 0L) {
+                val matchingSession = UnlockManager.activeSessions.find {
+                    (try { it.reader.volumeSerial() } catch (_: Exception) { 0L }) == serial
+                }
+                if (matchingSession != null) return matchingSession
+            }
+            if (UnlockManager.activeSessions.size == 1) {
+                return UnlockManager.activeSessions[0]
+            }
+        }
+
+        Log.i(TAG, "coreFor: no core found for $docId, unlocked=${UnlockManager.unlockedVolumes.map { it.devicePath }}")
+        return null
     }
 
     private fun addDocumentRow(result: MatrixCursor, documentId: String) {
-        val core = coreFor(documentId) ?: return
+        val core = coreFor(documentId) ?: run {
+            LogFile.write("provider", "addDocumentRow: coreFor returned null for $documentId")
+            return
+        }
         val record = recordFrom(documentId)
-        val rec = try { core.reader.readEntry(record) } catch (e: Exception) { null } ?: return
+        val effRecord = core.resolveRecord(record)
+        val pending = pendingWrites[record] ?: pendingWrites[effRecord]
+        val rec = if (pending != null && pending.file.exists() && pending.file.length() > 0) {
+            com.bitlockerdroid.ntfs.VolumeEntry(
+                ref = record,
+                isDirectory = false,
+                fileName = pending.path.substringAfterLast('/'),
+                fileSize = pending.file.length()
+            )
+        } else {
+            try { core.getEntry(record) } catch (e: Exception) { null }
+                ?: try { core.getEntry(effRecord) } catch (e: Exception) { null }
+        } ?: run {
+            if (record == core.reader.rootRef || effRecord == core.reader.rootRef) {
+                com.bitlockerdroid.ntfs.VolumeEntry(record, isDirectory = true, fileName = core.volumeLabel, fileSize = 0L)
+            } else {
+                LogFile.write("provider", "addDocumentRow: Entry not found for $documentId (record=$record, eff=$effRecord)")
+                null
+            }
+        } ?: return
 
         val isDir = rec.isDirectory
-        result.newRow()
-            .add(Document.COLUMN_DOCUMENT_ID, documentId)
-            .add(Document.COLUMN_DISPLAY_NAME, rec.fileName ?: "BitLocker")
-            .add(
-                Document.COLUMN_MIME_TYPE,
-                if (isDir) Document.MIME_TYPE_DIR else "application/octet-stream"
-            )
-            .add(Document.COLUMN_SIZE, rec.fileSize)
-            .add(
-                Document.COLUMN_FLAGS,
-                if (isDir) Document.FLAG_DIR_PREFERS_LAST_MODIFIED else Document.FLAG_SUPPORTS_DELETE
-            )
+        val isRoot = (record == core.reader.rootRef)
+        val name = if (isRoot) core.volumeLabel else (rec.fileName ?: "BitLocker")
+        var flags = 0
+        val canWrite = (core.writer?.isMounted == true) && !com.bitlockerdroid.util.PreferenceHelper.mountReadOnly
+        if (isDir) {
+            flags = flags or Document.FLAG_DIR_PREFERS_LAST_MODIFIED
+            if (canWrite) {
+                flags = flags or Document.FLAG_DIR_SUPPORTS_CREATE
+                if (!isRoot) {
+                    flags = flags or Document.FLAG_SUPPORTS_DELETE or Document.FLAG_SUPPORTS_RENAME or
+                            Document.FLAG_SUPPORTS_MOVE or Document.FLAG_SUPPORTS_COPY or Document.FLAG_SUPPORTS_REMOVE
+                }
+            }
+        } else {
+            if (canWrite) {
+                flags = flags or Document.FLAG_SUPPORTS_WRITE or Document.FLAG_SUPPORTS_DELETE or Document.FLAG_SUPPORTS_RENAME or
+                        Document.FLAG_SUPPORTS_MOVE or Document.FLAG_SUPPORTS_COPY or Document.FLAG_SUPPORTS_REMOVE
+            }
+        }
+
+        val mimeType1 = if (isDir) {
+            Document.MIME_TYPE_DIR
+        } else {
+            val ext = name.substringAfterLast('.', "")
+            if (ext.isNotEmpty()) {
+                android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.lowercase())
+                    ?: "application/octet-stream"
+            } else "application/octet-stream"
+        }
+
+        val row = result.newRow()
+        row.add(Document.COLUMN_DOCUMENT_ID, documentId)
+        row.add(Document.COLUMN_DISPLAY_NAME, name)
+        row.add("display_name", name)
+        row.add(Document.COLUMN_MIME_TYPE, mimeType1)
+        row.add(Document.COLUMN_SIZE, rec.fileSize)
+        row.add(Document.COLUMN_LAST_MODIFIED, System.currentTimeMillis())
+        row.add(Document.COLUMN_FLAGS, flags)
     }
 
     private fun addDocumentRow(result: MatrixCursor, documentId: String, entry: VolumeDirEntry) {
-        result.newRow()
-            .add(Document.COLUMN_DOCUMENT_ID, documentId)
-            .add(Document.COLUMN_DISPLAY_NAME, entry.name)
-            .add(
-                Document.COLUMN_MIME_TYPE,
-                if (entry.isDirectory) Document.MIME_TYPE_DIR else "application/octet-stream"
-            )
-            .add(Document.COLUMN_FLAGS, if (entry.isDirectory) 0 else Document.FLAG_SUPPORTS_DELETE)
+        val core = coreFor(documentId)
+        val record = recordFrom(documentId)
+        val isRoot = (record == core?.reader?.rootRef)
+        val canWrite = (core?.writer?.isMounted == true) && !com.bitlockerdroid.util.PreferenceHelper.mountReadOnly
+
+        var flags = 0
+        if (entry.isDirectory) {
+            flags = flags or Document.FLAG_DIR_PREFERS_LAST_MODIFIED
+            if (canWrite) {
+                flags = flags or Document.FLAG_DIR_SUPPORTS_CREATE
+                if (!isRoot) {
+                    flags = flags or Document.FLAG_SUPPORTS_DELETE or Document.FLAG_SUPPORTS_RENAME or
+                            Document.FLAG_SUPPORTS_MOVE or Document.FLAG_SUPPORTS_COPY or Document.FLAG_SUPPORTS_REMOVE
+                }
+            }
+        } else {
+            if (canWrite) {
+                flags = flags or Document.FLAG_SUPPORTS_WRITE or Document.FLAG_SUPPORTS_DELETE or Document.FLAG_SUPPORTS_RENAME or
+                        Document.FLAG_SUPPORTS_MOVE or Document.FLAG_SUPPORTS_COPY or Document.FLAG_SUPPORTS_REMOVE
+            }
+        }
+
+        val mimeType2 = if (entry.isDirectory) {
+            Document.MIME_TYPE_DIR
+        } else {
+            val ext = entry.name.substringAfterLast('.', "")
+            if (ext.isNotEmpty()) {
+                android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.lowercase())
+                    ?: "application/octet-stream"
+            } else "application/octet-stream"
+        }
+
+        val row = result.newRow()
+        row.add(Document.COLUMN_DOCUMENT_ID, documentId)
+        row.add(Document.COLUMN_DISPLAY_NAME, entry.name)
+        row.add("display_name", entry.name)
+        row.add(Document.COLUMN_MIME_TYPE, mimeType2)
+        row.add(Document.COLUMN_SIZE, entry.size)
+        row.add(Document.COLUMN_LAST_MODIFIED, System.currentTimeMillis())
+        row.add(Document.COLUMN_FLAGS, flags)
+    }
+
+    private fun notifyChange(documentId: String) {
+        try {
+            val resolver = appContext.contentResolver
+            val docUri = DocumentsContract.buildDocumentUri(AUTHORITY, documentId)
+            resolver.notifyChange(docUri, null)
+            val childUri = DocumentsContract.buildChildDocumentsUri(AUTHORITY, documentId)
+            resolver.notifyChange(childUri, null)
+        } catch (e: Exception) {
+            Log.w(TAG, "notifyChange failed for $documentId", e)
+        }
     }
 
     private fun resolveRootProjection(projection: Array<out String>?): Array<String> {
@@ -231,6 +1056,8 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             Root.COLUMN_TITLE,
             Root.COLUMN_SUMMARY,
             Root.COLUMN_MIME_TYPES,
+            Root.COLUMN_AVAILABLE_BYTES,
+            Root.COLUMN_CAPACITY_BYTES,
             Root.COLUMN_ICON,
             Root.COLUMN_FLAGS
         )
@@ -243,6 +1070,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             Document.COLUMN_DISPLAY_NAME,
             Document.COLUMN_MIME_TYPE,
             Document.COLUMN_SIZE,
+            Document.COLUMN_LAST_MODIFIED,
             Document.COLUMN_FLAGS
         )
         return projection.toList().toTypedArray()

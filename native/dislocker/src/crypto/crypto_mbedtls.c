@@ -61,6 +61,15 @@ void aes_cbc_decrypt(aes_ctx_t *ctx, const uint8_t *iv,
 	mbedtls_aes_crypt_cbc(&ctx->dec, MBEDTLS_AES_DECRYPT, length, (unsigned char *)iv, in, out);
 }
 
+/* AES-CBC encrypt of a full sector. */
+void aes_cbc_encrypt(aes_ctx_t *ctx, const uint8_t *iv,
+	const uint8_t *in, uint8_t *out, size_t length)
+{
+	uint8_t iv_copy[16];
+	memcpy(iv_copy, iv, 16);
+	mbedtls_aes_crypt_cbc(&ctx->enc, MBEDTLS_AES_ENCRYPT, length, iv_copy, in, out);
+}
+
 /* ---------------- SHA-256 (mbedtls) ---------------- */
 
 void sha256_init(sha256_ctx_t *ctx)

@@ -66,7 +66,8 @@ object KeyGuardService {
     fun decrypt(blob: String): String? {
         return try {
             val raw = Base64.decode(blob, Base64.NO_WRAP)
-            if (raw.size < 13) return null
+            // GCM standard requires 12-byte IV + 16-byte authentication tag = 28 bytes minimum
+            if (raw.size < 28) return null
             val iv = raw.copyOfRange(0, 12)
             val ct = raw.copyOfRange(12, raw.size)
             val key = getOrCreateKey()

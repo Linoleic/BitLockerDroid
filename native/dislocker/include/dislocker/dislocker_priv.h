@@ -54,6 +54,12 @@ struct _dis_ctx {
 	dis_metadata_state_t volume_state;
 
 	uint64_t volume_size;
+
+	/* Persistent I/O daemon (root helper over pipes) */
+	int io_in_fd;
+	int io_out_fd;
+	pid_t io_pid;
+	pthread_mutex_t io_lock;
 };
 
 /* metadata.c */
@@ -69,9 +75,15 @@ int  dis_init_xts(dis_ctx_t *ctx);
 /* access.c */
 int  dis_sector_read(dis_ctx_t *ctx, uint8_t *sector, off_t sector_address);
 int  dis_decrypt_sector(dis_ctx_t *ctx, uint8_t *sector, off_t sector_address);
+int  dis_encrypt_sector(dis_ctx_t *ctx, uint8_t *sector, off_t sector_address);
+int  dis_sector_write(dis_ctx_t *ctx, const uint8_t *sector, off_t sector_address);
 
-/* io.c -- root-based block device read via su dd */
+/* io.c -- root-based block device I/O via persistent daemon or direct fd */
+int  dis_io_init(dis_ctx_t *ctx);
+void dis_io_destroy(dis_ctx_t *ctx);
 int  dis_blk_read(dis_ctx_t *ctx, uint8_t *buf, off_t offset, size_t len);
+int  dis_blk_write(dis_ctx_t *ctx, const uint8_t *buf, off_t offset, size_t len);
+int  dis_blk_sync(dis_ctx_t *ctx);
 
 /* error.c */
 void dis_set_error(const char *fmt, ...);

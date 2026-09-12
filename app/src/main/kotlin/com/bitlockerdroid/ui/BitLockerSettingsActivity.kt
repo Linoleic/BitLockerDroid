@@ -1,221 +1,491 @@
 package com.bitlockerdroid.ui
 
-import android.app.Activity
-import android.app.AlertDialog
-import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
-import android.view.LayoutInflater
-import android.view.View
-import android.view.ViewGroup
-import android.widget.BaseAdapter
-import android.widget.Button
-import android.widget.ListView
-import android.widget.ScrollView
-import android.widget.TextView
+import android.provider.DocumentsContract
 import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
 import com.bitlockerdroid.R
+import com.bitlockerdroid.provider.BitLockerDocumentsProvider
+import com.bitlockerdroid.service.BitLockerDetector
 import com.bitlockerdroid.service.DetectedVolume
 import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.service.UnlockedVolume
+import com.bitlockerdroid.ui.dialogs.CredentialsManagerDialog
+import com.bitlockerdroid.ui.dialogs.LogViewerDialog
+import com.bitlockerdroid.ui.dialogs.ShowPasswordDialog
+import com.bitlockerdroid.ui.settings.SettingsTabContent
+import com.bitlockerdroid.ui.theme.BitLockerTheme
+import com.bitlockerdroid.ui.volumes.VolumesTabContent
 import com.bitlockerdroid.util.LogFile
+import com.bitlockerdroid.util.PreferenceHelper
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
- * Central management screen: lists unlocked BitLocker volumes and allows
- * locking them, plus a diagnostic log viewer. Also shows volumes detected on
- * the bus that are still locked, so the user can unlock them manually even when
- * no popup fired (e.g. after a reformat/re-encrypt the system hook remembers the
- * node and suppresses the broadcast).
+ * Modern Jetpack Compose Material 3 Management and Settings Center.
+ * Features:
+ * - Unified Drive Management & Scanning (merged Refresh & Scan).
+ * - Comprehensive Standardized Settings Tab (auto-unlock, credentials, read-only mode, system diagnostics).
+ * - Live reactivity to device plug/unplug events.
  */
-class BitLockerSettingsActivity : Activity() {
+class BitLockerSettingsActivity : ComponentActivity() {
 
-    private lateinit var volumeList: ListView
-    private lateinit var emptyText: TextView
-    private lateinit var adapter: VolumeAdapter
+    private var unlockedVolumesState = mutableStateListOf<UnlockedVolume>()
+    private var detectedVolumesState = mutableStateListOf<DetectedVolume>()
+    private var isRefreshingState = mutableStateOf(false)
+    private var showLogDialogState = mutableStateOf(false)
+    private var logContentState = mutableStateOf("")
+    private var rememberedCredentialsState = mutableStateListOf<PreferenceHelper.SavedCredential>()
 
-    private lateinit var detectedList: ListView
-    private lateinit var detectedHeader: TextView
-    private lateinit var detectedEmpty: TextView
-    private lateinit var detectedAdapter: DetectedAdapter
+    private var mountReadOnlyState = mutableStateOf(false)
+
+    private val stateChangeListener = object : UnlockManager.StateChangeListener {
+        override fun onUnlockManagerStateChanged() {
+            runOnUiThread {
+                refreshData()
+                refreshRememberedCredentials()
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_settings)
+        UnlockManager.addListener(stateChangeListener)
 
-        // Request notification permission (Android 13+) so the unlock prompt
-        // notification can be shown.
-        if (android.os.Build.VERSION.SDK_INT >= 33) {
+        // Request notification permission (Android 13+)
+        if (Build.VERSION.SDK_INT >= 33) {
             if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
                 != android.content.pm.PackageManager.PERMISSION_GRANTED
             ) {
-                requestPermissions(
-                    arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1001
-                )
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1001)
             }
         }
 
-        // Ensure the core service (with its periodic scan) is running.
+        // Ensure Core Service is running
         try {
-            startService(
-                android.content.Intent(this, com.bitlockerdroid.service.BitLockerCoreService::class.java)
-            )
-        } catch (e: Exception) {
-            // ignore
+            startService(Intent(this, com.bitlockerdroid.service.BitLockerCoreService::class.java))
+        } catch (_: Exception) {}
+
+        PreferenceHelper.purgeLegacyNodeKeys(this)
+        syncPreferences()
+
+        setContent {
+            BitLockerTheme {
+                MainAppScreen(
+                    unlockedVolumes = unlockedVolumesState,
+                    detectedVolumes = detectedVolumesState,
+                    isRefreshing = isRefreshingState.value,
+                    showLogDialog = showLogDialogState.value,
+                    logContent = logContentState.value,
+                    rememberedCredentials = rememberedCredentialsState,
+                    mountReadOnly = mountReadOnlyState.value,
+                    onToggleAutoUnlock = { id, enabled ->
+                        PreferenceHelper.setAutoUnlockEnabled(this, id, enabled)
+                        refreshRememberedCredentials()
+                    },
+                    onMountReadOnlyChange = { enabled ->
+                        mountReadOnlyState.value = enabled
+                        PreferenceHelper.mountReadOnly = enabled
+                        refreshData()
+                        BitLockerDocumentsProvider.notifyRootsChanged(this)
+                    },
+                    onRefreshAndScan = { refreshAndScan(showToast = true) },
+                    onOpenLog = { openLogViewer() },
+                    onCloseLog = { showLogDialogState.value = false },
+                    onClearLog = { clearLogFile() },
+                    onDeleteCredential = { id ->
+                        PreferenceHelper.clearRememberedPassword(this, id)
+                        refreshRememberedCredentials()
+                        Toast.makeText(this, "已清除该设备凭据", Toast.LENGTH_SHORT).show()
+                    },
+                    onClearAllCredentials = {
+                        PreferenceHelper.clearAllRememberedPasswords(this)
+                        refreshRememberedCredentials()
+                        Toast.makeText(this, R.string.settings_credentials_cleared, Toast.LENGTH_SHORT).show()
+                    },
+                    onOpenVolume = { path -> openVolumeInFiles(path) },
+                    onLockVolume = { path -> lockVolume(path) },
+                    onUnlockDetected = { path -> promptUnlock(path) }
+                )
+            }
         }
+    }
 
-        volumeList = findViewById(R.id.volume_list)
-        emptyText = findViewById(R.id.empty_text)
-        adapter = VolumeAdapter(this)
-        volumeList.adapter = adapter
-
-        detectedList = findViewById(R.id.detected_list)
-        detectedHeader = findViewById(R.id.detected_header)
-        detectedEmpty = findViewById(R.id.detected_empty)
-        detectedAdapter = DetectedAdapter(this)
-        detectedList.adapter = detectedAdapter
-
-        findViewById<Button>(R.id.refresh).setOnClickListener {
-            LogFile.write("app", "refresh clicked")
-            refresh()
-            Toast.makeText(this, "Refreshed", Toast.LENGTH_SHORT).show()
-        }
-
-        findViewById<Button>(R.id.view_log).setOnClickListener { showLogDialog() }
-
-        findViewById<Button>(R.id.scan).setOnClickListener {
-            LogFile.write("app", "manual scan triggered")
-            startScan(showToast = true)
-        }
+    override fun onDestroy() {
+        UnlockManager.removeListener(stateChangeListener)
+        super.onDestroy()
     }
 
     override fun onResume() {
         super.onResume()
-        refresh()
+        syncPreferences()
+        refreshData()
+        refreshAndScan(showToast = false)
     }
 
-    /** Runs a detection scan in the background and refreshes the UI when done. */
-    private fun startScan(showToast: Boolean) {
-        if (showToast) Toast.makeText(this, "Scan started, see log", Toast.LENGTH_SHORT).show()
-        Thread {
-            val found = com.bitlockerdroid.service.BitLockerDetector.scanAndDetect(this)
-            LogFile.write("app", "manual scan result: found=$found")
-            runOnUiThread { refresh() }
-        }.start()
+    private fun syncPreferences() {
+        mountReadOnlyState.value = PreferenceHelper.mountReadOnly
+        refreshRememberedCredentials()
     }
 
-    /** Shows the local debug log (module-app portion) in a scrollable dialog. */
-    private fun showLogDialog() {
-        val logText = StringBuilder()
-        val appFile = LogFile.appLogFile()
-        if (appFile != null && appFile.exists()) {
-            logText.append("--- module app log (${appFile.absolutePath}) ---\n\n")
-            logText.append(appFile.readText(Charsets.UTF_8))
-        } else {
-            logText.append("(module app log not written yet)\n")
+    private fun refreshRememberedCredentials() {
+        val creds = PreferenceHelper.getRememberedCredentials(this)
+        rememberedCredentialsState.clear()
+        rememberedCredentialsState.addAll(creds)
+    }
+
+    private fun refreshData() {
+        val currentUnlocked = UnlockManager.unlockedVolumes
+        unlockedVolumesState.clear()
+        unlockedVolumesState.addAll(currentUnlocked)
+
+        val currentDetected = UnlockManager.detectedVolumes
+        detectedVolumesState.clear()
+        detectedVolumesState.addAll(currentDetected)
+    }
+
+    /** Unified Refresh and Scan */
+    private fun refreshAndScan(showToast: Boolean) {
+        if (isRefreshingState.value) return
+        isRefreshingState.value = true
+        if (showToast) {
+            Toast.makeText(this, R.string.scanning_and_refreshing, Toast.LENGTH_SHORT).show()
         }
-        logText.append("\n\n--- system hook log (/data/local/tmp/bitlockerdroid.log) ---\n\n")
-        try {
-            val tmp = java.io.File("/data/local/tmp/bitlockerdroid.log")
-            if (tmp.exists()) logText.append(tmp.readText(Charsets.UTF_8))
-            else logText.append("(not found — hook may not have written yet)")
-        } catch (e: Exception) {
-            logText.append("(cannot read: ${e.message})")
-        }
 
-        val tv = TextView(this).apply {
-            text = logText.toString()
-            textSize = 10f
-            setPadding(24, 24, 24, 24)
+        lifecycleScope.launch(Dispatchers.IO) {
+            var found = 0
+            try {
+                if (showToast) {
+                    UnlockManager.clearManualLockSuppression()
+                }
+                com.bitlockerdroid.util.DeviceIdentity.clearCache()
+                found = BitLockerDetector.scanAndDetect(this@BitLockerSettingsActivity)
+                // If auto-unlock was triggered for any volume, wait up to 6s so UI immediately shows it
+                UnlockManager.awaitPendingUnlocks(6000)
+                LogFile.write("app", "manual refresh & scan result: found=$found")
+            } catch (e: Throwable) {
+                LogFile.write("app", "refreshAndScan error: ${e.message}")
+            } finally {
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
+                    isRefreshingState.value = false
+                    refreshData()
+                    refreshRememberedCredentials()
+                    if (showToast) {
+                        Toast.makeText(
+                            this@BitLockerSettingsActivity,
+                            getString(R.string.scan_and_refresh_done, found),
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            }
         }
-        val sv = ScrollView(this)
-        sv.addView(tv)
-
-        AlertDialog.Builder(this)
-            .setTitle("BitLocker debug log")
-            .setView(sv)
-            .setPositiveButton("Close", null)
-            .show()
     }
 
-    private fun refresh() {
-        val volumes = UnlockManager.unlockedVolumes
-        adapter.update(volumes)
-        emptyText.visibility = if (volumes.isEmpty()) View.VISIBLE else View.GONE
-        volumeList.visibility = if (volumes.isEmpty()) View.GONE else View.VISIBLE
-
-        // Detected-but-locked section.
-        val detected = UnlockManager.detectedVolumes
-        detectedAdapter.update(detected)
-        val anyDetected = detected.isNotEmpty()
-        detectedHeader.visibility = if (anyDetected) View.VISIBLE else View.GONE
-        detectedEmpty.visibility = if (anyDetected) View.GONE else View.VISIBLE
-        detectedList.visibility = if (anyDetected) View.VISIBLE else View.GONE
-    }
-
-    /** Launches the unlock dialog for a detected (locked) volume. */
     private fun promptUnlock(devicePath: String) {
-        LogFile.write("app", "manual unlock requested for $devicePath")
-        UnlockManager.showUnlockDialog(this, devicePath, 0)
+        val guid = UnlockManager.detectedVolumes.firstOrNull { it.devicePath == devicePath }?.guid
+            ?: BitLockerDetector.getVolumeGuid(devicePath)
+        LogFile.write("app", "manual unlock requested for $devicePath (guid=$guid)")
+        UnlockManager.showUnlockDialog(this, devicePath, 0, guid)
     }
 
-    private inner class VolumeAdapter(private val ctx: Context) : BaseAdapter() {
-        private val items = ArrayList<UnlockedVolume>()
+    private fun lockVolume(devicePath: String) {
+        LogFile.write("app", "locking volume $devicePath")
+        UnlockManager.lock(devicePath)
+        refreshData()
+        Toast.makeText(this, R.string.locked, Toast.LENGTH_SHORT).show()
+    }
 
-        fun update(v: List<UnlockedVolume>) {
-            items.clear()
-            items.addAll(v)
-            notifyDataSetChanged()
+    private fun openVolumeInFiles(devicePath: String) {
+        LogFile.write("app", "open requested for $devicePath")
+        val core = UnlockManager.get(devicePath)
+        if (core == null) {
+            Toast.makeText(this, R.string.open_failed, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val serial = try { core.reader.volumeSerial() } catch (_: Exception) { 0L }
+        val rootId = BitLockerDocumentsProvider.rootIdFor(devicePath, serial)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            addCategory(Intent.CATEGORY_DEFAULT)
+            setDataAndType(
+                DocumentsContract.buildRootUri(BitLockerDocumentsProvider.AUTHORITY, rootId),
+                DocumentsContract.Document.MIME_TYPE_DIR
+            )
+            addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
         }
 
-        override fun getCount(): Int = items.size
-        override fun getItem(pos: Int): UnlockedVolume = items[pos]
-        override fun getItemId(pos: Int): Long = pos.toLong()
-
-        override fun getView(pos: Int, convertView: View?, parent: ViewGroup): View {
-            val v = convertView ?: LayoutInflater.from(ctx)
-                .inflate(R.layout.item_volume, parent, false)
-            val volume = items[pos]
-
-            v.findViewById<TextView>(R.id.volume_title).text = volume.label
-            v.findViewById<TextView>(R.id.volume_path).text = volume.devicePath
-            v.findViewById<TextView>(R.id.volume_size).text =
-                android.text.format.Formatter.formatFileSize(ctx, volume.size)
-
-            v.findViewById<Button>(R.id.lock_button).setOnClickListener {
-                UnlockManager.lock(volume.devicePath)
-                Toast.makeText(ctx, R.string.locked, Toast.LENGTH_SHORT).show()
-                refresh()
+        try {
+            intent.setPackage("com.google.android.documentsui")
+            startActivity(intent)
+        } catch (_: Exception) {
+            try {
+                intent.setPackage("com.android.documentsui")
+                startActivity(intent)
+            } catch (_: Exception) {
+                try {
+                    intent.setPackage(null)
+                    startActivity(intent)
+                } catch (_: Exception) {
+                    Toast.makeText(this, R.string.open_failed, Toast.LENGTH_SHORT).show()
+                }
             }
-            return v
         }
     }
 
-    private inner class DetectedAdapter(private val ctx: Context) : BaseAdapter() {
-        private val items = ArrayList<DetectedVolume>()
+    private fun formatLogForDisplay(rawText: String): String {
+        if (rawText.isBlank()) return ""
+        val lines = rawText.lines()
+        val entries = ArrayList<String>()
+        var currentEntry = StringBuilder()
+        val headerRegex = Regex("""^\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}""")
 
-        fun update(v: List<DetectedVolume>) {
-            items.clear()
-            items.addAll(v)
-            notifyDataSetChanged()
+        for (line in lines) {
+            if (line.isEmpty()) continue
+            if (headerRegex.containsMatchIn(line)) {
+                if (currentEntry.isNotEmpty()) {
+                    entries.add(currentEntry.toString().trimEnd())
+                    currentEntry = StringBuilder()
+                }
+                currentEntry.append(line)
+            } else {
+                if (currentEntry.isNotEmpty()) {
+                    currentEntry.append("\n").append(line)
+                } else {
+                    currentEntry.append(line)
+                }
+            }
+        }
+        if (currentEntry.isNotEmpty()) {
+            entries.add(currentEntry.toString().trimEnd())
         }
 
-        override fun getCount(): Int = items.size
-        override fun getItem(pos: Int): DetectedVolume = items[pos]
-        override fun getItemId(pos: Int): Long = pos.toLong()
+        return entries.asReversed().joinToString("\n")
+    }
 
-        override fun getView(pos: Int, convertView: View?, parent: ViewGroup): View {
-            val v = convertView ?: LayoutInflater.from(ctx)
-                .inflate(R.layout.item_detected, parent, false)
-            val detected = items[pos]
-
-            v.findViewById<TextView>(R.id.detected_path).text = detected.devicePath
-            v.findViewById<TextView>(R.id.detected_hint).text =
-                getString(R.string.detected_hint)
-
-            v.findViewById<Button>(R.id.detected_unlock_button).setOnClickListener {
-                promptUnlock(detected.devicePath)
+    private fun openLogViewer() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val appFile = LogFile.appLogFile()
+            val text = if (appFile != null && appFile.exists()) {
+                try {
+                    val raw = appFile.readText(Charsets.UTF_8)
+                    formatLogForDisplay(raw)
+                } catch (e: Exception) {
+                    "读取日志失败: ${e.message}"
+                }
+            } else {
+                "(暂无应用日志)"
             }
-            return v
+            withContext(Dispatchers.Main) {
+                logContentState.value = text
+                showLogDialogState.value = true
+            }
+        }
+    }
+
+    private fun clearLogFile() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val appFile = LogFile.appLogFile()
+            if (appFile != null && appFile.exists()) {
+                try {
+                    appFile.writeText("")
+                } catch (_: Exception) {}
+            }
+            withContext(Dispatchers.Main) {
+                logContentState.value = ""
+                Toast.makeText(this@BitLockerSettingsActivity, R.string.log_cleared, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MainAppScreen(
+    unlockedVolumes: List<UnlockedVolume>,
+    detectedVolumes: List<DetectedVolume>,
+    isRefreshing: Boolean,
+    showLogDialog: Boolean,
+    logContent: String,
+    rememberedCredentials: List<PreferenceHelper.SavedCredential>,
+    mountReadOnly: Boolean,
+    onToggleAutoUnlock: (String, Boolean) -> Unit,
+    onMountReadOnlyChange: (Boolean) -> Unit,
+    onRefreshAndScan: () -> Unit,
+    onOpenLog: () -> Unit,
+    onCloseLog: () -> Unit,
+    onClearLog: () -> Unit,
+    onDeleteCredential: (String) -> Unit,
+    onClearAllCredentials: () -> Unit,
+    onOpenVolume: (String) -> Unit,
+    onLockVolume: (String) -> Unit,
+    onUnlockDetected: (String) -> Unit
+) {
+    var selectedTab by remember { mutableStateOf(0) }
+    var showCredentialsDialog by remember { mutableStateOf(false) }
+    var credentialForPasswordDialog by remember { mutableStateOf<PreferenceHelper.SavedCredential?>(null) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = if (selectedTab == 0) Icons.Default.Lock else Icons.Default.Settings,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = if (selectedTab == 0) stringResource(R.string.app_name) else stringResource(R.string.tab_settings),
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (selectedTab == 0) {
+                                Text(
+                                    text = "BitLocker 存储管理器",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                },
+                actions = {
+                    if (selectedTab == 0) {
+                        // Unified Refresh & Scan Button
+                        IconButton(onClick = onRefreshAndScan, enabled = !isRefreshing) {
+                            if (isRefreshing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = stringResource(R.string.scan_and_refresh)
+                                )
+                            }
+                        }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
+            )
+        },
+        bottomBar = {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface
+            ) {
+                NavigationBarItem(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Default.Home,
+                            contentDescription = stringResource(R.string.tab_drives)
+                        )
+                    },
+                    label = { Text(stringResource(R.string.tab_drives)) }
+                )
+                NavigationBarItem(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = stringResource(R.string.tab_settings)
+                        )
+                    },
+                    label = { Text(stringResource(R.string.tab_settings)) }
+                )
+            }
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
+            if (selectedTab == 0) {
+                VolumesTabContent(
+                    unlockedVolumes = unlockedVolumes,
+                    detectedVolumes = detectedVolumes,
+                    isRefreshing = isRefreshing,
+                    onRefreshAndScan = onRefreshAndScan,
+                    onOpenVolume = onOpenVolume,
+                    onLockVolume = onLockVolume,
+                    onUnlockDetected = onUnlockDetected
+                )
+            } else {
+                SettingsTabContent(
+                    rememberedCredentials = rememberedCredentials,
+                    mountReadOnly = mountReadOnly,
+                    onOpenCredentialsManager = { showCredentialsDialog = true },
+                    onMountReadOnlyChange = onMountReadOnlyChange,
+                    onOpenLog = onOpenLog
+                )
+            }
+        }
+
+        // Diagnostic Log Dialog
+        if (showLogDialog) {
+            LogViewerDialog(
+                logContent = logContent,
+                onClose = onCloseLog,
+                onClear = onClearLog,
+                onRefresh = onOpenLog
+            )
+        }
+
+        // Credentials Management Dialog
+        if (showCredentialsDialog) {
+            CredentialsManagerDialog(
+                credentials = rememberedCredentials,
+                onToggleAutoUnlock = onToggleAutoUnlock,
+                onShowPassword = { credentialForPasswordDialog = it },
+                onDeleteCredential = onDeleteCredential,
+                onClearAllCredentials = onClearAllCredentials,
+                onDismiss = { showCredentialsDialog = false }
+            )
+        }
+
+        // Show Saved Password Dialog
+        credentialForPasswordDialog?.let { cred ->
+            ShowPasswordDialog(
+                credential = cred,
+                onDismiss = { credentialForPasswordDialog = null }
+            )
         }
     }
 }

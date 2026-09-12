@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
@@ -11,7 +12,7 @@ android {
         applicationId = "com.bitlockerdroid"
         minSdk = 33
         targetSdk = 34
-        versionCode = 1
+        versionCode = 3
         versionName = "1.0.0"
 
         ndk {
@@ -23,8 +24,9 @@ android {
         externalNativeBuild {
             cmake {
                 arguments += listOf(
-                    "-DANDROID_STL=c++_shared",
-                    "-DCMAKE_BUILD_TYPE=Release"
+                    "-DANDROID_STL=none",
+                    "-DCMAKE_BUILD_TYPE=Release",
+                    "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
                 )
             }
         }
@@ -56,6 +58,11 @@ android {
         jvmTarget = "17"
     }
 
+    buildFeatures {
+        compose = true
+        viewBinding = true
+    }
+
     packaging {
         jniLibs {
             // Extract .so files to disk (extractNativeLibs=1). Some ROMs
@@ -76,6 +83,19 @@ android {
 }
 
 dependencies {
+    val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
+    implementation(composeBom)
+    androidTestImplementation(composeBom)
+
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.activity:activity-compose:1.9.3")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")

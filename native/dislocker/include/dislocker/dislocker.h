@@ -65,9 +65,19 @@ dis_ctx_t *dis_open_volume_recovery(const char *path, off_t offset,
  * `buffer`. Returns the number of bytes decrypted, or a negative error. */
 int dis_read_decrypted(dis_ctx_t *ctx, uint8_t *buffer, off_t offset, size_t size);
 
+/* Write `size` bytes from `buffer` at `offset` (relative to the decrypted volume).
+ * Handles partial sectors via Read-Modify-Write and enforces the write barrier.
+ * Returns the number of bytes written, or a negative error. */
+int dis_write_encrypted(dis_ctx_t *ctx, const uint8_t *buffer, off_t offset, size_t size);
+
 /* Decrypt a pre-read encrypted region (offset/size must be sector-aligned).
  * Used when the caller reads the raw sectors itself (e.g. via su). */
 int dis_decrypt_region(dis_ctx_t *ctx, const uint8_t *in, uint8_t *out,
+	off_t offset, size_t size);
+
+/* Encrypt a plaintext region (offset/size must be sector-aligned).
+ * Writes ciphertext to `out`. Enforces write-barrier against metadata area. */
+int dis_encrypt_region(dis_ctx_t *ctx, const uint8_t *in, uint8_t *out,
 	off_t offset, size_t size);
 
 /* Close and free the session, wiping key material. */

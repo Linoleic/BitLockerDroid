@@ -32,15 +32,76 @@ object NativeBridge {
      */
     external fun nativeSessionInfo(handle: Long): LongArray
 
+    /** Returns the volume GUID string (e.g. 4967d63b-2e29-4ad8-8399-f6a339e3d001) or null. */
+    external fun nativeGetVolumeGuid(handle: Long): String?
+
     /** Reads [size] decrypted bytes at [offset]; returns null on error. */
     external fun nativeRead(handle: Long, offset: Long, size: Int): ByteArray?
+
+    /** Writes [size] bytes from [data] at decrypted [offset]; returns bytes written or -1 on error. */
+    external fun nativeWrite(handle: Long, offset: Long, data: ByteArray, size: Int): Int
 
     /** Decrypts an already-read encrypted sector buffer at [offset]. */
     external fun nativeDecryptBuffer(handle: Long, input: ByteArray, offset: Long): ByteArray?
 
+    /** Encrypts a plaintext sector buffer at [offset]. Enforces write barrier. */
+    external fun nativeEncryptBuffer(handle: Long, input: ByteArray, offset: Long): ByteArray?
+
     external fun nativeClose(handle: Long)
 
     external fun nativeGetLastError(): String
+
+    // ---------------- NTFS-3G Integration ----------------
+
+    /** Mounts the NTFS volume over the dislocker session; returns native ntfs volume handle or 0. */
+    external fun nativeNtfsMount(handle: Long, readOnly: Boolean): Long
+
+    /** Unmounts the NTFS volume. */
+    external fun nativeNtfsUmount(volHandle: Long): Int
+
+    /** Creates a file (isDir=false) or directory (isDir=true) in parentPath. Returns created MFT number (>= 0) or negative error. */
+    external fun nativeNtfsCreate(volHandle: Long, parentPath: String?, name: String, isDir: Boolean): Long
+
+    /** Deletes a file or empty directory by path. Returns 0 on success. */
+    external fun nativeNtfsDelete(volHandle: Long, path: String): Int
+
+    /** Renames/moves a file or directory from oldPath to newPath. Returns 0 on success. */
+    external fun nativeNtfsRename(volHandle: Long, oldPath: String, newPath: String): Int
+
+    /** Writes [count] bytes from [data] at [offset] in file [path]. Returns bytes written or -1. */
+    external fun nativeNtfsWrite(volHandle: Long, path: String, offset: Long, data: ByteArray, count: Int): Long
+
+    /** Truncates or extends file [path] to [newSize]. Returns 0 on success. */
+    external fun nativeNtfsTruncate(volHandle: Long, path: String, newSize: Long): Long
+
+    /** Returns long[2] { totalBytes, freeBytes } or null on error. */
+    external fun nativeNtfsGetSpace(volHandle: Long): LongArray?
+
+    // ---------------- FatFs Integration (FAT32 & exFAT) ----------------
+
+    /** Mounts the FAT/exFAT volume over the dislocker session; returns native volume handle or 0. */
+    external fun nativeFatfsMount(handle: Long, readOnly: Boolean): Long
+
+    /** Unmounts the FatFs volume. */
+    external fun nativeFatfsUmount(volHandle: Long): Int
+
+    /** Creates a file (isDir=false) or directory (isDir=true) in parentPath. Returns created cluster or negative error. */
+    external fun nativeFatfsCreate(volHandle: Long, parentPath: String?, name: String, isDir: Boolean): Long
+
+    /** Deletes a file or directory at path. Returns 0 on success. */
+    external fun nativeFatfsDelete(volHandle: Long, path: String): Int
+
+    /** Renames/moves a file or directory from oldPath to newPath. Returns 0 on success. */
+    external fun nativeFatfsRename(volHandle: Long, oldPath: String, newPath: String): Int
+
+    /** Writes [count] bytes from [data] at [offset] in file [path]. Returns bytes written or -1. */
+    external fun nativeFatfsWrite(volHandle: Long, path: String, offset: Long, data: ByteArray, count: Int): Long
+
+    /** Truncates or extends file [path] to [newSize]. Returns 0 on success. */
+    external fun nativeFatfsTruncate(volHandle: Long, path: String, newSize: Long): Long
+
+    /** Returns long[2] { totalBytes, freeBytes } or null on error. */
+    external fun nativeFatfsGetSpace(volHandle: Long): LongArray?
 
     // ---------------- convenience wrappers ----------------
 

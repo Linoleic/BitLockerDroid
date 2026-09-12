@@ -87,6 +87,26 @@ int dis_sector_read(dis_ctx_t *ctx, uint8_t *sector, off_t sector_address)
 }
 
 /*
+ * Re-encrypt `sector` and write it to the block device via `dis_blk_write`.
+ */
+int dis_sector_write(dis_ctx_t *ctx, const uint8_t *sector, off_t sector_address)
+{
+	if (!ctx || !sector)
+		return FALSE;
+
+	uint8_t enc[4096];
+	if (ctx->sector_size > sizeof(enc))
+		return FALSE;
+
+	memcpy(enc, sector, ctx->sector_size);
+	if (!dis_encrypt_sector(ctx, enc, sector_address))
+		return FALSE;
+
+	int nb = dis_blk_write(ctx, enc, sector_address, ctx->sector_size);
+	return nb == (int)ctx->sector_size ? TRUE : FALSE;
+}
+
+/*
  * Decrypt one already-read encrypted sector in place.
  * sector_address is the byte offset (multiple of sector_size); the XTS/CBC
  * tweak/IV is derived from it. Returns TRUE on success.
@@ -124,19 +144,8 @@ int dis_decrypt_sector(dis_ctx_t *ctx, uint8_t *sector, off_t sector_address)
 		uint64_t addr = (uint64_t)(ctx->offset + sector_address); /* LE */
 		for (int i = 0; i < 8; i++)
 			iv[i] = (uint8_t)(addr >> (i * 8));
-
-		DLOG("cbc decrypt sector_addr=0x%llx fvek_len=%d in=%02x%02x%02x%02x fvek=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
-			(unsigned long long)sector_address, ctx->fvek_len,
-			sector[0], sector[1], sector[2], sector[3],
-			ctx->fvek[0], ctx->fvek[1], ctx->fvek[2], ctx->fvek[3],
-			ctx->fvek[4], ctx->fvek[5], ctx->fvek[6], ctx->fvek[7],
-			ctx->fvek[8], ctx->fvek[9], ctx->fvek[10], ctx->fvek[11],
-			ctx->fvek[12], ctx->fvek[13], ctx->fvek[14], ctx->fvek[15]);
-
 		aes_encrypt_ecb(&ctx->cbc_enc, iv, iv);   /* FVEK encrypt the IV */
 		aes_cbc_decrypt(&ctx->cbc_dec, iv, sector, sector, ctx->sector_size);
-
-		DLOG("cbc decrypted out=%02x%02x%02x%02x", sector[0], sector[1], sector[2], sector[3]);
 		break;
 	}
 
@@ -146,3 +155,74 @@ int dis_decrypt_sector(dis_ctx_t *ctx, uint8_t *sector, off_t sector_address)
 
 	return TRUE;
 }
+
+/*
+ * Encrypt one plaintext sector in place.
+ * sector_address is the byte offset (multiple of sector_size); the XTS/CBC
+ * tweak/IV is derived from it. Returns TRUE on success.
+ *
+ * Enforces a strict write barrier: any attempt to write into the protected
+ * BitLocker metadata area (sector_address < boot_sectors_backup) is blocked.
+ */
+int dis_encrypt_sector(dis_ctx_t *ctx, uint8_t *sector, off_t sector_address)
+{
+	if (!ctx || !sector)
+		return FALSE;
+
+	/* Write barrier check: protect BitLocker volume header (sectors 0..15) and metadata blocks */
+	size_t header_bytes = 8192;
+	if (ctx->information && ctx->information->nb_backup_sectors > 0) {
+		header_bytes = (size_t)ctx->information->nb_backup_sectors * ctx->sector_size;
+	}
+	if (sector_address < (off_t)header_bytes) {
+		DLOG("FATAL: Write barrier violation: sector_address=0x%llx < header_bytes=0x%zx",
+			(unsigned long long)sector_address, header_bytes);
+		return FALSE;
+	}
+	if (ctx->information) {
+		for (int i = 0; i < 3; i++) {
+			off_t info_off = (off_t)ctx->information->information_off[i];
+			if (info_off != 0 && sector_address >= info_off && sector_address < info_off + 0x10000) {
+				DLOG("FATAL: Write barrier violation: sector_address=0x%llx in metadata block %d (0x%llx)",
+					(unsigned long long)sector_address, i, (unsigned long long)info_off);
+				return FALSE;
+			}
+		}
+	}
+
+	switch (ctx->algorithm) {
+	case AES_XTS_128:
+	case AES_XTS_256: {
+		/* XTS IV: little-endian sector number */
+		uint8_t iv[16];
+		memset(iv, 0, sizeof(iv));
+		uint64_t sector_num = (uint64_t)(sector_address / ctx->sector_size);
+		for (int i = 0; i < 8; i++)
+			iv[i] = (uint8_t)(sector_num >> (i * 8));
+
+		aes_xts_encrypt(&ctx->xts_crypt, &ctx->xts_tweak, sector, sector,
+			ctx->sector_size, iv);
+		break;
+	}
+
+	case AES_128_NO_DIFFUSER:
+	case AES_256_NO_DIFFUSER:
+	case AES_128_DIFFUSER:
+	case AES_256_DIFFUSER: {
+		uint8_t iv[16];
+		memset(iv, 0, sizeof(iv));
+		uint64_t addr = (uint64_t)(ctx->offset + sector_address); /* LE */
+		for (int i = 0; i < 8; i++)
+			iv[i] = (uint8_t)(addr >> (i * 8));
+		aes_encrypt_ecb(&ctx->cbc_enc, iv, iv);   /* FVEK encrypt the IV */
+		aes_cbc_encrypt(&ctx->cbc_enc, iv, sector, sector, ctx->sector_size);
+		break;
+	}
+
+	default:
+		return FALSE;
+	}
+
+	return TRUE;
+}
+

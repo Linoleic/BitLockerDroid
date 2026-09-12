@@ -1,19 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="48dp"
-    android:height="48dp"
-    android:viewportWidth="48"
-    android:viewportHeight="48">
-    <path
-        android:fillColor="#1E6FBA"
-        android:pathData="M24,2 L44,12 L44,24 C44,34 35,42 24,46 C13,42 4,34 4,24 L4,12 Z" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M24,10 L34,15 L34,24 C34,30 30,36 24,38.5 C18,36 14,30 14,24 L14,15 Z" />
-    <path
-        android:fillColor="#1E6FBA"
-        android:pathData="M24,16 L31,19 L31,25 C31,29 28,33 24,34.6 C20,33 17,29 17,25 L17,19 Z" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M20.5,22 L23,24.5 L27.5,19.5 L29,21 L23,27.5 L19,23.5 Z" />
-</vector>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/ic_launcher_background" />
+    <item android:drawable="@drawable/ic_launcher_foreground" />
+</layer-list>

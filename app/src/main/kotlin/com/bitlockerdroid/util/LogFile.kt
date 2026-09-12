@@ -54,32 +54,14 @@ object LogFile {
     fun write(scope: String, message: String) {
         val line = buildLine(scope, message)
 
-        // 1) app files dir, if available
+        // app files dir (app-private sandbox)
         val appFile = appLogFile()
         if (appFile != null) {
             try {
                 appendCapped(appFile, line)
             } catch (e: Throwable) {
-                // ignore; try the fallback below
+                // ignore
             }
-        }
-
-        // 2) /data/local/tmp fallback (works from system_server; also useful
-        //    to read without run-as). On some ROMs this is not writable; we
-        //    keep trying every time in case permissions change.
-        try {
-            val tmp = File("/data/local/tmp/bitlockerdroid.log")
-            appendCapped(tmp, line)
-        } catch (e: Throwable) {
-            // not writable here; app-files log may still have worked
-        }
-
-        // 3) /data/local/tmp with a broader name as an additional fallback.
-        try {
-            val tmp2 = File("/data/local/tmp/bitlocker.log")
-            appendCapped(tmp2, line)
-        } catch (e: Throwable) {
-            // ignore
         }
 
         // Also mirror to logcat. Use INFO level: debug (Log.d) is suppressed

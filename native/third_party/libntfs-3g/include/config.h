@@ -1,0 +1,37 @@
+#ifndef _NTFS_CONFIG_H
+#define _NTFS_CONFIG_H
+
+#define HAVE_STDIO_H 1
+#define HAVE_STDLIB_H 1
+#define HAVE_STRING_H 1
+#define HAVE_UNISTD_H 1
+#define HAVE_ERRNO_H 1
+#define HAVE_FCNTL_H 1
+#define HAVE_SYS_STAT_H 1
+#define HAVE_SYS_TYPES_H 1
+#define HAVE_INTTYPES_H 1
+#define HAVE_STDINT_H 1
+#define HAVE_TIME_H 1
+#define HAVE_LIMITS_H 1
+#define HAVE_WCHAR_H 1
+#define HAVE_PTHREAD_H 1
+#define HAVE_CTYPE_H 1
+#define HAVE_STDARG_H 1
+#define HAVE_LOCALE_H 1
+#define HAVE_LINUX_FS_H 1
+#define HAVE_LINUX_HDREG_H 1
+#define HAVE_SYS_IOCTL_H 1
+#define HAVE_REALPATH 1
+#define HAVE_STRSEP 1
+#define HAVE_FFS 1
+#define HAVE_MBSINIT 1
+
+#define MAJOR_IN_SYSMACROS 1
+#define HAVE_SYS_SYSMACROS_H 1
+
+#define WORDS_LITTLEENDIAN 1
+#define _FILE_OFFSET_BITS 64
+#define _GNU_SOURCE 1
+#define PACKAGE_VERSION "2022.10.3"
+
+#endif /* _NTFS_CONFIG_H */

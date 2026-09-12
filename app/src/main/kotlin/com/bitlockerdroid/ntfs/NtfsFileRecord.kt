@@ -23,6 +23,14 @@ class NtfsFileRecord(
             return null
         }
 
+    val parentRecord: Long
+        get() {
+            for (a in attributes) {
+                if (a.type == TYPE_FILE_NAME && a is FileNameAttribute) return a.parentRecord
+            }
+            return 5L
+        }
+
     val isDirectory: Boolean
         get() = attributes.any { it.type == TYPE_INDEX_ROOT }
 
@@ -69,7 +77,8 @@ class NtfsFileRecord(
 /** A file name from a $FILE_NAME attribute (UTF-16LE). */
 class FileNameAttribute(
     type: Int,
-    val name: String
+    val name: String,
+    val parentRecord: Long = 5L
 ) : NtfsAttribute(type)
 
 /** $DATA attribute with resident content. */
@@ -156,8 +165,9 @@ object NtfsFileRecordParser {
                 NtfsFileRecord.TYPE_FILE_NAME -> {
                     val valuePos = attrOff.toInt() + valueOff.toInt()
                     if (valuePos >= 0 && valuePos + valueLen.toInt() <= rec.size) {
+                        val parentRef = le64(rec, valuePos) and 0x0000ffffffffffffL
                         val name = parseFileName(rec, valuePos, valueLen.toInt())
-                        if (name != null) attrs.add(FileNameAttribute(type.toInt(), name))
+                        if (name != null) attrs.add(FileNameAttribute(type.toInt(), name, parentRef))
                     }
                 }
                 NtfsFileRecord.TYPE_DATA -> {

@@ -469,15 +469,18 @@ int dis_retrieve_keys(dis_ctx_t *ctx, const uint8_t *user_password,
 	uint16_t vmk_max = is_recovery ? 0xfff : 0x2000;
 	vmk_datum = find_vmk_datum_in_range(ctx, vmk_min, vmk_max);
 	if (!vmk_datum) {
-		dis_set_error("No VMK datum in priority range 0x%04x-0x%04x found",
-			vmk_min, vmk_max);
+		if (is_recovery) {
+			dis_set_error("Volume does not contain a recovery key protector (range 0x%04x-0x%04x)", vmk_min, vmk_max);
+		} else {
+			dis_set_error("Volume does not contain a password protector (range 0x%04x-0x%04x)", vmk_min, vmk_max);
+		}
 		return FALSE;
 	}
 
 	/* get the nested stretch-key datum for the salt */
 	uint8_t *stretch_datum = NULL;
 	if (!get_nested_datumvaluetype(vmk_datum, 0xffff, DATUMS_VALUE_STRETCH_KEY, &stretch_datum)) {
-		dis_set_error("No stretch-key datum found in VMK datum");
+		dis_set_error("Corrupted metadata: no stretch-key datum found in VMK");
 		return FALSE;
 	}
 	memcpy(salt, ((datum_stretch_key_t *)stretch_datum)->salt, 16);
@@ -485,14 +488,14 @@ int dis_retrieve_keys(dis_ctx_t *ctx, const uint8_t *user_password,
 	/* get the nested AES-CCM datum holding the encrypted VMK */
 	uint8_t *aesccm_datum = NULL;
 	if (!get_nested_datumvaluetype(vmk_datum, 0xffff, DATUMS_VALUE_AES_CCM, &aesccm_datum)) {
-		dis_set_error("No AES-CCM datum found in VMK datum");
+		dis_set_error("Corrupted metadata: no AES-CCM datum found in VMK");
 		return FALSE;
 	}
 
 	/* build the unwrapping key */
 	if (is_recovery) {
 		if (!recovery_key_to_binary(recovery_key, recovery_key_len, unwrap_key)) {
-			dis_set_error("Invalid recovery key format");
+			dis_set_error("Invalid recovery key format (must be 48 digits in 8 groups)");
 			return FALSE;
 		}
 		/* stretch_recovery_key: SHA256(binary recovery key) then chain hash.
@@ -516,7 +519,11 @@ int dis_retrieve_keys(dis_ctx_t *ctx, const uint8_t *user_password,
 	if (!get_vmk((datum_aes_ccm_t *)aesccm_datum, unwrap_key, unwrap_key_len,
 		vmk_buf, sizeof(vmk_buf), &vmk_len))
 	{
-		dis_set_error("Wrong password: VMK decryption failed (MAC mismatch)");
+		if (is_recovery) {
+			dis_set_error("Wrong recovery key: VMK decryption failed (MAC mismatch)");
+		} else {
+			dis_set_error("Wrong password: VMK decryption failed (MAC mismatch)");
+		}
 		memset(unwrap_key, 0, sizeof(unwrap_key));
 		return FALSE;
 	}
@@ -554,11 +561,6 @@ int dis_retrieve_keys(dis_ctx_t *ctx, const uint8_t *user_password,
 		}
 	}
 
-	/* dump VMK key and FVEK decrypt result */
-	DLOG("VMK key(%zu): %02x%02x%02x%02x%02x%02x%02x%02x",
-		vmk_key_size, vmk_key[0], vmk_key[1], vmk_key[2], vmk_key[3],
-		vmk_key[4], vmk_key[5], vmk_key[6], vmk_key[7]);
-
 	if (!found) {
 		dis_set_error("No FVEK datum could be decrypted with the VMK");
 		return FALSE;
@@ -572,13 +574,6 @@ int dis_retrieve_keys(dis_ctx_t *ctx, const uint8_t *user_password,
 	}
 	uint8_t *fvek_key = fvek_buf + sizeof(datum_key_t);
 	size_t fvek_key_len = fvek_len - sizeof(datum_key_t);
-
-	/* dump full FVEK buffer for diagnosis */
-	DLOG("FVEK full len=%zu: %02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
-		fvek_len, fvek_buf[0], fvek_buf[1], fvek_buf[2], fvek_buf[3],
-		fvek_buf[4], fvek_buf[5], fvek_buf[6], fvek_buf[7],
-		fvek_buf[8], fvek_buf[9], fvek_buf[10], fvek_buf[11],
-		fvek_buf[12], fvek_buf[13], fvek_buf[14], fvek_buf[15]);
 
 	/* store the FVEK key material */
 	memcpy(ctx->fvek, fvek_key, fvek_key_len > 64 ? 64 : fvek_key_len);

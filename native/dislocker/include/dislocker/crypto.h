@@ -45,9 +45,11 @@ void aes_xts_decrypt(aes_ctx_t *crypt_ctx, aes_ctx_t *tweak_ctx,
 void aes_xts_encrypt(aes_ctx_t *crypt_ctx, aes_ctx_t *tweak_ctx,
 	const uint8_t *in, uint8_t *out, size_t length, const uint8_t iv[16]);
 
-/* AES-CBC decrypt of a full sector (used by legacy BitLocker AES-CBC modes).
+/* AES-CBC decrypt/encrypt of a full sector (used by legacy BitLocker AES-CBC modes).
  * iv: 16-byte initialisation vector; length must be a multiple of 16. */
 void aes_cbc_decrypt(aes_ctx_t *ctx, const uint8_t *iv,
+	const uint8_t *in, uint8_t *out, size_t length);
+void aes_cbc_encrypt(aes_ctx_t *ctx, const uint8_t *iv,
 	const uint8_t *in, uint8_t *out, size_t length);
 
 /* ---------------- SHA-256 ---------------- */
