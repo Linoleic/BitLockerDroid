@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -40,13 +41,19 @@ fun SettingsTabContent(
         value = withContext(Dispatchers.IO) { RootAccess.getRootSolution() }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.TopCenter
     ) {
+        Column(
+            modifier = Modifier
+                .fillMaxHeight()
+                .widthIn(max = 720.dp)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
         // Group 1: Device Credentials & Auto-Unlock Summary Entry
         SettingsGroup(title = "设备与凭据") {
             val totalCount = rememberedCredentials.size
@@ -115,5 +122,6 @@ fun SettingsTabContent(
         }
 
         Spacer(modifier = Modifier.height(16.dp))
+        }
     }
 }

@@ -32,6 +32,7 @@ import com.bitlockerdroid.util.DeviceIdentity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun UnlockedVolumeCard(
     volume: UnlockedVolume,
@@ -288,9 +289,10 @@ fun UnlockedVolumeCard(
             Spacer(modifier = Modifier.height(12.dp))
 
             // Badges row: FileSystem, Cipher, Size, Writable
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 if (volume.fsType.isNotBlank()) {
                     MetaChip(text = volume.fsType)
