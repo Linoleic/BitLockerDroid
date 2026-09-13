@@ -1,6 +1,7 @@
 package com.bitlockerdroid.ntfs
 
 import com.bitlockerdroid.ntfs.ExFatVolume.BootSector
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Read-only exFAT volume navigator. Lists directories through the exFAT entry
@@ -51,9 +52,9 @@ class ExFatReader(
     }
 
     /** Cache of entries by ref. */
-    private val entryCache = HashMap<Long, VolumeEntry>()
-    private val noFatChainMap = HashMap<Long, Boolean>()
-    private val startClusterMap = HashMap<Long, Long>()
+    private val entryCache = ConcurrentHashMap<Long, VolumeEntry>()
+    private val noFatChainMap = ConcurrentHashMap<Long, Boolean>()
+    private val startClusterMap = ConcurrentHashMap<Long, Long>()
 
     override fun volumeLabel(): String? {
         if (labelCache == null) {
@@ -62,6 +63,7 @@ class ExFatReader(
         return labelCache
     }
 
+    @Volatile
     private var labelCache: String? = null
 
     override fun invalidateCache() {

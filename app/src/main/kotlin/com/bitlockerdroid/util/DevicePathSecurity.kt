@@ -22,7 +22,11 @@ object DevicePathSecurity {
 
     fun isValid(path: String?): Boolean {
         if (path.isNullOrBlank()) return false
-        return SAFE_BLOCK_DEVICE_PATTERN.matches(path)
+        if (!SAFE_BLOCK_DEVICE_PATTERN.matches(path)) return false
+        // Strictly reject path traversal segments (".." or ".")
+        val segments = path.split('/')
+        if (segments.any { it == ".." || it == "." }) return false
+        return true
     }
 
     fun requireValid(path: String): String {

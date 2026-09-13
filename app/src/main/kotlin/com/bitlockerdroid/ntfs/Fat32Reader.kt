@@ -1,6 +1,7 @@
 package com.bitlockerdroid.ntfs
 
 import com.bitlockerdroid.ntfs.Fat32Volume.BootSector
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Read-only FAT32 volume navigator. Lists directories through the FAT cluster
@@ -59,7 +60,7 @@ class Fat32Reader(
     }
 
     /** first cluster -> entry metadata, filled by [listDirectory]. */
-    private val entryCache = HashMap<Long, VolumeEntry>()
+    private val entryCache = ConcurrentHashMap<Long, VolumeEntry>()
 
     override fun invalidateCache() {
         entryCache.clear()

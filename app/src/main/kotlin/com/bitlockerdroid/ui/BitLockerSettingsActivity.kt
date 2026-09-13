@@ -56,6 +56,7 @@ class BitLockerSettingsActivity : ComponentActivity() {
     private var rememberedCredentialsState = mutableStateListOf<PreferenceHelper.SavedCredential>()
 
     private var mountReadOnlyState = mutableStateOf(false)
+    private var lastScanTimestamp = 0L
 
     private val stateChangeListener = object : UnlockManager.StateChangeListener {
         override fun onUnlockManagerStateChanged() {
@@ -143,7 +144,11 @@ class BitLockerSettingsActivity : ComponentActivity() {
         super.onResume()
         syncPreferences()
         refreshData()
-        refreshAndScan(showToast = false)
+        val now = System.currentTimeMillis()
+        if (now - lastScanTimestamp >= RESUME_SCAN_THROTTLE_MS) {
+            lastScanTimestamp = now
+            refreshAndScan(showToast = false)
+        }
     }
 
     private fun syncPreferences() {
@@ -171,6 +176,7 @@ class BitLockerSettingsActivity : ComponentActivity() {
     private fun refreshAndScan(showToast: Boolean) {
         if (isRefreshingState.value) return
         isRefreshingState.value = true
+        lastScanTimestamp = System.currentTimeMillis()
         if (showToast) {
             Toast.makeText(this, R.string.scanning_and_refreshing, Toast.LENGTH_SHORT).show()
         }
@@ -328,6 +334,10 @@ class BitLockerSettingsActivity : ComponentActivity() {
                 Toast.makeText(this@BitLockerSettingsActivity, R.string.log_cleared, Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    companion object {
+        private const val RESUME_SCAN_THROTTLE_MS = 3500L
     }
 }
 
