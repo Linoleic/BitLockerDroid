@@ -12,9 +12,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.bitlockerdroid.R
+import com.bitlockerdroid.service.BitLockerCoreService
 import com.bitlockerdroid.ui.theme.SuccessGreen
 import com.bitlockerdroid.util.PreferenceHelper
 import com.bitlockerdroid.util.RootAccess
@@ -93,6 +95,22 @@ fun SettingsTabContent(
                 onCheckedChange = {
                     virtualMount = it
                     PreferenceHelper.virtualMountEnabled = it
+                }
+            )
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+            )
+            var notificationsEnabled by remember { mutableStateOf(PreferenceHelper.notificationsEnabled) }
+            val context = LocalContext.current
+            SettingsSwitchItem(
+                title = "显示挂载常驻通知",
+                description = "在通知栏展示挂载状态，并提供一键「安全弹出」快捷操作",
+                checked = notificationsEnabled,
+                onCheckedChange = {
+                    notificationsEnabled = it
+                    PreferenceHelper.notificationsEnabled = it
+                    BitLockerCoreService.updateForegroundState(context)
                 }
             )
         }

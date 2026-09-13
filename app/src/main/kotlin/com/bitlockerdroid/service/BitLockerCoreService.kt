@@ -64,9 +64,33 @@ class BitLockerCoreService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_SAFE_EJECT) {
+            val devPath = intent.getStringExtra(EXTRA_DEVICE_PATH)
+            LogFile.write("app", "Notification ACTION_SAFE_EJECT received: devPath=$devPath")
+            Thread {
+                try {
+                    if (devPath != null) {
+                        UnlockManager.lock(devPath)
+                    } else {
+                        val all = UnlockManager.unlockedVolumes
+                        for (v in all) {
+                            UnlockManager.lock(v.devicePath)
+                        }
+                    }
+                    Handler(Looper.getMainLooper()).post {
+                        android.widget.Toast.makeText(applicationContext, "已安全弹出加密盘", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    LogFile.write("app", "Safe eject failed: ${e.message}")
+                }
+            }.start()
+            return START_NOT_STICKY
+        }
+
         val volumes = UnlockManager.unlockedVolumes
         val fromFgs = intent?.getBooleanExtra(EXTRA_FROM_FGS, false) == true
-        if (volumes.isNotEmpty()) {
+        val notificationsAllowed = PreferenceHelper.isNotificationsEnabled(this)
+        if (volumes.isNotEmpty() && notificationsAllowed) {
             updateForegroundNotification(volumes)
         } else {
             if (fromFgs) {
@@ -99,71 +123,96 @@ class BitLockerCoreService : Service() {
     }
 
     private fun updateForegroundNotification(volumes: List<UnlockedVolume> = UnlockManager.unlockedVolumes) {
-        if (volumes.isNotEmpty()) {
-            val label = volumes.first().label.ifBlank { volumes.first().deviceName.ifBlank { "BitLocker 加密卷" } }
-            val title = getString(com.bitlockerdroid.R.string.app_name)
-            val text = "$label 已挂载 (${volumes.size} 个活动卷)"
-
-            val openIntent = Intent(this, com.bitlockerdroid.ui.BitLockerSettingsActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            }
-            val pendingIntent = android.app.PendingIntent.getActivity(
-                this, 0, openIntent,
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-            )
-
-            val notification = androidx.core.app.NotificationCompat.Builder(this, UnlockManager.CHANNEL_ID)
-                .setSmallIcon(com.bitlockerdroid.R.drawable.ic_notification)
-                .setContentTitle(title)
-                .setContentText(text)
-                .setContentIntent(pendingIntent)
-                .setOngoing(true)
-                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
-                .build()
-
-            try {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                    startForeground(
-                        NOTIFICATION_ID,
-                        notification,
-                        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                    )
-                } else {
-                    startForeground(NOTIFICATION_ID, notification)
-                }
-            } catch (e: Exception) {
-                LogFile.write("app", "startForeground failed: ${e.message}")
-            }
-        } else {
+        if (!PreferenceHelper.isNotificationsEnabled(this) || volumes.isEmpty()) {
             try {
                 stopForeground(STOP_FOREGROUND_REMOVE)
-            } catch (e: Exception) {
-                // ignore
+            } catch (_: Exception) {}
+            return
+        }
+
+        val label = volumes.first().label.ifBlank { volumes.first().deviceName.ifBlank { "BitLocker 加密卷" } }
+        val title = getString(com.bitlockerdroid.R.string.app_name)
+        val text = if (volumes.size == 1) {
+            "$label 已挂载 (可安全访问)"
+        } else {
+            "$label 等 ${volumes.size} 个活动卷已挂载"
+        }
+
+        val openIntent = Intent(this, com.bitlockerdroid.ui.BitLockerSettingsActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = android.app.PendingIntent.getActivity(
+            this, 0, openIntent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Safe Eject PendingIntent
+        val ejectIntent = Intent(this, BitLockerCoreService::class.java).apply {
+            action = ACTION_SAFE_EJECT
+            if (volumes.size == 1) {
+                putExtra(EXTRA_DEVICE_PATH, volumes.first().devicePath)
             }
+        }
+        val ejectPendingIntent = android.app.PendingIntent.getService(
+            this, 101, ejectIntent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+        val ejectTitle = if (volumes.size == 1) "安全弹出" else "全部安全弹出"
+
+        val notification = androidx.core.app.NotificationCompat.Builder(this, UnlockManager.CHANNEL_ID)
+            .setSmallIcon(com.bitlockerdroid.R.drawable.ic_notification)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
+            .addAction(
+                com.bitlockerdroid.R.drawable.ic_drive_bitlocker,
+                ejectTitle,
+                ejectPendingIntent
+            )
+            .build()
+
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            LogFile.write("app", "startForeground failed: ${e.message}")
         }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
+        const val ACTION_SAFE_EJECT = "com.bitlockerdroid.action.SAFE_EJECT"
+        const val EXTRA_DEVICE_PATH = "extra_device_path"
+
         private const val NOTIFICATION_ID = 2001
         private const val EXTRA_FROM_FGS = "extra_from_fgs"
 
         fun updateForegroundState(context: android.content.Context) {
             val hasVolumes = UnlockManager.unlockedVolumes.isNotEmpty()
+            val showNotification = hasVolumes && PreferenceHelper.isNotificationsEnabled(context)
             val intent = Intent(context, BitLockerCoreService::class.java).apply {
                 action = "com.bitlockerdroid.action.UPDATE_FOREGROUND"
-                putExtra(EXTRA_FROM_FGS, hasVolumes)
+                putExtra(EXTRA_FROM_FGS, showNotification)
             }
             try {
-                if (hasVolumes) {
+                if (showNotification) {
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                         context.startForegroundService(intent)
                     } else {
                         context.startService(intent)
                     }
                 } else {
-                    // When no volumes are unlocked, use startService to avoid FGS timeout crash
+                    // When no notification needed or no volumes unlocked, use startService to avoid FGS timeout crash
                     context.startService(intent)
                 }
             } catch (e: Exception) {

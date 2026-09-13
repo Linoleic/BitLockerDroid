@@ -225,6 +225,17 @@ object PreferenceHelper {
     var virtualMountEnabled: Boolean
         get() = try { prefs(ContextProvider.app).getBoolean("virtual_mount_enabled", true) } catch (_: Exception) { true }
         set(v) = try { prefs(ContextProvider.app).edit().putBoolean("virtual_mount_enabled", v).apply() } catch (_: Exception) {}
+
+    fun isNotificationsEnabled(context: Context): Boolean =
+        prefs(context).getBoolean("notifications_enabled", true)
+
+    fun setNotificationsEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean("notifications_enabled", enabled).apply()
+    }
+
+    var notificationsEnabled: Boolean
+        get() = try { prefs(ContextProvider.app).getBoolean("notifications_enabled", true) } catch (_: Exception) { true }
+        set(v) = try { prefs(ContextProvider.app).edit().putBoolean("notifications_enabled", v).apply() } catch (_: Exception) {}
 }
 
 /** Holds an application context once the app/service is running. */

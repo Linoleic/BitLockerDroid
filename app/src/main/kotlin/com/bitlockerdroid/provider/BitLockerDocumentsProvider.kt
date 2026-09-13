@@ -1,7 +1,11 @@
 package com.bitlockerdroid.provider
 
+import android.content.res.AssetFileDescriptor
 import android.database.Cursor
 import android.database.MatrixCursor
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Point
 import android.os.Bundle
 import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
@@ -15,6 +19,10 @@ import com.bitlockerdroid.ntfs.VolumeReader
 import com.bitlockerdroid.service.DislockerCore
 import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.util.LogFile
+import java.io.BufferedInputStream
+import java.io.File
+import java.io.FileNotFoundException
+import java.io.InputStream
 
 /**
  * DocumentsProvider exposing unlocked BitLocker volumes to the system file
@@ -245,6 +253,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             row.add(Root.COLUMN_TITLE, v.label)
             row.add(Root.COLUMN_SUMMARY, "BitLocker encrypted volume")
             row.add(Root.COLUMN_MIME_TYPES, "*/*")
+            row.add(Root.COLUMN_ICON, com.bitlockerdroid.R.drawable.ic_drive_bitlocker)
             if (v.freeBytes > 0L) {
                 row.add(Root.COLUMN_AVAILABLE_BYTES, v.freeBytes)
             }
@@ -918,6 +927,60 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         }
     }
 
+    override fun openDocumentThumbnail(
+        documentId: String,
+        sizeHint: Point,
+        signal: CancellationSignal?
+    ): AssetFileDescriptor {
+        LogFile.write("provider", "openDocumentThumbnail: docId=$documentId hint=${sizeHint.x}x${sizeHint.y}")
+        val core = coreFor(documentId) ?: throw FileNotFoundException("Volume is locked")
+        val record = recordFrom(documentId)
+        val entry = core.getEntry(record) ?: throw FileNotFoundException("Document not found: $documentId")
+        val size = entry.fileSize
+        if (size <= 0L) throw FileNotFoundException("Empty file")
+
+        val thumbTemp = File.createTempFile("thumb_", ".jpg", appContext.cacheDir)
+        try {
+            val stream1 = CoreFileInputStream(core, record, size)
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeStream(BufferedInputStream(stream1), null, options)
+            if (options.outWidth <= 0 || options.outHeight <= 0) {
+                throw FileNotFoundException("Could not decode image bounds")
+            }
+
+            val targetW = sizeHint.x.coerceAtLeast(64)
+            val targetH = sizeHint.y.coerceAtLeast(64)
+            var inSample = 1
+            var halfW = options.outWidth / 2
+            var halfH = options.outHeight / 2
+            while (halfW / inSample >= targetW && halfH / inSample >= targetH) {
+                inSample *= 2
+            }
+
+            val stream2 = CoreFileInputStream(core, record, size)
+            val decodeOptions = BitmapFactory.Options().apply {
+                inSampleSize = inSample
+                inPreferredConfig = Bitmap.Config.RGB_565
+            }
+            val bitmap = BitmapFactory.decodeStream(BufferedInputStream(stream2), null, decodeOptions)
+                ?: throw FileNotFoundException("Failed to decode thumbnail bitmap")
+
+            thumbTemp.outputStream().use { out ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+            }
+            bitmap.recycle()
+
+            val pfd = ParcelFileDescriptor.open(thumbTemp, ParcelFileDescriptor.MODE_READ_ONLY, syncHandler) {
+                thumbTemp.delete()
+            }
+            return AssetFileDescriptor(pfd, 0, AssetFileDescriptor.UNKNOWN_LENGTH)
+        } catch (e: Exception) {
+            thumbTemp.delete()
+            LogFile.write("provider", "openDocumentThumbnail failed: ${e.message}")
+            throw FileNotFoundException("Thumbnail decode failed: ${e.message}")
+        }
+    }
+
     // ---------------- helpers ----------------
 
     private fun coreFor(docId: String): DislockerCore? {
@@ -999,6 +1062,16 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         val isDir = rec.isDirectory
         val isRoot = (record == core.reader.rootRef)
         val name = if (isRoot) core.volumeLabel else (rec.fileName ?: "BitLocker")
+        val mimeType1 = if (isDir) {
+            Document.MIME_TYPE_DIR
+        } else {
+            val ext = name.substringAfterLast('.', "")
+            if (ext.isNotEmpty()) {
+                android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.lowercase())
+                    ?: "application/octet-stream"
+            } else "application/octet-stream"
+        }
+
         var flags = 0
         val canWrite = (core.writer?.isMounted == true) && !com.bitlockerdroid.util.PreferenceHelper.mountReadOnly
         if (isDir) {
@@ -1015,16 +1088,9 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                 flags = flags or Document.FLAG_SUPPORTS_WRITE or Document.FLAG_SUPPORTS_DELETE or Document.FLAG_SUPPORTS_RENAME or
                         Document.FLAG_SUPPORTS_MOVE or Document.FLAG_SUPPORTS_COPY or Document.FLAG_SUPPORTS_REMOVE
             }
-        }
-
-        val mimeType1 = if (isDir) {
-            Document.MIME_TYPE_DIR
-        } else {
-            val ext = name.substringAfterLast('.', "")
-            if (ext.isNotEmpty()) {
-                android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.lowercase())
-                    ?: "application/octet-stream"
-            } else "application/octet-stream"
+            if (isThumbnailSupported(mimeType1, name)) {
+                flags = flags or Document.FLAG_SUPPORTS_THUMBNAIL
+            }
         }
 
         val row = result.newRow()
@@ -1043,6 +1109,16 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         val isRoot = (record == core?.reader?.rootRef)
         val canWrite = (core?.writer?.isMounted == true) && !com.bitlockerdroid.util.PreferenceHelper.mountReadOnly
 
+        val mimeType2 = if (entry.isDirectory) {
+            Document.MIME_TYPE_DIR
+        } else {
+            val ext = entry.name.substringAfterLast('.', "")
+            if (ext.isNotEmpty()) {
+                android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.lowercase())
+                    ?: "application/octet-stream"
+            } else "application/octet-stream"
+        }
+
         var flags = 0
         if (entry.isDirectory) {
             flags = flags or Document.FLAG_DIR_PREFERS_LAST_MODIFIED
@@ -1058,16 +1134,9 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                 flags = flags or Document.FLAG_SUPPORTS_WRITE or Document.FLAG_SUPPORTS_DELETE or Document.FLAG_SUPPORTS_RENAME or
                         Document.FLAG_SUPPORTS_MOVE or Document.FLAG_SUPPORTS_COPY or Document.FLAG_SUPPORTS_REMOVE
             }
-        }
-
-        val mimeType2 = if (entry.isDirectory) {
-            Document.MIME_TYPE_DIR
-        } else {
-            val ext = entry.name.substringAfterLast('.', "")
-            if (ext.isNotEmpty()) {
-                android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.lowercase())
-                    ?: "application/octet-stream"
-            } else "application/octet-stream"
+            if (isThumbnailSupported(mimeType2, entry.name)) {
+                flags = flags or Document.FLAG_SUPPORTS_THUMBNAIL
+            }
         }
 
         val row = result.newRow()
@@ -1108,6 +1177,12 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         return projection.toList().toTypedArray()
     }
 
+    private fun isThumbnailSupported(mimeType: String, fileName: String): Boolean {
+        if (mimeType.startsWith("image/")) return true
+        val ext = fileName.substringAfterLast('.', "").lowercase()
+        return ext in setOf("jpg", "jpeg", "png", "webp", "bmp", "gif", "heic", "heif")
+    }
+
     private fun resolveDocumentProjection(projection: Array<out String>?): Array<String> {
         if (projection == null) return arrayOf(
             Document.COLUMN_DOCUMENT_ID,
@@ -1119,4 +1194,37 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         )
         return projection.toList().toTypedArray()
     }
+}
+
+private class CoreFileInputStream(
+    private val core: DislockerCore,
+    private val record: Long,
+    private val totalSize: Long
+) : InputStream() {
+    private var pos = 0L
+
+    override fun read(): Int {
+        val b = ByteArray(1)
+        val n = read(b, 0, 1)
+        return if (n > 0) b[0].toInt() and 0xFF else -1
+    }
+
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+        if (pos >= totalSize) return -1
+        val toRead = minOf(len.toLong(), totalSize - pos).toInt()
+        if (toRead <= 0) return -1
+        val n = core.readFile(record, pos, b, off, toRead)
+        if (n <= 0) return -1
+        pos += n
+        return n
+    }
+
+    override fun skip(n: Long): Long {
+        if (n <= 0) return 0L
+        val toSkip = minOf(n, totalSize - pos).coerceAtLeast(0L)
+        pos += toSkip
+        return toSkip
+    }
+
+    override fun available(): Int = (totalSize - pos).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 }
