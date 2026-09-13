@@ -29,6 +29,8 @@ typedef struct {
     char drive_str[8];
     int in_use;
     int pdrv;
+    int read_only;
+    uint16_t sector_size;
 } fatfs_slot_t;
 
 static fatfs_slot_t g_fatfs_slots[FF_VOLUMES];
@@ -139,7 +141,7 @@ DSTATUS disk_status(BYTE pdrv) {
 DRESULT disk_read(BYTE pdrv, BYTE* buff, LBA_t sector, UINT count) {
     if (pdrv >= FF_VOLUMES || !g_fatfs_slots[pdrv].in_use) return RES_NOTRDY;
     dis_ctx_t *ctx = g_fatfs_slots[pdrv].ctx;
-    uint16_t ss = ctx->sector_size ? ctx->sector_size : 512;
+    uint16_t ss = g_fatfs_slots[pdrv].sector_size ? g_fatfs_slots[pdrv].sector_size : (ctx->sector_size ? ctx->sector_size : 512);
     off_t offset = (off_t)sector * ss;
     size_t bytes = (size_t)count * ss;
 
@@ -149,8 +151,9 @@ DRESULT disk_read(BYTE pdrv, BYTE* buff, LBA_t sector, UINT count) {
 
 DRESULT disk_write(BYTE pdrv, const BYTE* buff, LBA_t sector, UINT count) {
     if (pdrv >= FF_VOLUMES || !g_fatfs_slots[pdrv].in_use) return RES_NOTRDY;
+    if (g_fatfs_slots[pdrv].read_only) return RES_WRPRT;
     dis_ctx_t *ctx = g_fatfs_slots[pdrv].ctx;
-    uint16_t ss = ctx->sector_size ? ctx->sector_size : 512;
+    uint16_t ss = g_fatfs_slots[pdrv].sector_size ? g_fatfs_slots[pdrv].sector_size : (ctx->sector_size ? ctx->sector_size : 512);
     off_t offset = (off_t)sector * ss;
     size_t bytes = (size_t)count * ss;
 
@@ -161,7 +164,7 @@ DRESULT disk_write(BYTE pdrv, const BYTE* buff, LBA_t sector, UINT count) {
 DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff) {
     if (pdrv >= FF_VOLUMES || !g_fatfs_slots[pdrv].in_use) return RES_NOTRDY;
     dis_ctx_t *ctx = g_fatfs_slots[pdrv].ctx;
-    uint16_t ss = ctx->sector_size ? ctx->sector_size : 512;
+    uint16_t ss = g_fatfs_slots[pdrv].sector_size ? g_fatfs_slots[pdrv].sector_size : (ctx->sector_size ? ctx->sector_size : 512);
 
     switch (cmd) {
     case CTRL_SYNC:
@@ -218,6 +221,26 @@ dis_fatfs_handle_t dis_fatfs_mount(dis_ctx_t *ctx, int read_only) {
     slot->ctx = ctx;
     slot->pdrv = slot_idx;
     slot->in_use = 1;
+    slot->read_only = read_only;
+    slot->sector_size = ctx->sector_size ? ctx->sector_size : 512;
+
+    /* Detect sector size from decrypted filesystem boot sector (exFAT or FAT32) */
+    uint8_t boot[512];
+    if (disk_read_internal(ctx, boot, 0, 512) == 512) {
+        if (memcmp(boot + 3, "EXFAT   ", 8) == 0) {
+            uint8_t shift = boot[108];
+            if (shift >= 9 && shift <= 12) {
+                slot->sector_size = (uint16_t)(1 << shift);
+            }
+        } else if (boot[0] == 0xEB || boot[0] == 0xE9) {
+            uint16_t bps = (uint16_t)boot[11] | ((uint16_t)boot[12] << 8);
+            if (bps == 512 || bps == 1024 || bps == 2048 || bps == 4096) {
+                slot->sector_size = bps;
+            }
+        }
+    }
+    DLOG("dis_fatfs_mount: slot %d sector_size=%u read_only=%d", slot_idx, (unsigned int)slot->sector_size, read_only);
+
     snprintf(slot->drive_str, sizeof(slot->drive_str), "%d:", slot_idx);
     pthread_mutex_unlock(&g_slot_lock);
 
@@ -257,15 +280,20 @@ int dis_fatfs_umount(dis_fatfs_handle_t vol_handle) {
 int64_t dis_fatfs_create(dis_fatfs_handle_t vol_handle, const char *parent_path, const char *name, int is_dir) {
     if (!vol_handle || !name || strlen(name) == 0) return -EINVAL;
     fatfs_slot_t *slot = (fatfs_slot_t *)vol_handle;
+    if (slot->read_only) return -EROFS;
 
     char full_path[1024];
-    if (!parent_path || strcmp(parent_path, "/") == 0 || strcmp(parent_path, "") == 0) {
+    size_t plen = parent_path ? strlen(parent_path) : 0;
+    while (plen > 1 && parent_path[plen - 1] == '/') {
+        plen--;
+    }
+    if (!parent_path || plen == 0 || (plen == 1 && parent_path[0] == '/')) {
         snprintf(full_path, sizeof(full_path), "%d:/%s", slot->pdrv, name);
     } else {
         if (parent_path[0] == '/') {
-            snprintf(full_path, sizeof(full_path), "%d:%s/%s", slot->pdrv, parent_path, name);
+            snprintf(full_path, sizeof(full_path), "%d:%.*s/%s", slot->pdrv, (int)plen, parent_path, name);
         } else {
-            snprintf(full_path, sizeof(full_path), "%d:/%s/%s", slot->pdrv, parent_path, name);
+            snprintf(full_path, sizeof(full_path), "%d:/%.*s/%s", slot->pdrv, (int)plen, parent_path, name);
         }
     }
 
@@ -323,6 +351,7 @@ static FRESULT delete_recursive(const char *path) {
 int dis_fatfs_delete(dis_fatfs_handle_t vol_handle, const char *path) {
     if (!vol_handle || !path) return -EINVAL;
     fatfs_slot_t *slot = (fatfs_slot_t *)vol_handle;
+    if (slot->read_only) return -EROFS;
 
     char full_path[1024];
     make_ff_path(slot, path, full_path, sizeof(full_path));
@@ -343,6 +372,7 @@ int dis_fatfs_delete(dis_fatfs_handle_t vol_handle, const char *path) {
 int dis_fatfs_rename(dis_fatfs_handle_t vol_handle, const char *old_path, const char *new_path) {
     if (!vol_handle || !old_path || !new_path) return -EINVAL;
     fatfs_slot_t *slot = (fatfs_slot_t *)vol_handle;
+    if (slot->read_only) return -EROFS;
 
     char full_old[1024];
     char full_new[1024];
@@ -361,6 +391,7 @@ int dis_fatfs_rename(dis_fatfs_handle_t vol_handle, const char *old_path, const 
 int64_t dis_fatfs_write(dis_fatfs_handle_t vol_handle, const char *path, int64_t offset, const uint8_t *buf, int64_t count) {
     if (!vol_handle || !path || !buf || count < 0 || offset < 0) return -EINVAL;
     fatfs_slot_t *slot = (fatfs_slot_t *)vol_handle;
+    if (slot->read_only) return -EROFS;
 
     char full_path[1024];
     make_ff_path(slot, path, full_path, sizeof(full_path));
@@ -393,6 +424,7 @@ int64_t dis_fatfs_write(dis_fatfs_handle_t vol_handle, const char *path, int64_t
 int64_t dis_fatfs_truncate(dis_fatfs_handle_t vol_handle, const char *path, int64_t new_size) {
     if (!vol_handle || !path || new_size < 0) return -EINVAL;
     fatfs_slot_t *slot = (fatfs_slot_t *)vol_handle;
+    if (slot->read_only) return -EROFS;
 
     char full_path[1024];
     make_ff_path(slot, path, full_path, sizeof(full_path));

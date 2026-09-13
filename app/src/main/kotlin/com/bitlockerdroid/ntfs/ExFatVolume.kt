@@ -47,8 +47,10 @@ object ExFatVolume {
         val oem = String(sector, 3, 8, Charsets.US_ASCII)
         if (oem != "EXFAT   ") return null
 
-        val bytesPerSector = 1 shl (sector[108].toInt() and 0xff)
-        val sectorsPerCluster = 1 shl (sector[109].toInt() and 0xff)
+        val shift = sector[108].toInt() and 0xff
+        val bytesPerSector = if (shift in 9..12) (1 shl shift) else 512
+        val spcShift = sector[109].toInt() and 0xff
+        val sectorsPerCluster = if (spcShift in 0..25) (1 shl spcShift) else 1
         val fatOffset = le32(sector, 80)
         val clusterHeapOffset = le32(sector, 88)
         val rootCluster = le32(sector, 96)

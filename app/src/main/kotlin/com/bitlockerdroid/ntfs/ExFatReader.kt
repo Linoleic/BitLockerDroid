@@ -36,8 +36,8 @@ class ExFatReader(
         private const val ENTRY_STREAM = 0xc0       // Stream extension entry (Critical Secondary)
         private const val ENTRY_NAME = 0xc1         // File name entry (Critical Secondary)
 
-        private const val EOF_MARK = 0x0ffffff8L
-        private const val BAD_CLUSTER = 0x0ffffff7L
+        private const val EOF_MARK = 0xfffffff8L
+        private const val BAD_CLUSTER = 0xfffffff7L
 
         // File entry attribute: directory bit.
         private const val ATTR_DIRECTORY = 0x10
@@ -87,10 +87,41 @@ class ExFatReader(
             noFatChainMap[ref] = false
             return entry
         }
+
         // Cache miss: directory may have been invalidated after a write. Refresh by reading root directory.
         try {
             listDirectory(rootRef)
+            entryCache[ref]?.let { return it }
         } catch (_: Exception) {}
+
+        // If this is a position-based synthetic ref (high bit 0x40):
+        if ((ref and 0x4000000000000000L) != 0L) {
+            val cluster = (ref ushr 24) and 0xFFFFFFL
+            if (isValidCluster(cluster)) {
+                try {
+                    listDirectory(cluster)
+                    entryCache[ref]?.let { return it }
+                } catch (_: Exception) {}
+            }
+        }
+
+        // Search directory tree recursively from root for subfolders
+        fun findRecursive(dirCluster: Long, depth: Int): VolumeEntry? {
+            if (depth > 16) return null
+            val entries = try { listDirectory(dirCluster) } catch (_: Exception) { return null }
+            entryCache[ref]?.let { return it }
+            for (e in entries) {
+                if (e.isDirectory && e.ref != dirCluster && isValidCluster(e.ref)) {
+                    val found = findRecursive(e.ref, depth + 1)
+                    if (found != null) return found
+                }
+            }
+            return null
+        }
+        try {
+            findRecursive(rootRef, 0)?.let { return it }
+        } catch (_: Exception) {}
+
         return entryCache[ref]
     }
 
@@ -108,7 +139,8 @@ class ExFatReader(
         val buf = ByteArray(clusterSize)
         var cluster = firstCluster
         var guard = 0
-        val maxClusters = if (noFatChain) {
+        val isDir = (ref == rootRef) || (entryCache[ref]?.isDirectory == true)
+        val maxClusters = if (noFatChain && !isDir) {
             val sz = entryCache[ref]?.fileSize ?: 0L
             if (sz > 0) ((sz + clusterSize - 1) / clusterSize).toInt().coerceAtLeast(1) else 1
         } else {
@@ -175,25 +207,32 @@ class ExFatReader(
         val nameChunks = ArrayList<String>()
 
         var count = 0
+        var nameLength = 0
         while (count < secondaryCount && pos + ENTRY_SIZE <= len) {
             val secType = buf[pos].toInt() and 0xff
             when (secType) {
                 ENTRY_STREAM -> {
                     val flags = buf[pos + 1].toInt() and 0xff
                     noFatChain = (flags and 0x02) != 0
+                    nameLength = buf[pos + 3].toInt() and 0xff
                     firstCluster = le32(buf, pos + 20)
                     dataLength = le64(buf, pos + 24)
                 }
                 ENTRY_NAME -> {
-                    val chunk = String(buf, pos + 2, 30, Charsets.UTF_16LE).trimEnd('\u0000')
-                    if (chunk.isNotEmpty()) nameChunks.add(chunk)
+                    val chunk = String(buf, pos + 2, 30, Charsets.UTF_16LE)
+                    nameChunks.add(chunk)
                 }
             }
             pos += ENTRY_SIZE
             count++
         }
 
-        val name = nameChunks.joinToString("").trimEnd('\u0000')
+        val fullString = nameChunks.joinToString("")
+        val name = if (nameLength in 1..fullString.length) {
+            fullString.substring(0, nameLength)
+        } else {
+            fullString.trimEnd('\u0000')
+        }
         val posRef = 0x4000000000000000L or ((cluster and 0xFFFFFFL) shl 24) or (pos.toLong() and 0xFFFFFFL)
         val startRef = 0x4000000000000000L or ((cluster and 0xFFFFFFL) shl 24) or (start.toLong() and 0xFFFFFFL)
         val ref = if (firstCluster >= 2) firstCluster else startRef
@@ -225,6 +264,9 @@ class ExFatReader(
      * Returns bytes copied.
      */
     override fun readFile(ref: Long, offset: Long, dst: ByteArray, dstPos: Int, len: Int): Int {
+        if (!entryCache.containsKey(ref)) {
+            readEntry(ref)
+        }
         val firstCluster = startClusterMap[ref] ?: ref
         if (!isValidCluster(firstCluster) || len <= 0) return 0
         val clusterSize = boot.clusterSize.toInt()
@@ -237,6 +279,14 @@ class ExFatReader(
         val noFatChain = noFatChainMap[ref] ?: false
         var filePos = 0L
         var cluster = firstCluster
+
+        // O(1) direct cluster jump for contiguous allocations
+        if (noFatChain && clusterSize > 0) {
+            val skipClusters = offset / clusterSize
+            cluster = firstCluster + skipClusters
+            filePos = skipClusters * clusterSize
+        }
+
         var written = 0
         var guard = 0
         while (isValidCluster(cluster) && guard++ < 100000 && written < toRead) {
@@ -271,11 +321,11 @@ class ExFatReader(
         val e = ByteArray(FAT_ENTRY_SIZE)
         if (source.read(fatByte, e, 0, FAT_ENTRY_SIZE) < FAT_ENTRY_SIZE) return BAD_CLUSTER
         val v = le32(e, 0)
-        return if (isEof(v)) v else (v and 0x0fffffffL)
+        return if (isEof(v)) v else (v and 0xffffffffL)
     }
 
     private fun isEof(v: Long): Boolean = v >= EOF_MARK || v == BAD_CLUSTER
-    private fun isValidCluster(c: Long): Boolean = c >= 2 && c < 0x0ffffff0L
+    private fun isValidCluster(c: Long): Boolean = c in 2..0xfffffff6L
 
     private fun le32(b: ByteArray, off: Int): Long {
         var v = 0L
