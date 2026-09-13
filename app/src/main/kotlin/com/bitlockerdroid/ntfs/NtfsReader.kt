@@ -113,33 +113,39 @@ class NtfsReader(
     /** Public accessor used by the DocumentsProvider. */
     fun readFileRecord(recordNumber: Long): NtfsFileRecord? = readRecord(recordNumber)
 
-    /** Reconstructs the full path from the root directory to [recordNumber]. */
-    fun resolvePath(recordNumber: Long): String {
+    /**
+     * Reconstructs the full path from the root directory to [recordNumber].
+     * Returns null when the parent chain cannot be walked (unreadable record)
+     * so callers can fall back to a directory search — returning "/" here
+     * would silently route writes into the volume root.
+     */
+    fun resolvePath(recordNumber: Long): String? {
         if (recordNumber == ROOT_DIR_RECORD) return "/"
         val parts = ArrayList<String>()
         var cur = recordNumber
         var depth = 0
         while (cur != ROOT_DIR_RECORD && depth < 32) {
-            val rec = readRecord(cur) ?: break
-            val name = rec.fileName ?: break
+            val rec = readRecord(cur) ?: return null
+            val name = rec.fileName ?: return null
             parts.add(0, name)
             cur = rec.parentRecord
             depth++
         }
+        if (cur != ROOT_DIR_RECORD) return null
         return "/" + parts.joinToString("/")
     }
 
     /**
      * Lists directory entries for the MFT record [dirRecord].
      *
-     * Parses the resident $INDEX_ROOT attribute, which contains the directory
-     * index header + index entries (each a FILE_NAME index key). For large
-     * directories, entries spill into non-resident $INDEX_ALLOCATION blocks,
-     * which this read-only parser also follows.
+     * Parses the resident $INDEX_ROOT attribute (the B-tree root node), then
+     * follows sub-node pointers breadth-first into the $INDEX_ALLOCATION
+     * blocks (INDX records). Stream offsets map through the attribute's data
+     * runs, so multi-block and multi-run allocations are both handled.
      */
     override fun listDirectory(dirRecord: Long): List<VolumeDirEntry> {
-        val out = ArrayList<VolumeDirEntry>()
-        val record = readRecord(dirRecord) ?: return out
+        val out = LinkedHashMap<String, VolumeDirEntry>()
+        val record = readRecord(dirRecord) ?: return emptyList()
 
         // $INDEX_ROOT attribute value layout (resident):
         //   0x00: attribute type (u32) = $FILE_NAME (0x30)
@@ -151,46 +157,83 @@ class NtfsReader(
         val root = record.attributes.firstOrNull { it.type == NtfsFileRecord.TYPE_INDEX_ROOT } as? IndexRootAttribute
             ?: run {
                 android.util.Log.w("NtfsReader", "record $dirRecord has no INDEX_ROOT; attrs=${record.attributes.map { "0x%02x".format(it.type) }}")
-                return out
+                return emptyList()
             }
         val value = root.value
-        android.util.Log.i("NtfsReader", "record $dirRecord INDEX_ROOT value size=${value.size}")
-        if (value.size < 32) return out
+        if (value.size < 32) return emptyList()
 
         val indexBlockSize = le32(value, 8).toInt()
+        if (indexBlockSize <= 0) return emptyList()
 
         // INDEX_HEADER at offset 0x10: first_entry_offset (u32), total entry
         // slots (u32), allocated (u32), not-allocated (u32)
         val entriesStart = 0x10 + le32(value, 0x10).toInt()
-        parseIndexEntries(value, entriesStart, value.size, out)
+        // Sub-node VCNs discovered while parsing, queued for BFS below.
+        val pendingBlocks = ArrayDeque<Long>()
+        parseIndexEntries(value, entriesStart, value.size, out, pendingBlocks)
 
-        // Follow $INDEX_ALLOCATION for large directories
+        // Follow $INDEX_ALLOCATION for large directories.
         for (a in record.attributes) {
-            if (a is IndexAllocationAttribute && a.runs.isNotEmpty()) {
-                val clusterSize = boot.clusterSize
-                val block = ByteArray(indexBlockSize)
-                for (run in a.runs) {
-                    if (run.clusterOffset == 0L) continue
-                    val n = source.read(run.clusterOffset * clusterSize, block, 0, block.size)
-                    if (n < 24) continue
-                    // Each index block starts with an INDEX_RECORD_HEADER:
-                    //   0x00 magic "INDX", 0x18 INDEX_HEADER whose first field
-                    //   (entries_offset) points to the first index entry.
-                    if (le32(block, 0) != 0x58444e49L) continue
-                    // INDX blocks are fixup-protected too (USA at 0x28/0x2A).
-                    if (!NtfsFileRecordParser.applyUpdateSequenceArray(block, 0x04, boot.bytesPerSector)) continue
-                    val firstEntry = 0x18 + le32(block, 0x18).toInt()
-                    val entriesTotal = le32(block, 0x1c).toInt()
-                    parseIndexEntries(block, firstEntry, firstEntry + entriesTotal, out)
-                }
+            if (a !is IndexAllocationAttribute || a.runs.isEmpty()) continue
+            val clusterSize = boot.clusterSize
+            val visitedBlocks = HashSet<Long>()
+            val block = ByteArray(indexBlockSize)
+
+            while (pendingBlocks.isNotEmpty()) {
+                val vcn = pendingBlocks.removeFirst()
+                // A sub-node VCN addresses one cluster of the index stream;
+                // the INDX record starts at the containing index-block boundary.
+                val streamByte = vcn * clusterSize
+                val blockStart = streamByte / indexBlockSize * indexBlockSize
+                if (!visitedBlocks.add(blockStart)) continue
+
+                val phys = resolveStreamOffset(a.runs, blockStart, clusterSize) ?: continue
+                val n = source.read(phys, block, 0, block.size)
+                if (n < indexBlockSize) continue
+                if (le32(block, 0) != 0x58444e49L) continue
+                // INDX blocks are fixup-protected too (USA offset field at 0x04).
+                if (!NtfsFileRecordParser.applyUpdateSequenceArray(block, 0x04, boot.bytesPerSector)) continue
+                val firstEntry = 0x18 + le32(block, 0x18).toInt()
+                val entriesTotal = le32(block, 0x1c).toInt()
+                parseIndexEntries(block, firstEntry, firstEntry + entriesTotal, out, pendingBlocks)
             }
         }
 
-        return out
+        return out.values.toList()
     }
 
-    /** Parses index entries in [buf] from [start] to [end] into [out]. */
-    private fun parseIndexEntries(buf: ByteArray, start: Int, end: Int, out: MutableList<VolumeDirEntry>) {
+    /**
+     * Resolves a byte offset within the $INDEX_ALLOCATION stream to a physical
+     * volume offset by walking the attribute's data runs. Sparse runs resolve
+     * to null (no INDX record lives in a hole). Returns null when [streamByte]
+     * lies beyond the stream.
+     */
+    private fun resolveStreamOffset(runs: List<DataRun>, streamByte: Long, clusterSize: Long): Long? {
+        var streamPos = 0L
+        for (run in runs) {
+            val runBytes = run.clusterCount * clusterSize
+            if (streamByte < streamPos + runBytes) {
+                if (run.clusterOffset == 0L) return null
+                return run.clusterOffset * clusterSize + (streamByte - streamPos)
+            }
+            streamPos += runBytes
+        }
+        return null
+    }
+
+    /**
+     * Parses index entries in [buf] from [start] to [end] into [out] (deduped
+     * by case-insensitive name — a separator entry also appears as the real
+     * entry inside its sub-node). Entries carrying a sub-node pointer push the
+     * pointed-to VCN onto [subNodes] for B-tree traversal.
+     */
+    private fun parseIndexEntries(
+        buf: ByteArray,
+        start: Int,
+        end: Int,
+        out: LinkedHashMap<String, VolumeDirEntry>,
+        subNodes: MutableList<Long>
+    ) {
         var pos = start
         while (pos + 16 <= end) {
             // INDEX_ENTRY: file reference (u64) | entry length (u16) |
@@ -201,8 +244,11 @@ class NtfsReader(
             val keyLength = le16(buf, pos + 10)
             val flags = le16(buf, pos + 12)
 
-            // 0x01 = has sub-node (skip); 0x02 = last entry. A normal entry has
-            // a FILE_NAME key (keyLength > 0).
+            // 0x01 = has sub-node (B-tree child); 0x02 = last entry.
+            if (flags and 0x01 != 0 && entryLength >= 24) {
+                // Sub-node VCN occupies the trailing 8 bytes of the entry.
+                subNodes.add(le64(buf, pos + entryLength - 8))
+            }
             val isLast = flags and 0x02 != 0
             if (keyLength > 0) {
                 val keyStart = pos + 16
@@ -222,10 +268,13 @@ class NtfsReader(
                             // Hide NTFS internal system metadata files (MFT 0..15, $*, System Volume Information)
                             val isSystemMeta = recNum < 16L || name.startsWith("$") || name.equals("System Volume Information", ignoreCase = true)
                             if (!isSystemMeta) {
-                                // determine if directory by reading the record
-                                val child = readRecord(recNum)
-                                val isDir = child?.isDirectory ?: false
-                                out.add(VolumeDirEntry(name, recNum, isDir, child?.fileSize ?: 0L))
+                                val dedupeKey = name.lowercase()
+                                if (!out.containsKey(dedupeKey)) {
+                                    // determine if directory by reading the record
+                                    val child = readRecord(recNum)
+                                    val isDir = child?.isDirectory ?: false
+                                    out[dedupeKey] = VolumeDirEntry(name, recNum, isDir, child?.fileSize ?: 0L)
+                                }
                             }
                         }
                     }

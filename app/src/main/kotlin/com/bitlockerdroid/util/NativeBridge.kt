@@ -49,6 +49,9 @@ object NativeBridge {
 
     external fun nativeClose(handle: Long)
 
+    /** Flushes the encrypted block device (fdatasync / daemon sync). Safe-eject step. */
+    external fun nativeSync(handle: Long): Int
+
     external fun nativeGetLastError(): String
 
     // ---------------- NTFS-3G Integration ----------------

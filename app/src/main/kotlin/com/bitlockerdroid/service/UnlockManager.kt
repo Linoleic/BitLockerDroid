@@ -317,7 +317,13 @@ object UnlockManager {
                 capacity = devInfo.sizeBytes
             )
         }
-        stale?.close()
+        stale?.let { core ->
+            // Safe eject: let in-flight SAF pipe writes land, then flush the
+            // encrypted block device before tearing the session down.
+            com.bitlockerdroid.provider.BitLockerDocumentsProvider.drainActiveWrites()
+            core.flush()
+            core.close()
+        }
         app?.let {
             BitLockerCoreService.updateForegroundState(it)
             com.bitlockerdroid.provider.BitLockerDocumentsProvider.notifyRootsChanged(it)

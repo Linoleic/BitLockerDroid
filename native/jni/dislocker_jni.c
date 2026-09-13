@@ -335,6 +335,21 @@ static void native_close(JNIEnv *env, jobject thiz, jlong handle)
 	dis_close_volume(ctx);
 }
 
+/* Flushes the encrypted block device (fdatasync / daemon CMD_SYNC).
+ * Safe-eject path: call after all write pipelines have drained. */
+static jint native_sync(JNIEnv *env, jobject thiz, jlong handle)
+{
+	jni_slot_t *slot = slot_acquire(handle);
+	if (!slot) {
+		(*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/IllegalStateException"),
+			"invalid or closed session handle");
+		return -1;
+	}
+	int ret = dis_blk_sync(slot->ctx);
+	slot_release(slot);
+	return ret == 0 ? 0 : -1;
+}
+
 /* Decrypts an already-read encrypted buffer at a sector-aligned offset.
  * input: the encrypted bytes; offset: volume-relative byte offset.
  * Returns the decrypted byte[] or null on failure. */
@@ -730,6 +745,7 @@ static const JNINativeMethod methods[] = {
 	NATIVE_METHOD(env, cls, "nativeDecryptBuffer", "(J[BJ)[B", native_decryptBuffer),
 	NATIVE_METHOD(env, cls, "nativeEncryptBuffer", "(J[BJ)[B", native_encryptBuffer),
 	NATIVE_METHOD(env, cls, "nativeClose", "(J)V", native_close),
+	NATIVE_METHOD(env, cls, "nativeSync", "(J)I", native_sync),
 	NATIVE_METHOD(env, cls, "nativeGetLastError", "()Ljava/lang/String;", native_getLastError),
 
 	/* NTFS-3G bridge */

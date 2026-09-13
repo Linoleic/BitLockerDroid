@@ -34,6 +34,28 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         /** Segment separator for document IDs. */
         private const val SEP = ":"
 
+        @Volatile
+        private var activeInstance: BitLockerDocumentsProvider? = null
+
+        /**
+         * Waits (bounded) for all in-flight SAF pipe writes to finish.
+         * Safe-eject step: call before closing/locking a session so a write
+         * pipeline is never cut off mid-transaction.
+         */
+        fun drainActiveWrites(timeoutMs: Long = 8000) {
+            val inst = activeInstance ?: return
+            val deadline = System.currentTimeMillis() + timeoutMs
+            for ((_, thread) in inst.activeWrites) {
+                val remaining = deadline - System.currentTimeMillis()
+                if (remaining <= 0) break
+                try {
+                    thread.join(remaining)
+                } catch (_: InterruptedException) {
+                    break
+                }
+            }
+        }
+
         /**
          * Stable per-volume root id. DocumentsUI opens a root Uri
          * (content://authority/root/<rootId>) without calling findDocumentPath,
@@ -114,7 +136,13 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
     }
 
     override fun onCreate(): Boolean {
+        activeInstance = this
         return true
+    }
+
+    override fun shutdown() {
+        if (activeInstance === this) activeInstance = null
+        super.shutdown()
     }
 
     private val appContext: android.content.Context
@@ -425,6 +453,18 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         }
 
         if (path == null) {
+            // A real (MFT-backed) record still resolves through its own
+            // parentRecord chain, so an unresolvable record means the docId
+            // was synthetic (create_document marker) and its alias mapping
+            // was lost — e.g. after a process restart. Refuse with an error
+            // instead of silently reporting success while the file survives
+            // on the volume.
+            val recordExists = record > 0 && record != core.reader.rootRef &&
+                try { core.getEntry(record) != null } catch (_: Exception) { false }
+            if (!recordExists) {
+                LogFile.write("provider", "deleteDocument: stale unresolvable docId=$documentId — refusing silent success")
+                throw java.io.FileNotFoundException("Document id is stale and no longer resolvable: $documentId")
+            }
             LogFile.write("provider", "deleteDocument: Cannot resolve path for docId=$documentId, already non-existent")
             return
         }

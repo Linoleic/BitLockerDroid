@@ -1,5 +1,6 @@
 package com.bitlockerdroid.ui
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -60,8 +61,34 @@ class UnlockDialogActivity : ComponentActivity() {
         private val RECOVERY_PATTERN = Pattern.compile("^(\\d{6}-){7}\\d{6}$")
     }
 
-    private var devicePath: String = ""
+    // Compose state so onNewIntent re-renders the dialog for the new volume.
+    private var devicePath: String by mutableStateOf("")
     private var offset: Long = 0
+    private var initialGuid: String? by mutableStateOf<String?>(null)
+
+    /**
+     * Validates and applies a launch intent. Shared by onCreate and
+     * onNewIntent: a second launch while the dialog is finishing cancels the
+     * finish and delivers the intent here — extras must pass through the same
+     * DevicePathSecurity gate, never bypass it.
+     */
+    private fun applyIntent(intent: Intent?) {
+        val rawPath = intent?.getStringExtra(EXTRA_DEVICE_PATH)
+        if (!DevicePathSecurity.isValid(rawPath)) {
+            LogFile.write("app", "UnlockDialogActivity: rejected invalid or dangerous path $rawPath")
+            finish()
+            return
+        }
+        devicePath = rawPath!!
+        offset = intent.getLongExtra(EXTRA_OFFSET, 0)
+        initialGuid = intent.getStringExtra(EXTRA_GUID)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        applyIntent(intent)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,15 +99,7 @@ class UnlockDialogActivity : ComponentActivity() {
             android.view.WindowManager.LayoutParams.FLAG_SECURE
         )
 
-        val rawPath = intent.getStringExtra(EXTRA_DEVICE_PATH)
-        if (!DevicePathSecurity.isValid(rawPath)) {
-            LogFile.write("app", "UnlockDialogActivity: rejected invalid or dangerous path $rawPath")
-            finish()
-            return
-        }
-        devicePath = rawPath!!
-        offset = intent.getLongExtra(EXTRA_OFFSET, 0)
-        val initialGuid = intent.getStringExtra(EXTRA_GUID)
+        applyIntent(intent)
 
         setContent {
             BitLockerTheme {

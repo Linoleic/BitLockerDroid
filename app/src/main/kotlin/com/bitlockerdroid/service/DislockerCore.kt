@@ -403,6 +403,19 @@ class DislockerCore private constructor(
         )
     }
 
+    /**
+     * Flushes the encrypted block device (fdatasync / daemon CMD_SYNC).
+     * Safe-eject step: call after all write pipelines have drained and before
+     * [close] so no decrypted-and-re-encrypted sector is left in flight.
+     */
+    fun flush() {
+        try {
+            NativeBridge.nativeSync(handle)
+        } catch (e: Throwable) {
+            Log.w(TAG, "flush failed", e)
+        }
+    }
+
     override fun close() {
         // Serialize double-close: two threads racing here would flush the
         // writer twice and call nativeClose on an already-freed handle.
