@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+#include <pthread.h>
 #include <android/log.h>
 
 #include "dislocker/dislocker.h"
@@ -50,6 +51,88 @@ static dis_ctx_t *ptrj(jlong h)
 	return (dis_ctx_t *)(intptr_t)h;
 }
 
+/* ---------------- session handle registry ----------------
+ * Raw ctx pointers handed to Java are validated against this table. After
+ * nativeClose the slot is freed, so a stale or double-closed handle becomes a
+ * clean IllegalStateException instead of a use-after-free. Each slot carries a
+ * mutex so IO ops cannot run concurrently with close on the same ctx. */
+#define JNI_MAX_SESSIONS 16
+
+typedef struct {
+	dis_ctx_t *ctx;
+	pthread_mutex_t lock;
+	int used;
+} jni_slot_t;
+
+static jni_slot_t g_sessions[JNI_MAX_SESSIONS];
+static pthread_mutex_t g_sessions_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static jlong slot_register(dis_ctx_t *ctx)
+{
+	jlong h = 0;
+	pthread_mutex_lock(&g_sessions_lock);
+	for (int i = 0; i < JNI_MAX_SESSIONS; i++) {
+		if (!g_sessions[i].used) {
+			g_sessions[i].ctx = ctx;
+			g_sessions[i].used = 1;
+			h = jptr(ctx);
+			break;
+		}
+	}
+	pthread_mutex_unlock(&g_sessions_lock);
+	return h;
+}
+
+/* Returns the slot owning `h` with its per-slot lock held, or NULL. */
+static jni_slot_t *slot_acquire(jlong h)
+{
+	dis_ctx_t *ctx = ptrj(h);
+	if (!ctx)
+		return NULL;
+
+	pthread_mutex_lock(&g_sessions_lock);
+	for (int i = 0; i < JNI_MAX_SESSIONS; i++) {
+		jni_slot_t *s = &g_sessions[i];
+		if (s->used && s->ctx == ctx) {
+			pthread_mutex_lock(&s->lock);
+			pthread_mutex_unlock(&g_sessions_lock);
+			return s;
+		}
+	}
+	pthread_mutex_unlock(&g_sessions_lock);
+	return NULL;
+}
+
+static void slot_release(jni_slot_t *s)
+{
+	pthread_mutex_unlock(&s->lock);
+}
+
+/* Validates `h` and unregisters it; returns the ctx for the caller to free,
+ * or NULL when the handle is stale (already closed / never opened). */
+static dis_ctx_t *slot_take(jlong h)
+{
+	dis_ctx_t *ctx = ptrj(h);
+	if (!ctx)
+		return NULL;
+
+	dis_ctx_t *out = NULL;
+	pthread_mutex_lock(&g_sessions_lock);
+	for (int i = 0; i < JNI_MAX_SESSIONS; i++) {
+		jni_slot_t *s = &g_sessions[i];
+		if (s->used && s->ctx == ctx) {
+			pthread_mutex_lock(&s->lock);
+			s->used = 0;
+			s->ctx = NULL;
+			pthread_mutex_unlock(&s->lock);
+			out = ctx;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&g_sessions_lock);
+	return out;
+}
+
 /* ---------------- native methods ---------------- */
 
 static jboolean native_hasBitLockerHeader(JNIEnv *env, jobject thiz, jstring path)
@@ -72,12 +155,19 @@ static jboolean native_hasBitLockerHeader(JNIEnv *env, jobject thiz, jstring pat
 static jlong native_openVolume(JNIEnv *env, jobject thiz,
 	jstring path, jlong offset, jbyteArray password)
 {
+	if (!path || !password)
+		return 0;
+
 	const char *cpath = (*env)->GetStringUTFChars(env, path, NULL);
 	if (!cpath)
 		return 0;
 
 	jsize plen = (*env)->GetArrayLength(env, password);
 	uint8_t *pbuf = (uint8_t *)malloc((size_t)plen + 1);
+	if (!pbuf) {
+		(*env)->ReleaseStringUTFChars(env, path, cpath);
+		return 0;
+	}
 	(*env)->GetByteArrayRegion(env, password, 0, plen, (jbyte *)pbuf);
 	pbuf[plen] = 0;
 
@@ -88,19 +178,35 @@ static jlong native_openVolume(JNIEnv *env, jobject thiz,
 	free(pbuf);
 	(*env)->ReleaseStringUTFChars(env, path, cpath);
 
-	if (!ctx)
+	if (!ctx) {
 		LOGE("openVolume failed: %s", dis_get_last_error());
+		return 0;
+	}
 
-	return jptr(ctx);
+	jlong h = slot_register(ctx);
+	if (!h) {
+		/* Registry full: close immediately rather than leak an untracked ctx. */
+		dis_close_volume(ctx);
+	}
+	return h;
 }
 
 static jlong native_openVolumeRecovery(JNIEnv *env, jobject thiz,
 	jstring path, jlong offset, jstring recoveryKey)
 {
+	if (!path || !recoveryKey)
+		return 0;
+
 	const char *cpath = (*env)->GetStringUTFChars(env, path, NULL);
 	const char *ckey  = (*env)->GetStringUTFChars(env, recoveryKey, NULL);
-	if (!cpath || !ckey)
+	if (!cpath || !ckey) {
+		/* Release whichever succeeded before bailing out. */
+		if (cpath)
+			(*env)->ReleaseStringUTFChars(env, path, cpath);
+		if (ckey)
+			(*env)->ReleaseStringUTFChars(env, recoveryKey, ckey);
 		return 0;
+	}
 
 	dis_session_info_t info;
 	dis_ctx_t *ctx = dis_open_volume_recovery(cpath, (off_t)offset,
@@ -109,21 +215,27 @@ static jlong native_openVolumeRecovery(JNIEnv *env, jobject thiz,
 	(*env)->ReleaseStringUTFChars(env, recoveryKey, ckey);
 	(*env)->ReleaseStringUTFChars(env, path, cpath);
 
-	if (!ctx)
+	if (!ctx) {
 		LOGE("openVolumeRecovery failed: %s", dis_get_last_error());
+		return 0;
+	}
 
-	return jptr(ctx);
+	jlong h = slot_register(ctx);
+	if (!h)
+		dis_close_volume(ctx);
+	return h;
 }
 
 /* returns long[] {sectorSize, volumeSize, algorithm, fvekLen, dataOffset} */
 static jlongArray native_sessionInfo(JNIEnv *env, jobject thiz, jlong handle)
 {
-	dis_ctx_t *ctx = ptrj(handle);
-	if (!ctx) {
+	jni_slot_t *slot = slot_acquire(handle);
+	if (!slot) {
 		(*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/IllegalStateException"),
-			"invalid session handle");
+			"invalid or closed session handle");
 		return NULL;
 	}
+	dis_ctx_t *ctx = slot->ctx;
 
 	jlong vals[5];
 	vals[0] = dis_sector_size(ctx);
@@ -132,6 +244,8 @@ static jlongArray native_sessionInfo(JNIEnv *env, jobject thiz, jlong handle)
 	vals[3] = dis_fvek_len(ctx);
 	/* data offset = boot_backup (physical start of encrypted data) */
 	vals[4] = (jlong)(ctx->information ? (int64_t)ctx->information->boot_sectors_backup : 0);
+
+	slot_release(slot);
 
 	jlongArray out = (*env)->NewLongArray(env, 5);
 	if (!out)
@@ -143,18 +257,25 @@ static jlongArray native_sessionInfo(JNIEnv *env, jobject thiz, jlong handle)
 static jbyteArray native_read(JNIEnv *env, jobject thiz, jlong handle,
 	jlong offset, jint size)
 {
-	dis_ctx_t *ctx = ptrj(handle);
-	if (!ctx || size <= 0) {
+	jni_slot_t *slot = slot_acquire(handle);
+	if (!slot || size <= 0) {
+		if (slot)
+			slot_release(slot);
 		(*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/IllegalArgumentException"),
-			"invalid handle or size");
+			"invalid or closed session handle");
+		return NULL;
+	}
+	dis_ctx_t *ctx = slot->ctx;
+
+	uint8_t *buf = (uint8_t *)malloc((size_t)size);
+	if (!buf) {
+		slot_release(slot);
 		return NULL;
 	}
 
-	uint8_t *buf = (uint8_t *)malloc((size_t)size);
-	if (!buf)
-		return NULL;
-
 	int ret = dis_read_decrypted(ctx, buf, (off_t)offset, (size_t)size);
+	slot_release(slot);
+
 	if (ret < 0) {
 		free(buf);
 		LOGE("dis_read_decrypted failed: %s", dis_get_last_error());
@@ -170,24 +291,31 @@ static jbyteArray native_read(JNIEnv *env, jobject thiz, jlong handle,
 static jint native_write(JNIEnv *env, jobject thiz, jlong handle,
 	jlong offset, jbyteArray data, jint size)
 {
-	dis_ctx_t *ctx = ptrj(handle);
-	if (!ctx || !data || size <= 0) {
+	jni_slot_t *slot = slot_acquire(handle);
+	if (!slot || !data || size <= 0) {
+		if (slot)
+			slot_release(slot);
 		(*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/IllegalArgumentException"),
-			"invalid handle or data");
+			"invalid or closed session handle");
 		return -1;
 	}
+	dis_ctx_t *ctx = slot->ctx;
 
 	jsize dlen = (*env)->GetArrayLength(env, data);
 	if (size > dlen)
 		size = dlen;
 
 	uint8_t *buf = (uint8_t *)malloc((size_t)size);
-	if (!buf)
+	if (!buf) {
+		slot_release(slot);
 		return -1;
+	}
 
 	(*env)->GetByteArrayRegion(env, data, 0, size, (jbyte *)buf);
 
 	int ret = dis_write_encrypted(ctx, buf, (off_t)offset, (size_t)size);
+	slot_release(slot);
+
 	memset(buf, 0, (size_t)size);
 	free(buf);
 
@@ -200,7 +328,11 @@ static jint native_write(JNIEnv *env, jobject thiz, jlong handle,
 
 static void native_close(JNIEnv *env, jobject thiz, jlong handle)
 {
-	dis_close_volume(ptrj(handle));
+	dis_ctx_t *ctx = slot_take(handle);
+	/* Stale handle: already closed or never registered — nothing to free. */
+	if (!ctx)
+		return;
+	dis_close_volume(ctx);
 }
 
 /* Decrypts an already-read encrypted buffer at a sector-aligned offset.
@@ -209,26 +341,33 @@ static void native_close(JNIEnv *env, jobject thiz, jlong handle)
 static jbyteArray native_decryptBuffer(JNIEnv *env, jobject thiz, jlong handle,
 	jbyteArray input, jlong offset)
 {
-	dis_ctx_t *ctx = ptrj(handle);
-	if (!ctx || input == NULL) {
+	jni_slot_t *slot = slot_acquire(handle);
+	if (!slot || input == NULL) {
+		if (slot)
+			slot_release(slot);
 		(*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/IllegalArgumentException"),
-			"invalid handle or input");
+			"invalid or closed session handle");
 		return NULL;
 	}
+	dis_ctx_t *ctx = slot->ctx;
 
 	jsize len = (*env)->GetArrayLength(env, input);
-	if (len <= 0 || (size_t)len % ctx->sector_size != 0)
+	if (len <= 0 || (size_t)len % ctx->sector_size != 0) {
+		slot_release(slot);
 		return NULL;
+	}
 
 	uint8_t *in = (uint8_t *)malloc((size_t)len);
 	uint8_t *out = (uint8_t *)malloc((size_t)len);
 	if (!in || !out) {
 		free(in); free(out);
+		slot_release(slot);
 		return NULL;
 	}
 	(*env)->GetByteArrayRegion(env, input, 0, len, (jbyte *)in);
 
 	int ret = dis_decrypt_region(ctx, in, out, (off_t)offset, (size_t)len);
+	slot_release(slot);
 
 	free(in);
 	if (ret < 0) {
@@ -249,26 +388,33 @@ static jbyteArray native_decryptBuffer(JNIEnv *env, jobject thiz, jlong handle,
 static jbyteArray native_encryptBuffer(JNIEnv *env, jobject thiz, jlong handle,
 	jbyteArray input, jlong offset)
 {
-	dis_ctx_t *ctx = ptrj(handle);
-	if (!ctx || input == NULL) {
+	jni_slot_t *slot = slot_acquire(handle);
+	if (!slot || input == NULL) {
+		if (slot)
+			slot_release(slot);
 		(*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/IllegalArgumentException"),
-			"invalid handle or input");
+			"invalid or closed session handle");
 		return NULL;
 	}
+	dis_ctx_t *ctx = slot->ctx;
 
 	jsize len = (*env)->GetArrayLength(env, input);
-	if (len <= 0 || (size_t)len % ctx->sector_size != 0)
+	if (len <= 0 || (size_t)len % ctx->sector_size != 0) {
+		slot_release(slot);
 		return NULL;
+	}
 
 	uint8_t *in = (uint8_t *)malloc((size_t)len);
 	uint8_t *out = (uint8_t *)malloc((size_t)len);
 	if (!in || !out) {
 		free(in); free(out);
+		slot_release(slot);
 		return NULL;
 	}
 	(*env)->GetByteArrayRegion(env, input, 0, len, (jbyte *)in);
 
 	int ret = dis_encrypt_region(ctx, in, out, (off_t)offset, (size_t)len);
+	slot_release(slot);
 
 	memset(in, 0, (size_t)len);
 	free(in);
@@ -285,11 +431,13 @@ static jbyteArray native_encryptBuffer(JNIEnv *env, jobject thiz, jlong handle,
 
 static jlong native_ntfsMount(JNIEnv *env, jobject thiz, jlong handle, jboolean readOnly)
 {
-	dis_ctx_t *ctx = ptrj(handle);
-	if (!ctx)
+	jni_slot_t *slot = slot_acquire(handle);
+	if (!slot)
 		return 0;
+	dis_ctx_t *ctx = slot->ctx;
 
 	dis_ntfs_handle_t vol = dis_ntfs_mount(ctx, readOnly ? 1 : 0);
+	slot_release(slot);
 	if (!vol) {
 		LOGE("nativeNtfsMount failed for %s", ctx->device_path);
 		return 0;
@@ -390,11 +538,13 @@ static jlong native_ntfsTruncate(JNIEnv *env, jobject thiz, jlong volHandle,
 
 static jlong native_fatfsMount(JNIEnv *env, jobject thiz, jlong handle, jboolean readOnly)
 {
-	dis_ctx_t *ctx = ptrj(handle);
-	if (!ctx)
+	jni_slot_t *slot = slot_acquire(handle);
+	if (!slot)
 		return 0;
+	dis_ctx_t *ctx = slot->ctx;
 
 	dis_fatfs_handle_t vol = dis_fatfs_mount(ctx, readOnly ? 1 : 0);
+	slot_release(slot);
 	if (!vol) {
 		LOGE("nativeFatfsMount failed for %s", ctx->device_path);
 		return 0;
@@ -500,9 +650,10 @@ static jstring native_getLastError(JNIEnv *env, jobject thiz)
 
 static jstring native_getVolumeGuid(JNIEnv *env, jobject thiz, jlong handle)
 {
-	dis_ctx_t *ctx = ptrj(handle);
-	if (!ctx)
+	jni_slot_t *slot = slot_acquire(handle);
+	if (!slot)
 		return NULL;
+	dis_ctx_t *ctx = slot->ctx;
 
 	const uint8_t *guid_bytes = NULL;
 	if (ctx->dataset) {
@@ -512,6 +663,8 @@ static jstring native_getVolumeGuid(JNIEnv *env, jobject thiz, jlong handle)
 	} else {
 		guid_bytes = (const uint8_t *)ctx->volume_header.guid;
 	}
+
+	slot_release(slot);
 
 	if (!guid_bytes)
 		return NULL;

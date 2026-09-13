@@ -226,8 +226,9 @@ int dis_metadata_parse(dis_ctx_t *ctx)
 	ctx->algorithm = ctx->dataset->algorithm;
 	ctx->volume_size = info->encrypted_volume_size;
 
-	/* Supported ciphers: AES-XTS (Win10+) and AES-CBC with/without diffuser
-	 * (legacy). Diffuser modes currently fall back to plain CBC. */
+	/* Known ciphers: AES-XTS (Win10+) and AES-CBC with/without diffuser
+	 * (legacy). Diffuser modes are rejected in access init — the Elephant
+	 * diffuser is not implemented here, so such volumes must not open. */
 	switch (ctx->algorithm) {
 	case AES_XTS_128:
 	case AES_XTS_256:

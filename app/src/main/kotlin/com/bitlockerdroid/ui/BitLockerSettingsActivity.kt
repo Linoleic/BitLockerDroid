@@ -26,6 +26,7 @@ import com.bitlockerdroid.service.BitLockerDetector
 import com.bitlockerdroid.service.DetectedVolume
 import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.service.UnlockedVolume
+import com.bitlockerdroid.service.VirtualStorageMountManager
 import com.bitlockerdroid.ui.dialogs.CredentialsManagerDialog
 import com.bitlockerdroid.ui.dialogs.LogViewerDialog
 import com.bitlockerdroid.ui.dialogs.ShowPasswordDialog
@@ -67,6 +68,11 @@ class BitLockerSettingsActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Saved passwords are shown here — block screenshots / screen recording.
+        window.setFlags(
+            android.view.WindowManager.LayoutParams.FLAG_SECURE,
+            android.view.WindowManager.LayoutParams.FLAG_SECURE
+        )
         UnlockManager.addListener(stateChangeListener)
 
         // Request notification permission (Android 13+)
@@ -176,6 +182,14 @@ class BitLockerSettingsActivity : ComponentActivity() {
                     UnlockManager.clearManualLockSuppression()
                 }
                 com.bitlockerdroid.util.DeviceIdentity.clearCache()
+                // FUSE daemon may have written to the volume behind our back:
+                // drop every active session's block/FS caches so the refreshed
+                // listing reflects the on-volume truth.
+                UnlockManager.activeSessions.forEach { core ->
+                    try { core.invalidateCache() } catch (_: Throwable) {}
+                }
+                // And tell the daemons to rebuild their view in turn (SAF→FUSE).
+                VirtualStorageMountManager.notifyAllDataChanged()
                 found = BitLockerDetector.scanAndDetect(this@BitLockerSettingsActivity)
                 // If auto-unlock was triggered for any volume, wait up to 6s so UI immediately shows it
                 UnlockManager.awaitPendingUnlocks(6000)

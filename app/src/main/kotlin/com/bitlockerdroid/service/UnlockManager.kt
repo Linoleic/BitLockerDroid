@@ -92,8 +92,11 @@ object UnlockManager {
 
     /** Active native handles kept alive while a volume is unlocked. */
     val unlockedVolumes: List<UnlockedVolume>
-        get() = synchronized(lock) {
-            sessions.map { (path, core) ->
+        get() {
+            // Snapshot under the lock; the per-volume queries below do
+            // root execs and native IO and must not hold the lock.
+            val snapshot = synchronized(lock) { sessions.toList() }
+            return snapshot.map { (path, core) ->
                 val fsName = when (core.reader) {
                     is com.bitlockerdroid.ntfs.NtfsReader -> "NTFS"
                     is com.bitlockerdroid.ntfs.ExFatReader -> "exFAT"
@@ -143,15 +146,12 @@ object UnlockManager {
 
     fun closeSessionIfPresent(devicePath: String) {
         val app = com.bitlockerdroid.util.ContextProvider.app
-        var changed = false
-        synchronized(lock) {
-            val removed = sessions.remove(devicePath)
-            if (removed != null) {
-                removed.close()
-                changed = true
-            }
-        }
-        if (changed) {
+        // Remove under the lock, but close outside it: close() flushes and
+        // does native IO, and holding `lock` during that stalls every
+        // get()/isUnlocked() caller.
+        val removed: DislockerCore? = synchronized(lock) { sessions.remove(devicePath) }
+        removed?.close()
+        if (removed != null) {
             app?.let {
                 BitLockerCoreService.updateForegroundState(it)
                 com.bitlockerdroid.provider.BitLockerDocumentsProvider.notifyRootsChanged(it)
@@ -217,11 +217,14 @@ object UnlockManager {
                 manuallyLockedGuids.remove(guid)
             }
             manuallyLockedGuids.remove(devicePath)
-            synchronized(lock) {
-                sessions[devicePath]?.close()
-                sessions[devicePath] = core
+            // Replace any stale session: take it out under the lock, close it
+            // outside so native teardown never runs while `lock` is held.
+            val stale = synchronized(lock) {
+                val old = sessions.put(devicePath, core)
                 detected.remove(devicePath)
+                old
             }
+            stale?.close()
             // Save the encrypted password only if the user asked to remember it.
             // Keyed strictly by persistent Volume GUID rather than ephemeral device node.
             if (!guid.isNullOrBlank()) {
@@ -295,16 +298,18 @@ object UnlockManager {
     fun lock(devicePath: String) {
         val app = com.bitlockerdroid.util.ContextProvider.app
         VirtualStorageMountManager.unmount(devicePath)
+        val devInfo = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath, forceRefresh = true)
+        val stale: DislockerCore?
         synchronized(lock) {
-            val guid = sessions[devicePath]?.volumeGuid ?: BitLockerDetector.getVolumeGuid(devicePath)
+            val core = sessions.remove(devicePath)
+            stale = core
+            val guid = core?.volumeGuid ?: BitLockerDetector.getVolumeGuid(devicePath)
             if (!guid.isNullOrBlank()) {
                 manuallyLockedGuids.add(guid)
             }
             manuallyLockedGuids.add(devicePath)
             LogFile.write("app", "UnlockManager.lock: manually locked $devicePath (guid=$guid)")
 
-            sessions.remove(devicePath)?.close()
-            val devInfo = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath, forceRefresh = true)
             detected[devicePath] = DetectedVolume(
                 devicePath = devicePath,
                 guid = guid,
@@ -312,6 +317,7 @@ object UnlockManager {
                 capacity = devInfo.sizeBytes
             )
         }
+        stale?.close()
         app?.let {
             BitLockerCoreService.updateForegroundState(it)
             com.bitlockerdroid.provider.BitLockerDocumentsProvider.notifyRootsChanged(it)
@@ -327,8 +333,8 @@ object UnlockManager {
      * the same vold node path.
      */
     fun forgetDetectedMissing(presentNodes: List<String>) {
-        var closedAny = false
         var removedAny = false
+        val toClose = mutableListOf<Pair<String, DislockerCore>>()
         com.bitlockerdroid.util.DeviceIdentity.clearCache()
         synchronized(lock) {
             val present = presentNodes.toHashSet()
@@ -344,15 +350,22 @@ object UnlockManager {
             val missingSessions = sessions.keys.filter { !present.contains(it) }
             if (missingSessions.isNotEmpty()) {
                 missingSessions.forEach { path ->
-                    sessions[path]?.volumeGuid?.let { manuallyLockedGuids.remove(it) }
-                    manuallyLockedGuids.remove(path)
-                    sessions.remove(path)?.close()
-                    VirtualStorageMountManager.unmount(path)
-                    Log.i(TAG, "forgetDetectedMissing: closed stale session for $path (node gone)")
+                    val core = sessions.remove(path)
+                    if (core != null) {
+                        core.volumeGuid?.let { manuallyLockedGuids.remove(it) }
+                        manuallyLockedGuids.remove(path)
+                        toClose.add(path to core)
+                        Log.i(TAG, "forgetDetectedMissing: closing stale session for $path (node gone)")
+                    }
                 }
-                closedAny = true
             }
         }
+        // Close and unmount outside the lock: both are slow IO.
+        toClose.forEach { (path, core) ->
+            core.close()
+            VirtualStorageMountManager.unmount(path)
+        }
+        val closedAny = toClose.isNotEmpty()
         com.bitlockerdroid.util.ContextProvider.app?.let { app ->
             BitLockerCoreService.updateForegroundState(app)
             if (closedAny) {
@@ -381,16 +394,17 @@ object UnlockManager {
         key: String? = null,
         isRecovery: Boolean = false
     ) {
+        val stale: DislockerCore?
         synchronized(lock) {
             val guid = core.volumeGuid ?: BitLockerDetector.getVolumeGuid(core.devicePath)
             if (!guid.isNullOrBlank()) {
                 manuallyLockedGuids.remove(guid)
             }
             manuallyLockedGuids.remove(core.devicePath)
-            sessions[core.devicePath]?.close()
-            sessions[core.devicePath] = core
+            stale = sessions.put(core.devicePath, core)
             detected.remove(core.devicePath)
         }
+        stale?.close()
 
         if (key != null && context != null && VirtualStorageMountManager.isEnabled(context) && VirtualStorageMountManager.isSupported()) {
             val guid = core.volumeGuid ?: ""
@@ -468,17 +482,20 @@ object UnlockManager {
         val volumeId = guid ?: BitLockerDetector.getVolumeGuid(devicePath)
 
         // Check if an existing session on this node has a DIFFERENT volume GUID (user swapped drive on same USB port)
-        synchronized(lock) {
+        val swappedOut: DislockerCore? = synchronized(lock) {
             val existing = sessions[devicePath]
             if (existing != null) {
                 val existingGuid = existing.volumeGuid
                 if (!volumeId.isNullOrBlank() && !existingGuid.isNullOrBlank() && volumeId != existingGuid) {
-                    LogFile.write("app", "onDeviceDetected: volume swapped at $devicePath (old=$existingGuid, new=$volumeId), closing stale session")
-                    sessions.remove(devicePath)?.close()
-                    com.bitlockerdroid.provider.BitLockerDocumentsProvider.notifyRootsChanged(context)
-                    notifyStateChanged()
-                }
-            }
+                    sessions.remove(devicePath)
+                } else null
+            } else null
+        }
+        if (swappedOut != null) {
+            LogFile.write("app", "onDeviceDetected: volume swapped at $devicePath, closing stale session")
+            swappedOut.close()
+            com.bitlockerdroid.provider.BitLockerDocumentsProvider.notifyRootsChanged(context)
+            notifyStateChanged()
         }
 
         // Record the volume so it stays reachable from the management UI.

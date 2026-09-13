@@ -3,6 +3,7 @@ package com.bitlockerdroid.service
 import android.content.Context
 import android.util.Log
 import com.bitlockerdroid.util.DeviceIdentity
+import com.bitlockerdroid.util.DevicePathSecurity
 import com.bitlockerdroid.util.LogFile
 import com.bitlockerdroid.util.PreferenceHelper
 import com.bitlockerdroid.util.RootAccess
@@ -24,6 +25,9 @@ import java.util.concurrent.ConcurrentHashMap
 object VirtualStorageMountManager {
 
     private const val TAG = "VirtualStorageMount"
+
+    /** Mount points we create or accept from daemon cmdlines — strict charset, no shell metacharacters. */
+    private val MOUNT_POINT_PATTERN = Regex("^/storage/[A-Za-z0-9_-]+$")
 
     data class VirtualMountInfo(
         val devicePath: String,
@@ -76,6 +80,10 @@ object VirtualStorageMountManager {
                 if (tokens.size >= 6) {
                     val devPath = tokens[1]
                     val mountPoint = tokens[5]
+                    // The cmdline comes from the global mount namespace and is
+                    // interpolated into root shell commands below: accept only
+                    // a valid block node and a strict /storage/<id> point.
+                    if (!DevicePathSecurity.isValid(devPath) || !MOUNT_POINT_PATTERN.matches(mountPoint)) continue
                     val isMounted = RootAccess.execTimeout(
                         "su -M -c 'cat /proc/mounts | grep \"$mountPoint\"'",
                         1000
@@ -121,6 +129,29 @@ object VirtualStorageMountManager {
     fun getAllMounts(): List<VirtualMountInfo> = activeMounts.values.toList()
 
     /**
+     * Tells the FUSE daemon serving [devicePath] that the volume changed
+     * through the SAF provider's own session: SIGUSR1 makes it rebuild its
+     * FatFs/ntfs-3g caches, so the next FUSE request sees the new content.
+     * No-op (and no root exec) when nothing is virtually mounted.
+     */
+    fun notifyDataChanged(devicePath: String) {
+        val info = activeMounts[devicePath] ?: return
+        if (info.pid <= 1) return
+        Thread {
+            try {
+                RootAccess.exec("su -c 'kill -USR1 ${info.pid}'", 2000)
+            } catch (_: Throwable) {}
+        }.apply { isDaemon = true; name = "fuse-notify" }.start()
+    }
+
+    /** Notifies every active virtual mount (used by the manual refresh). */
+    fun notifyAllDataChanged() {
+        for (path in activeMounts.keys) {
+            notifyDataChanged(path)
+        }
+    }
+
+    /**
      * Attempts to mount using a remembered password from KeyGuardService.
      */
     fun mountRemembered(context: Context, devicePath: String): Result<VirtualMountInfo> {
@@ -152,7 +183,7 @@ object VirtualStorageMountManager {
         } else {
             BitLockerDetector.getVolumeGuid(devicePath) ?: ""
         }
-        val clean = rawGuid.replace("-", "").trim().uppercase()
+        val clean = rawGuid.replace("-", "").trim().uppercase().filter { it.isLetterOrDigit() }
         if (clean.length >= 8) {
             val p1 = clean.substring(0, 4)
             val p2 = clean.substring(4, 8)
@@ -181,6 +212,11 @@ object VirtualStorageMountManager {
         if (!isSupported()) {
             return Result.failure(IllegalStateException("Root access is required for /storage virtual mount"))
         }
+        // Defense in depth: devicePath, offset-derived strings and the storage
+        // id below are all interpolated into `su -c` commands. The mount entry
+        // points (remembered / registerDirect / dialog) bypass
+        // DislockerCore.open, so validate here, at the choke point.
+        DevicePathSecurity.requireValid(devicePath)
 
         // Check if already mounted and healthy
         activeMounts[devicePath]?.let { existing ->

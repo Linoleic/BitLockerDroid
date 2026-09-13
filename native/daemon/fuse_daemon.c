@@ -74,6 +74,11 @@ static dis_fatfs_handle_t g_fatfs_vol = NULL;
 static int g_fatfs_mounted = 0;
 static int g_read_only = 0;
 
+/* Set by SIGUSR1: the app's SAF provider changed the volume through its own
+ * session, so our FatFs / ntfs-3g caches are stale. Checked at the top of the
+ * main FUSE loop (single-threaded dispatch → remount is race-free). */
+static volatile sig_atomic_t g_cache_dirty = 0;
+
 /* ---------------- Inode / Path Registry ---------------- */
 
 typedef struct inode_entry {
@@ -834,6 +839,41 @@ static void sig_handler(int sig) {
     g_running = 0;
 }
 
+static void sigusr1_handler(int sig) {
+    (void)sig;
+    /* async-signal-safe: only set a flag; the main loop does the work. */
+    g_cache_dirty = 1;
+}
+
+/*
+ * Tears down and re-mounts the filesystem layer (FatFs or ntfs-3g) so that
+ * metadata caches no longer hide changes made outside this daemon. The
+ * BitLocker session (g_dis_ctx) is kept alive — only the FS view is rebuilt.
+ * Must run on the main FUSE thread between requests.
+ */
+static void remount_fs_caches(void) {
+    if (g_fs_type == FS_TYPE_NTFS) {
+        dis_ntfs_umount((dis_ntfs_handle_t)g_ntfs_vol);
+        g_ntfs_vol = (ntfs_volume *)dis_ntfs_mount(g_dis_ctx, g_read_only);
+        if (!g_ntfs_vol) {
+            LOGE("SIGUSR1 remount: dis_ntfs_mount failed — stopping");
+            g_running = 0;
+        } else {
+            LOGI("SIGUSR1: NTFS caches rebuilt");
+        }
+    } else if (g_fs_type == FS_TYPE_FATFS) {
+        dis_fatfs_umount(g_fatfs_vol);
+        g_fatfs_vol = dis_fatfs_mount(g_dis_ctx, g_read_only);
+        g_fatfs_mounted = (g_fatfs_vol != NULL);
+        if (!g_fatfs_vol) {
+            LOGE("SIGUSR1 remount: dis_fatfs_mount failed — stopping");
+            g_running = 0;
+        } else {
+            LOGI("SIGUSR1: FATFS caches rebuilt");
+        }
+    }
+}
+
 static void cleanup_mount(void) {
     LOGI("Cleaning up FUSE mount at %s...", g_mountpoint);
     if (strlen(g_mountpoint) > 0) {
@@ -866,6 +906,7 @@ int main(int argc, char **argv) {
     signal(SIGTERM, sig_handler);
     signal(SIGINT, sig_handler);
     signal(SIGPIPE, SIG_IGN);
+    signal(SIGUSR1, sigusr1_handler);
 
     if (argc < 6) {
         fprintf(stderr, "Usage: %s <dev_path> <offset> <key_type: 1=pass,2=rec> <key> <mountpoint> [rw|ro] [-f]\n", argv[0]);
@@ -997,6 +1038,12 @@ int main(int argc, char **argv) {
     }
 
     while (g_running) {
+        if (g_cache_dirty) {
+            g_cache_dirty = 0;
+            remount_fs_caches();
+            if (!g_running) break;
+        }
+
         ssize_t n = read(g_fuse_fd, in_buf, FUSE_BUFFER_SIZE);
         if (n < (ssize_t)sizeof(struct fuse_in_header)) {
             LOGW("read from fuse_fd returned %zd, errno=%d (%s), g_running=%d",

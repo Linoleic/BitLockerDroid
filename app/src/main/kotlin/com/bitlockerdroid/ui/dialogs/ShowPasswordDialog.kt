@@ -1,9 +1,16 @@
 package com.bitlockerdroid.ui.dialogs
 
+import android.app.Activity
+import android.app.KeyguardManager
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.Build
+import android.os.PersistableBundle
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -19,6 +26,16 @@ import androidx.compose.ui.unit.sp
 import com.bitlockerdroid.R
 import com.bitlockerdroid.util.PreferenceHelper
 
+/** Marks clipboard content as sensitive so clipboard history / password
+ * managers (Android 13+) exclude it. */
+private fun markClipboardSensitive(clip: ClipData) {
+    if (Build.VERSION.SDK_INT >= 33) {
+        clip.description.extras = PersistableBundle().apply {
+            putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+        }
+    }
+}
+
 /** Dialog showing saved password and full GUID for a specific credential */
 @Composable
 fun ShowPasswordDialog(
@@ -29,6 +46,47 @@ fun ShowPasswordDialog(
     var visible by remember { mutableStateOf(false) }
     val passwordPlain = remember(credential) {
         PreferenceHelper.getRememberedPassword(context, credential.id)
+    }
+
+    // Reveal / copy require proving device ownership: whoever holds the phone
+    // must pass the lock-screen credential first.
+    val keyguard = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+    val deviceSecure = keyguard?.isDeviceSecure == true
+    var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    val authLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val action = pendingAction
+        pendingAction = null
+        if (result.resultCode == Activity.RESULT_OK) {
+            action?.invoke()
+        } else {
+            Toast.makeText(context, "身份验证未通过", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun requireAuth(action: () -> Unit) {
+        if (!deviceSecure) {
+            action()
+            return
+        }
+        @Suppress("DEPRECATION")
+        val intent = keyguard?.createConfirmDeviceCredentialIntent(
+            "验证身份",
+            "请验证设备锁屏凭据以查看 BitLocker 凭据"
+        )
+        if (intent == null) {
+            action()
+            return
+        }
+        pendingAction = action
+        try {
+            authLauncher.launch(intent)
+        } catch (e: Exception) {
+            pendingAction = null
+            Toast.makeText(context, "无法启动身份验证", Toast.LENGTH_SHORT).show()
+        }
     }
 
     AlertDialog(
@@ -45,9 +103,13 @@ fun ShowPasswordDialog(
             if (passwordPlain != null) {
                 TextButton(
                     onClick = {
-                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                        cm?.setPrimaryClip(ClipData.newPlainText("BitLocker Password", passwordPlain))
-                        Toast.makeText(context, "密码已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                        requireAuth {
+                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                            val clip = ClipData.newPlainText("BitLocker Password", passwordPlain)
+                            markClipboardSensitive(clip)
+                            cm?.setPrimaryClip(clip)
+                            Toast.makeText(context, "密码已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 ) {
                     Icon(
@@ -157,7 +219,9 @@ fun ShowPasswordDialog(
                                     modifier = Modifier.weight(1f)
                                 )
                                 IconButton(
-                                    onClick = { visible = !visible },
+                                    onClick = {
+                                        requireAuth { visible = !visible }
+                                    },
                                     modifier = Modifier.size(32.dp)
                                 ) {
                                     Icon(

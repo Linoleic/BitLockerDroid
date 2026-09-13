@@ -23,36 +23,10 @@ class NtfsReader(
     override val rootRef: Long get() = ROOT_DIR_RECORD
 
     override fun volumeSerial(): Long {
-        // NTFS keeps the volume serial number in $Volume's $VOLUME_INFORMATION
-        // attribute (0x70), resident, serial at +8 (8 bytes). Read it from the
-        // $Volume MFT record (3).
-        val rec = readRecord(3L) ?: return 0L
-        val bytePos = boot.mftStartByte + 3L * MFT_RECORD_SIZE
-        val raw = ByteArray(MFT_RECORD_SIZE)
-        if (source.read(bytePos, raw, 0, MFT_RECORD_SIZE) < 56) return 0L
-        var attrOff = le16(raw, 20).toLong()
-        while (attrOff > 0 && attrOff < raw.size - 16) {
-            val type = le32(raw, attrOff.toInt())
-            if (type == 0xffffffffL) break
-            val length = le32(raw, attrOff.toInt() + 4).toInt()
-            if (length < 16 || attrOff + length > raw.size) break
-            if (type == 0x70L) {
-                val nonResident = raw[attrOff.toInt() + 8].toInt() and 0xff
-                if (nonResident == 0) {
-                    val valueLen = le32(raw, attrOff.toInt() + 16).toInt()
-                    val valueOff = le16(raw, attrOff.toInt() + 20)
-                    val start = attrOff.toInt() + valueOff
-                    if (start + 16 <= raw.size && valueLen >= 16) {
-                        var v = 0L
-                        for (i in 0 until 8) v = v or (((raw[start + 8 + i].toLong() and 0xff) shl (8 * i)))
-                        return v
-                    }
-                }
-                return 0L
-            }
-            attrOff += length
-        }
-        return 0L
+        // The NTFS volume serial lives in the boot sector at 0x48 (8 bytes
+        // LE). $Volume's $VOLUME_INFORMATION (0x70) only carries version and
+        // flags — it has no serial, so the old MFT scan always returned 0.
+        return boot.serial
     }
 
     override fun volumeLabel(): String? {
@@ -65,6 +39,7 @@ class NtfsReader(
         val bytePos = boot.mftStartByte + recordNumber * MFT_RECORD_SIZE
         val rec = ByteArray(MFT_RECORD_SIZE)
         if (source.read(bytePos, rec, 0, MFT_RECORD_SIZE) < 56) return null
+        if (!NtfsFileRecordParser.applyUpdateSequenceArray(rec, 0x04, boot.bytesPerSector)) return null
 
         var attrOff = le16(rec, 20).toLong()
         while (attrOff > 0 && attrOff < rec.size - 16) {
@@ -119,6 +94,13 @@ class NtfsReader(
         val rec = ByteArray(MFT_RECORD_SIZE)
         val n = source.read(bytePos, rec, 0, MFT_RECORD_SIZE)
         if (n < 56) {
+            synchronized(cache) { cache[recordNumber] = null }
+            return null
+        }
+
+        // Restore the Update Sequence Array before parsing: the tail 2 bytes
+        // of every 512B sector inside the record are USN check values.
+        if (!NtfsFileRecordParser.applyUpdateSequenceArray(rec, 0x04, boot.bytesPerSector)) {
             synchronized(cache) { cache[recordNumber] = null }
             return null
         }
@@ -195,6 +177,8 @@ class NtfsReader(
                     //   0x00 magic "INDX", 0x18 INDEX_HEADER whose first field
                     //   (entries_offset) points to the first index entry.
                     if (le32(block, 0) != 0x58444e49L) continue
+                    // INDX blocks are fixup-protected too (USA at 0x28/0x2A).
+                    if (!NtfsFileRecordParser.applyUpdateSequenceArray(block, 0x04, boot.bytesPerSector)) continue
                     val firstEntry = 0x18 + le32(block, 0x18).toInt()
                     val entriesTotal = le32(block, 0x1c).toInt()
                     parseIndexEntries(block, firstEntry, firstEntry + entriesTotal, out)

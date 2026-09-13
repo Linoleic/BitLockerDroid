@@ -711,7 +711,6 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                 }
 
                 val append = mode.contains("a")
-                val truncate = mode.contains("t") || (mode.contains("w") && !append && !mode.contains("r"))
 
                 val pipe = ParcelFileDescriptor.createReliablePipe()
                 val readFd = pipe[0]
@@ -719,6 +718,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
 
                 val writerThread = Thread {
                     var totalWritten = 0L
+                    var writeFailed = false
                     try {
                         ParcelFileDescriptor.AutoCloseInputStream(readFd).use { input ->
                             val buf = ByteArray(64 * 1024)
@@ -729,17 +729,22 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                                 val w = writer.write(path, curOffset, buf, n)
                                 if (w < 0) {
                                     LogFile.write("provider", "Failed writing pipe chunk at $curOffset to $path: $w")
+                                    writeFailed = true
                                     break
                                 }
                                 curOffset += w
                                 totalWritten = curOffset
                             }
-                            if (truncate || (!append && totalWritten >= 0)) {
+                            // Truncate only after a successful, non-empty transfer:
+                            // a failed or zero-byte pipe write must leave the
+                            // original file content intact.
+                            if (!writeFailed && !append && totalWritten > 0) {
                                 writer.truncate(path, totalWritten)
                             }
-                            LogFile.write("provider", "Pipe write complete for $path ($totalWritten bytes, append=$append, truncate=$truncate)")
+                            LogFile.write("provider", "Pipe write complete for $path ($totalWritten bytes, append=$append, failed=$writeFailed)")
                         }
                     } catch (e: Exception) {
+                        writeFailed = true
                         LogFile.write("provider", "Pipe write error for $path: ${Log.getStackTraceString(e)}")
                     } finally {
                         activeWrites.remove(path)
@@ -755,6 +760,9 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                                 it.name.equals(fileName, ignoreCase = true)) && !it.isDirectory
                             }
                             if (found != null) {
+                                // On a failed transfer the on-disk size is the
+                                // truth — never cache the partial byte count.
+                                val finalSize = if (writeFailed) found.size else totalWritten
                                 if (found.ref != record) {
                                     core.setRecordAlias(record, found.ref)
                                     core.registerPath(found.ref, path, parentRecord)
@@ -765,7 +773,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                                         ref = record,
                                         isDirectory = false,
                                         fileName = fileName,
-                                        fileSize = totalWritten
+                                        fileSize = finalSize
                                     )
                                 )
                                 core.registerCreatedEntry(
@@ -773,10 +781,10 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                                         ref = found.ref,
                                         isDirectory = false,
                                         fileName = fileName,
-                                        fileSize = totalWritten
+                                        fileSize = finalSize
                                     )
                                 )
-                                LogFile.write("provider", "Alias registered: old=$record -> new=${found.ref} for $path (size=$totalWritten)")
+                                LogFile.write("provider", "Alias registered: old=$record -> new=${found.ref} for $path (size=$finalSize)")
                             }
                         } catch (e: Exception) {
                             LogFile.write("provider", "Failed updating alias after pipe write: ${e.message}")
@@ -892,10 +900,9 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             }
         }
 
-        // Single active session fallback
-        if (UnlockManager.activeSessions.size == 1) {
-            return UnlockManager.activeSessions[0]
-        }
+        // No "single active session" fallback: handing an arbitrary docId to the
+        // only unlocked core silently routes reads/writes to the WRONG volume
+        // when another (locked) volume is plugged in.
 
         if (path != null) {
             Log.i(TAG, "coreFor: no core for $path, trying auto re-unlock")
@@ -915,9 +922,6 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                     (try { it.reader.volumeSerial() } catch (_: Exception) { 0L }) == serial
                 }
                 if (matchingSession != null) return matchingSession
-            }
-            if (UnlockManager.activeSessions.size == 1) {
-                return UnlockManager.activeSessions[0]
             }
         }
 

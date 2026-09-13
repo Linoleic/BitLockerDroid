@@ -51,20 +51,13 @@ int dis_init_xts(dis_ctx_t *ctx)
 		}
 		aes_ctx_init(&ctx->cbc_dec, ctx->fvek, AES_256);
 		aes_ctx_init(&ctx->cbc_enc, ctx->fvek, AES_256);
-	} else if (ctx->algorithm == AES_128_DIFFUSER) {
-		if (ctx->fvek_len < 32) {
-			dis_set_error("CBC-diffuser-128 needs 32-byte FVEK, got %d", ctx->fvek_len);
-			return FALSE;
-		}
-		aes_ctx_init(&ctx->cbc_dec, ctx->fvek, AES_128);
-		aes_ctx_init(&ctx->cbc_enc, ctx->fvek, AES_128);
-	} else if (ctx->algorithm == AES_256_DIFFUSER) {
-		if (ctx->fvek_len < 64) {
-			dis_set_error("CBC-diffuser-256 needs 64-byte FVEK, got %d", ctx->fvek_len);
-			return FALSE;
-		}
-		aes_ctx_init(&ctx->cbc_dec, ctx->fvek, AES_256);
-		aes_ctx_init(&ctx->cbc_enc, ctx->fvek, AES_256);
+	} else if (ctx->algorithm == AES_128_DIFFUSER || ctx->algorithm == AES_256_DIFFUSER) {
+		/* Elephant diffuser is not implemented: treating it as plain CBC would
+		 * decrypt to garbage, and the write path would then corrupt the volume.
+		 * Refuse these Vista-era volumes outright (see PROJECT_STATUS.md P1). */
+		dis_set_error("AES-CBC+Diffuser volumes (0x%04x, Windows Vista era) are not supported",
+			ctx->algorithm);
+		return FALSE;
 	} else {
 		dis_set_error("Unsupported cipher 0x%04x", ctx->algorithm);
 		return FALSE;

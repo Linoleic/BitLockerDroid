@@ -1,8 +1,6 @@
 package com.bitlockerdroid.util
 
 import android.util.Log
-import java.io.BufferedReader
-import java.io.InputStreamReader
 
 /**
  * Runs shell commands via KernelSU / Magisk `su` so the module app can read
@@ -38,14 +36,10 @@ object RootAccess {
             return cachedHasSu!!
         }
         val result = try {
-            val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
-            val out = p.inputStream.bufferedReader().readText().trim()
-            if (!p.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)) {
-                p.destroy()
-                false
-            } else {
-                out.contains("uid=0") || out.contains("root")
-            }
+            // exec() reads stdout/stderr concurrently under a hard timeout;
+            // a blocking readText() here would hang forever on a grant dialog.
+            val out = exec("id", 2000)?.second ?: ""
+            out.contains("uid=0") || out.contains("root")
         } catch (e: Throwable) {
             Log.w(TAG, "su check failed", e)
             false
@@ -77,9 +71,14 @@ object RootAccess {
 
         var rawVersion = ""
         try {
+            // `su -v` is invoked directly (no -c). Read concurrently under a
+            // timeout instead of readText(), which blocks indefinitely.
             val p = Runtime.getRuntime().exec(arrayOf("su", "-v"))
-            rawVersion = p.inputStream.bufferedReader().readText().trim()
-            p.waitFor(1, java.util.concurrent.TimeUnit.SECONDS)
+            val proc = ProcessThread(p)
+            proc.start()
+            proc.join(1500)
+            if (proc.isAlive) destroyQuietly(p)
+            rawVersion = proc.result?.trim() ?: ""
         } catch (_: Throwable) {}
 
         if (rawVersion.isBlank()) {
@@ -161,11 +160,7 @@ object RootAccess {
             proc.start()
             proc.join(timeoutMs)
             if (proc.isAlive) {
-                try { p.inputStream.close() } catch (_: Throwable) {}
-                try { p.outputStream.close() } catch (_: Throwable) {}
-                try { p.errorStream.close() } catch (_: Throwable) {}
-                p.destroy()
-                try { p.destroyForcibly() } catch (_: Throwable) {}
+                destroyQuietly(p)
                 Log.w(TAG, "su exec timed out ($timeoutMs ms): $command")
                 null
             } else {
@@ -186,11 +181,7 @@ object RootAccess {
             proc.start()
             proc.join(timeoutMs)
             if (proc.isAlive) {
-                try { p.inputStream.close() } catch (_: Throwable) {}
-                try { p.outputStream.close() } catch (_: Throwable) {}
-                try { p.errorStream.close() } catch (_: Throwable) {}
-                p.destroy()
-                try { p.destroyForcibly() } catch (_: Throwable) {}
+                destroyQuietly(p)
                 Log.w(TAG, "su exec timed out: $command")
                 null
             } else {
@@ -210,11 +201,7 @@ object RootAccess {
             proc.start()
             proc.join(timeoutMs)
             if (proc.isAlive) {
-                try { p.inputStream.close() } catch (_: Throwable) {}
-                try { p.outputStream.close() } catch (_: Throwable) {}
-                try { p.errorStream.close() } catch (_: Throwable) {}
-                p.destroy()
-                try { p.destroyForcibly() } catch (_: Throwable) {}
+                destroyQuietly(p)
                 Log.w(TAG, "su exec timed out: $command")
                 null
             } else {
@@ -233,6 +220,9 @@ object RootAccess {
     fun execWriteBytes(command: String, inputBytes: ByteArray, timeoutMs: Long = 15000): Boolean {
         return try {
             val p = Runtime.getRuntime().exec(arrayOf("su", "-c", command))
+            // Drain stdout/stderr so a chatty command can't block on full
+            // pipe buffers while we wait for its exit.
+            drainQuietly(p)
             val thread = Thread {
                 try {
                     p.outputStream.use { out ->
@@ -246,7 +236,7 @@ object RootAccess {
             thread.start()
             val finished = p.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
             if (!finished) {
-                p.destroy()
+                destroyQuietly(p)
                 Log.w(TAG, "su execWriteBytes timed out: $command")
                 false
             } else {
@@ -258,14 +248,35 @@ object RootAccess {
         }
     }
 
+    /** Closes streams and destroys the process (best effort, also kills children of su). */
+    private fun destroyQuietly(p: Process) {
+        try { p.inputStream.close() } catch (_: Throwable) {}
+        try { p.outputStream.close() } catch (_: Throwable) {}
+        try { p.errorStream.close() } catch (_: Throwable) {}
+        p.destroy()
+        try { p.destroyForcibly() } catch (_: Throwable) {}
+    }
+
+    /** Consumes stdout/stderr on daemon threads, discarding the content. */
+    private fun drainQuietly(p: Process) {
+        Thread { try { p.inputStream.readBytes() } catch (_: Throwable) {} }.apply { isDaemon = true; start() }
+        Thread { try { p.errorStream.readBytes() } catch (_: Throwable) {} }.apply { isDaemon = true; start() }
+    }
+
     private class ByteProcessThread(private val p: Process) : Thread() {
         @Volatile
         var result: ByteArray? = null
 
         override fun run() {
             try {
+                // Drain stderr concurrently: it must never be left unread
+                // while we block on stdout, or the pipe fills and wedges su.
+                val errDrain = Thread { try { p.errorStream.readBytes() } catch (_: Throwable) {} }
+                errDrain.isDaemon = true
+                errDrain.start()
                 val out = p.inputStream.readBytes()
                 p.waitFor()
+                try { errDrain.join(1000) } catch (_: Throwable) {}
                 result = out
             } catch (e: Throwable) {
                 result = null
@@ -279,23 +290,28 @@ object RootAccess {
 
         override fun run() {
             try {
-                val out = BufferedReader(InputStreamReader(p.inputStream))
-                val sb = StringBuilder()
-                val buf = CharArray(8192)
-                while (true) {
-                    val n = out.read(buf)
-                    if (n <= 0) break
-                    sb.append(buf, 0, n)
+                // Read stdout and stderr concurrently. Reading one fully and
+                // then the other deadlocks once the unread pipe buffer (64KB)
+                // fills while the process is still running.
+                val errBytes = java.io.ByteArrayOutputStream()
+                val errDrain = Thread {
+                    try {
+                        val buf = ByteArray(8192)
+                        val err = p.errorStream
+                        while (true) {
+                            val n = err.read(buf)
+                            if (n <= 0) break
+                            errBytes.write(buf, 0, n)
+                        }
+                    } catch (_: Throwable) {}
                 }
-                val err = BufferedReader(InputStreamReader(p.errorStream))
-                val eb = StringBuilder()
-                while (true) {
-                    val n = err.read(buf)
-                    if (n <= 0) break
-                    eb.append(buf, 0, n)
-                }
+                errDrain.isDaemon = true
+                errDrain.start()
+
+                val out = p.inputStream.readBytes()
                 p.waitFor()
-                result = (sb.toString() + "\n" + eb.toString()).trim()
+                try { errDrain.join(1000) } catch (_: Throwable) {}
+                result = (String(out) + "\n" + errBytes.toString()).trim()
             } catch (e: Throwable) {
                 result = null
             }

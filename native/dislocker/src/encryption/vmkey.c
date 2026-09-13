@@ -338,34 +338,65 @@ static int recovery_key_to_binary(const uint8_t *key, size_t key_len, uint8_t *o
 
 /* ---------------- datum walking (datums.c) ---------------- */
 
+#define DATUM_VALUE_TYPE_MAX \
+	(sizeof(datum_value_header_size) / sizeof(datum_value_header_size[0]))
+
+/* Header size for a value type, or 0 when the type is out of range. */
+static uint16_t datum_header_size_for(uint16_t value_type)
+{
+	if (value_type >= DATUM_VALUE_TYPE_MAX)
+		return 0;
+	return datum_value_header_size[value_type];
+}
+
 static uint8_t *datum_payload(uint8_t *datum, const datum_header_safe_t *header)
 {
-	return datum + datum_value_header_size[header->value_type];
+	uint16_t hs = datum_header_size_for(header->value_type);
+	if (hs == 0)
+		return NULL;
+	return datum + hs;
 }
 
 /* Iterate top-level datums in the metadata blob.
  * Ported from dislocker get_next_datum (datums.c): datums start after the
  * dataset header (dataset->header_size) and each datum's datum_size is the
- * offset to the next datum. */
+ * offset to the next datum.
+ *
+ * dataset->size and header_size come from the (untrusted) disk and may exceed
+ * the metadata buffer actually held in ctx->metadata, so the walk is clamped
+ * to that buffer at every step. */
 static int get_next_datum(dis_ctx_t *ctx, uint8_t *datum_begin, uint8_t **datum_result)
 {
 	bitlocker_dataset_t *dataset = ctx->dataset;
-	uint8_t *datum = NULL;
-	uint8_t *limit = (uint8_t *)dataset + dataset->size;
-	datum_header_safe_t header;
 
 	*datum_result = NULL;
-	memset(&header, 0, sizeof(datum_header_safe_t));
-	if (datum_begin)
-		datum = datum_begin + *(uint16_t *)datum_begin;
-	else
-		datum = (uint8_t *)dataset + dataset->header_size;
-
-	if (datum + (int)sizeof(header) >= limit)
+	if (!ctx->metadata || !dataset ||
+	    (uint8_t *)dataset < ctx->metadata ||
+	    (uint8_t *)dataset + sizeof(bitlocker_dataset_t) > ctx->metadata + ctx->metadata_size)
 		return FALSE;
 
-	/* copy header safely (unaligned access) */
-	memcpy(&header, datum, sizeof(header));
+	uint8_t *limit = (uint8_t *)dataset + dataset->size;
+	uint8_t *buf_end = ctx->metadata + ctx->metadata_size;
+	if (limit > buf_end)
+		limit = buf_end;
+	if (dataset->header_size > dataset->size)
+		return FALSE;
+
+	uint8_t *datum;
+	if (datum_begin) {
+		/* Advance by the previous datum's size. A step smaller than the
+		 * header would revisit the same datum forever. */
+		uint16_t step;
+		memcpy(&step, datum_begin, sizeof(step));
+		if (step < sizeof(datum_header_safe_t))
+			return FALSE;
+		datum = datum_begin + step;
+	} else {
+		datum = (uint8_t *)dataset + dataset->header_size;
+	}
+
+	if (datum < (uint8_t *)dataset || datum + sizeof(datum_header_safe_t) > limit)
+		return FALSE;
 
 	*datum_result = datum;
 	return TRUE;
@@ -374,31 +405,40 @@ static int get_next_datum(dis_ctx_t *ctx, uint8_t *datum_begin, uint8_t **datum_
 /* Iterate nested datums inside a datum's payload.
  * Ported from dislocker get_nested_datumvaluetype (datums.c): nested datums
  * are laid out in the outer datum's payload and advance by their own
- * datum_size. */
-static int get_nested_datumvaluetype(uint8_t *datum, size_t payload_avail,
+ * datum_size. The outer datum's size is untrusted, so the walk is clamped to
+ * the metadata buffer. */
+static int get_nested_datumvaluetype(dis_ctx_t *ctx, uint8_t *datum,
 	dis_datums_value_type_t value_type, uint8_t **datum_nested)
 {
-	if (!datum)
+	if (!datum || !ctx->metadata)
+		return FALSE;
+
+	uint8_t *buf_end = ctx->metadata + ctx->metadata_size;
+	if (datum < ctx->metadata || datum + sizeof(datum_header_safe_t) > buf_end)
 		return FALSE;
 
 	datum_header_safe_t header;
-	datum_header_safe_t nested_header;
 	memcpy(&header, datum, sizeof(header));
 
 	/* first nested datum is at the payload start */
-	uint8_t *nested = datum_payload(datum, &header);
+	uint8_t *end = datum + header.datum_size;
+	if (end > buf_end)
+		end = buf_end;
 
-	if (nested >= datum + header.datum_size)
+	uint8_t *nested = datum_payload(datum, &header);
+	if (!nested || nested + sizeof(datum_header_safe_t) > end)
 		return FALSE;
 
+	datum_header_safe_t nested_header;
 	memcpy(&nested_header, nested, sizeof(nested_header));
 
 	/* walk nested datums until value_type matches */
 	while (nested_header.value_type != value_type) {
-		nested += nested_header.datum_size;
-		if ((uint8_t *)datum + header.datum_size <= nested)
+		uint16_t step = nested_header.datum_size;
+		if (step < sizeof(datum_header_safe_t))
 			return FALSE;
-		if (nested + (int)sizeof(nested_header) > datum + header.datum_size)
+		nested += step;
+		if (nested + sizeof(datum_header_safe_t) > end)
 			return FALSE;
 		memcpy(&nested_header, nested, sizeof(nested_header));
 	}
@@ -414,10 +454,16 @@ static int get_nested_datumvaluetype(uint8_t *datum, size_t payload_avail,
 static uint8_t *find_vmk_datum_in_range(dis_ctx_t *ctx,
 	uint16_t min_range, uint16_t max_range)
 {
+	size_t meta_size = ctx->metadata_size;
 	uint8_t *cur = NULL;
 	while (get_next_datum(ctx, cur, &cur)) {
-		datum_header_safe_t *h = (datum_header_safe_t *)cur;
-		if (h->entry_type == DATUMS_ENTRY_VMK && h->value_type == DATUMS_VALUE_VMK) {
+		datum_header_safe_t h;
+		memcpy(&h, cur, sizeof(h));
+		if (h.entry_type == DATUMS_ENTRY_VMK && h.value_type == DATUMS_VALUE_VMK) {
+			/* The nonce tail sits at the end of datum_vmk_t: the whole
+			 * struct must lie inside the metadata buffer before reading it. */
+			if ((size_t)(cur - ctx->metadata) + sizeof(datum_vmk_t) > meta_size)
+				continue;
 			datum_vmk_t *vmk = (datum_vmk_t *)cur;
 			uint16_t datum_range;
 			memcpy(&datum_range, &vmk->nonce[10], 2);
@@ -428,11 +474,30 @@ static uint8_t *find_vmk_datum_in_range(dis_ctx_t *ctx,
 	return NULL;
 }
 
-static int get_vmk(datum_aes_ccm_t *vmk_datum, const uint8_t *key,
+static int get_vmk(dis_ctx_t *ctx, datum_aes_ccm_t *vmk_datum, const uint8_t *key,
 	size_t key_size, uint8_t *vmk_out, size_t vmk_out_cap, size_t *vmk_out_len)
 {
-	unsigned int header_size = datum_value_header_size[vmk_datum->header.value_type];
+	uint16_t header_size = datum_header_size_for(vmk_datum->header.value_type);
+	if (header_size == 0) {
+		dis_set_error("Unknown datum value type %u", vmk_datum->header.value_type);
+		return FALSE;
+	}
+
+	if (vmk_datum->header.datum_size < header_size) {
+		dis_set_error("VMK datum smaller than its header (%u < %u)",
+			vmk_datum->header.datum_size, header_size);
+		return FALSE;
+	}
 	unsigned int vmk_size = vmk_datum->header.datum_size - header_size;
+
+	/* the encrypted payload must lie inside the metadata buffer */
+	if (!ctx->metadata ||
+	    (uint8_t *)vmk_datum < ctx->metadata ||
+	    (uint8_t *)vmk_datum + header_size + vmk_size > ctx->metadata + ctx->metadata_size)
+	{
+		dis_set_error("VMK datum extends beyond the metadata buffer");
+		return FALSE;
+	}
 
 	if (vmk_size > vmk_out_cap) {
 		dis_set_error("vmk_size %u exceeds buffer %zu", vmk_size, vmk_out_cap);
@@ -479,16 +544,24 @@ int dis_retrieve_keys(dis_ctx_t *ctx, const uint8_t *user_password,
 
 	/* get the nested stretch-key datum for the salt */
 	uint8_t *stretch_datum = NULL;
-	if (!get_nested_datumvaluetype(vmk_datum, 0xffff, DATUMS_VALUE_STRETCH_KEY, &stretch_datum)) {
+	if (!get_nested_datumvaluetype(ctx, vmk_datum, DATUMS_VALUE_STRETCH_KEY, &stretch_datum)) {
 		dis_set_error("Corrupted metadata: no stretch-key datum found in VMK");
+		return FALSE;
+	}
+	if ((size_t)(stretch_datum - ctx->metadata) + sizeof(datum_stretch_key_t) > ctx->metadata_size) {
+		dis_set_error("Corrupted metadata: stretch-key datum outside buffer");
 		return FALSE;
 	}
 	memcpy(salt, ((datum_stretch_key_t *)stretch_datum)->salt, 16);
 
 	/* get the nested AES-CCM datum holding the encrypted VMK */
 	uint8_t *aesccm_datum = NULL;
-	if (!get_nested_datumvaluetype(vmk_datum, 0xffff, DATUMS_VALUE_AES_CCM, &aesccm_datum)) {
+	if (!get_nested_datumvaluetype(ctx, vmk_datum, DATUMS_VALUE_AES_CCM, &aesccm_datum)) {
 		dis_set_error("Corrupted metadata: no AES-CCM datum found in VMK");
+		return FALSE;
+	}
+	if ((size_t)(aesccm_datum - ctx->metadata) + sizeof(datum_aes_ccm_t) > ctx->metadata_size) {
+		dis_set_error("Corrupted metadata: AES-CCM datum outside buffer");
 		return FALSE;
 	}
 
@@ -516,7 +589,7 @@ int dis_retrieve_keys(dis_ctx_t *ctx, const uint8_t *user_password,
 	/* decrypt the VMK into a temporary datum_key_t-shaped buffer */
 	uint8_t vmk_buf[256];
 	size_t vmk_len = 0;
-	if (!get_vmk((datum_aes_ccm_t *)aesccm_datum, unwrap_key, unwrap_key_len,
+	if (!get_vmk(ctx, (datum_aes_ccm_t *)aesccm_datum, unwrap_key, unwrap_key_len,
 		vmk_buf, sizeof(vmk_buf), &vmk_len))
 	{
 		if (is_recovery) {
@@ -549,10 +622,11 @@ int dis_retrieve_keys(dis_ctx_t *ctx, const uint8_t *user_password,
 	uint8_t *cur = NULL;
 
 	while (get_next_datum(ctx, cur, &cur)) {
-		datum_header_safe_t *h = (datum_header_safe_t *)cur;
-		if ((h->entry_type == DATUMS_ENTRY_FVEK || h->entry_type == DATUMS_ENTRY_FVEK_2)
-			&& h->value_type == DATUMS_VALUE_AES_CCM) {
-			if (get_vmk((datum_aes_ccm_t *)cur, vmk_key, vmk_key_size,
+		datum_header_safe_t h;
+		memcpy(&h, cur, sizeof(h));
+		if ((h.entry_type == DATUMS_ENTRY_FVEK || h.entry_type == DATUMS_ENTRY_FVEK_2)
+			&& h.value_type == DATUMS_VALUE_AES_CCM) {
+			if (get_vmk(ctx, (datum_aes_ccm_t *)cur, vmk_key, vmk_key_size,
 				(uint8_t *)fvek_buf, sizeof(fvek_buf), &fvek_len))
 			{
 				found = TRUE;

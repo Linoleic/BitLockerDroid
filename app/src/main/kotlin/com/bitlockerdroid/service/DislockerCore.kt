@@ -331,6 +331,7 @@ class DislockerCore private constructor(
         return null
     }
 
+    @Volatile
     private var closed = false
 
     private val rawSectorReader: (Long, Int) -> ByteArray? = { offset, len ->
@@ -359,6 +360,9 @@ class DislockerCore private constructor(
         cachedSource.clear()
         createdEntries.clear()
         reader.invalidateCache()
+        // SAF mutations must become visible to the FUSE daemon's own FatFs /
+        // ntfs-3g caches (cross-session cache coherency).
+        VirtualStorageMountManager.notifyDataChanged(devicePath)
     }
 
     private fun buildReader(): VolumeReader {
@@ -400,21 +404,25 @@ class DislockerCore private constructor(
     }
 
     override fun close() {
-        if (closed) return
-        closed = true
-        try {
-            writer?.close()
-        } catch (e: Throwable) {
-            Log.w(TAG, "writer close failed", e)
-        }
-        cachedSource.clear()
-        createdEntries.clear()
-        pathCache.clear()
-        parentCache.clear()
-        try {
-            NativeBridge.nativeClose(handle)
-        } catch (e: Throwable) {
-            Log.w(TAG, "close failed", e)
+        // Serialize double-close: two threads racing here would flush the
+        // writer twice and call nativeClose on an already-freed handle.
+        synchronized(this) {
+            if (closed) return
+            closed = true
+            try {
+                writer?.close()
+            } catch (e: Throwable) {
+                Log.w(TAG, "writer close failed", e)
+            }
+            cachedSource.clear()
+            createdEntries.clear()
+            pathCache.clear()
+            parentCache.clear()
+            try {
+                NativeBridge.nativeClose(handle)
+            } catch (e: Throwable) {
+                Log.w(TAG, "close failed", e)
+            }
         }
     }
 

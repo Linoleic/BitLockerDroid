@@ -20,6 +20,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
+#include <signal.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
 
@@ -142,6 +143,10 @@ int dis_io_init(dis_ctx_t *ctx)
 {
 	if (!ctx) return -1;
 
+	/* Writing to the daemon pipe after it died must surface as EPIPE, not
+	 * terminate the whole app with SIGPIPE. Process-wide and idempotent. */
+	signal(SIGPIPE, SIG_IGN);
+
 	pthread_mutex_init(&ctx->io_lock, NULL);
 	ctx->io_in_fd = -1;
 	ctx->io_out_fd = -1;
@@ -236,7 +241,10 @@ void dis_io_destroy(dis_ctx_t *ctx)
 	if (ctx->io_in_fd >= 0) {
 		pthread_mutex_lock(&ctx->io_lock);
 		uint8_t exit_cmd = CMD_EXIT;
-		write(ctx->io_in_fd, &exit_cmd, 1);
+		/* Daemon may already be gone; EPIPE here is expected and harmless
+		 * now that SIGPIPE is ignored. */
+		ssize_t wr = write(ctx->io_in_fd, &exit_cmd, 1);
+		(void)wr;
 		close(ctx->io_in_fd);
 		close(ctx->io_out_fd);
 		ctx->io_in_fd = -1;
@@ -244,7 +252,18 @@ void dis_io_destroy(dis_ctx_t *ctx)
 		pthread_mutex_unlock(&ctx->io_lock);
 
 		if (ctx->io_pid > 0) {
-			waitpid(ctx->io_pid, NULL, WNOHANG);
+			/* Give the daemon a moment to exit on its own, then force-kill
+			 * so no zombie or orphan is left holding the pipe. */
+			int rc = 0;
+			for (int i = 0; i < 50; i++) {
+				rc = waitpid(ctx->io_pid, NULL, WNOHANG);
+				if (rc == ctx->io_pid || rc < 0) break;
+				usleep(10000);
+			}
+			if (rc <= 0) {
+				kill(ctx->io_pid, SIGKILL);
+				waitpid(ctx->io_pid, NULL, 0);
+			}
 			ctx->io_pid = -1;
 		}
 	}

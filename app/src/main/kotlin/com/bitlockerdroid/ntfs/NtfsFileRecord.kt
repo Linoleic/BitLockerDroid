@@ -124,7 +124,42 @@ open class NtfsAttribute(val type: Int)
  */
 object NtfsFileRecordParser {
 
-    private const val ATTRIBUTE_END = 0xffffffffL
+    const val ATTRIBUTE_END = 0xffffffffL
+
+    /**
+     * Applies the NTFS Update Sequence Array (fixup) to a protected
+     * multi-sector structure before parsing.
+     *
+     * Both "FILE" (MFT record) and "INDX" (index block) start with the shared
+     * multi-sector header: magic @0x00, USA offset field @0x04, USA count
+     * field @0x06 — the field VALUES (typically 0x30 / 0x28) point at the
+     * array itself, not the other way around.
+     *
+     * The last 2 bytes of every sector are replaced by a check value whose
+     * original bytes are stored in the USA; without restoring them, entry
+     * headers and attribute data that land on a sector tail are garbage.
+     *
+     * Returns false when a sector check value mismatches (corrupt record).
+     */
+    fun applyUpdateSequenceArray(rec: ByteArray, usaOffsetFieldPos: Int, sectorSize: Int): Boolean {
+        if (sectorSize <= 0 || rec.size < usaOffsetFieldPos + 4) return true
+        val usaOffset = le16(rec, usaOffsetFieldPos).toInt()
+        val usaCount = le16(rec, usaOffsetFieldPos + 2).toInt()
+        // Sanity: the array must fit inside the record and hold exactly one
+        // check value + one fixup per sector.
+        if (usaOffset <= 0 || usaCount != rec.size / sectorSize + 1 ||
+            usaOffset + usaCount * 2 > rec.size) return true
+        val checkValue = le16(rec, usaOffset)
+        for (i in 1 until usaCount) {
+            val sectorEnd = i * sectorSize - 2
+            if (sectorEnd < 0 || sectorEnd + 2 > rec.size) break
+            if (le16(rec, sectorEnd) != checkValue) return false
+            val saved = le16(rec, usaOffset + i * 2)
+            rec[sectorEnd] = (saved and 0xff).toByte()
+            rec[sectorEnd + 1] = ((saved shr 8) and 0xff).toByte()
+        }
+        return true
+    }
 
     fun parse(recordNumber: Long, rec: ByteArray): NtfsFileRecord? {
         if (rec.size < 56) return null

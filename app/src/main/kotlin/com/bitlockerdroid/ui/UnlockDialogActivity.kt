@@ -66,6 +66,12 @@ class UnlockDialogActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Password entry must not be captured by screenshots or screen recording.
+        window.setFlags(
+            android.view.WindowManager.LayoutParams.FLAG_SECURE,
+            android.view.WindowManager.LayoutParams.FLAG_SECURE
+        )
+
         val rawPath = intent.getStringExtra(EXTRA_DEVICE_PATH)
         if (!DevicePathSecurity.isValid(rawPath)) {
             LogFile.write("app", "UnlockDialogActivity: rejected invalid or dangerous path $rawPath")
@@ -139,6 +145,13 @@ class UnlockDialogActivity : ComponentActivity() {
     }
 }
 
+/** Volume metadata loaded off the main thread before the dialog is interactive. */
+private data class VolumePreflight(
+    val guid: String?,
+    val savedPlain: String?,
+    val devInfo: com.bitlockerdroid.util.DeviceIdentity.DeviceInfo
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UnlockDialogScreen(
@@ -155,21 +168,43 @@ fun UnlockDialogScreen(
     ) -> Unit
 ) {
     val context = LocalContext.current
-    val guid = remember(devicePath, initialGuid) { initialGuid ?: BitLockerDetector.getVolumeGuid(devicePath) }
-    val savedPlain = remember(guid) {
-        if (!guid.isNullOrBlank()) {
-            PreferenceHelper.getRememberedPassword(context, guid)?.let {
-                KeyGuardService.decrypt(it)
-            }
-        } else null
+
+    // Resolving the volume GUID reads the device header through root, and the
+    // saved-password path decrypts via AndroidKeyStore — both would block the
+    // main thread during composition, so load them asynchronously.
+    var preflight by remember(devicePath, initialGuid) { mutableStateOf<VolumePreflight?>(null) }
+    LaunchedEffect(devicePath, initialGuid) {
+        preflight = withContext(Dispatchers.IO) {
+            val g = initialGuid ?: BitLockerDetector.getVolumeGuid(devicePath)
+            val saved = if (!g.isNullOrBlank()) {
+                PreferenceHelper.getRememberedPassword(context, g)?.let { KeyGuardService.decrypt(it) }
+            } else null
+            val dev = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath, forceRefresh = true)
+            VolumePreflight(g, saved, dev)
+        }
     }
+    val guid = preflight?.guid
+    val savedPlain = preflight?.savedPlain
 
     var isRecoveryKey by remember { mutableStateOf(false) }
-    var inputValue by remember { mutableStateOf(savedPlain ?: "") }
+    var inputValue by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
-    var rememberPassword by remember { mutableStateOf(savedPlain != null) }
-    var autoUnlockOnScan by remember {
-        mutableStateOf(if (!guid.isNullOrBlank()) PreferenceHelper.isAutoUnlockEnabled(context, guid) else true)
+    var rememberPassword by remember { mutableStateOf(false) }
+    var autoUnlockOnScan by remember { mutableStateOf(true) }
+
+    // Fill in the saved credentials once the preflight arrives — but only if
+    // the user has not started typing yet.
+    LaunchedEffect(preflight) {
+        val pf = preflight ?: return@LaunchedEffect
+        if (!isRecoveryKey && inputValue.isEmpty()) {
+            pf.savedPlain?.let {
+                inputValue = it
+                rememberPassword = true
+            }
+        }
+        if (!pf.guid.isNullOrBlank()) {
+            autoUnlockOnScan = PreferenceHelper.isAutoUnlockEnabled(context, pf.guid)
+        }
     }
     var isUnlocking by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -262,7 +297,7 @@ fun UnlockDialogScreen(
                 Spacer(modifier = Modifier.height(6.dp))
 
                 // Friendly Device Badge (Never raw kernel node)
-                val devInfo = remember(devicePath, guid) { com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath, forceRefresh = true) }
+                val devInfo = preflight?.devInfo
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -273,14 +308,14 @@ fun UnlockDialogScreen(
                         color = MaterialTheme.colorScheme.surfaceVariant
                     ) {
                         Text(
-                            text = devInfo.friendlyName,
+                            text = devInfo?.friendlyName ?: "USB 设备",
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                         )
                     }
-                    if (devInfo.sizeBytes > 0L) {
+                    if (devInfo != null && devInfo.sizeBytes > 0L) {
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant
@@ -328,7 +363,7 @@ fun UnlockDialogScreen(
                                 onClick = {
                                     val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
                                     cm?.setPrimaryClip(android.content.ClipData.newPlainText("Volume GUID", guid))
-                                    Toast.makeText(context, "GUID 已复制到剪切板", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "GUID 已复制到剪贴板", Toast.LENGTH_SHORT).show()
                                 },
                                 modifier = Modifier.size(28.dp)
                             ) {

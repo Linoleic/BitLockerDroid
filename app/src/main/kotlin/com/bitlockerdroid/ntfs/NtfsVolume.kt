@@ -16,7 +16,9 @@ object NtfsVolume {
         val sectorsPerCluster: Int,
         val mftLcn: Long,          // MFT location in clusters
         val mftMirrorLcn: Long,
-        val totalClusters: Long
+        val totalClusters: Long,
+        /** 8-byte volume serial at boot sector offset 0x48. */
+        val serial: Long
     ) {
         val clusterSize: Long get() = (bytesPerSector.toLong() * sectorsPerCluster)
         val mftStartByte: Long get() = mftLcn * clusterSize
@@ -50,7 +52,10 @@ object NtfsVolume {
             sectorsPerCluster = sectorsPerCluster,
             mftLcn = mftLcn,
             mftMirrorLcn = mftMirrorLcn,
-            totalClusters = totalClusters
+            totalClusters = totalClusters,
+            // 0x48 = volume serial (8 bytes LE). Not in $VOLUME_INFORMATION —
+            // that attribute holds only version/flags.
+            serial = le64(sector, 0x48)
         )
     }
 
