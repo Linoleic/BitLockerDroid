@@ -178,7 +178,7 @@ class ExFatReader(
                     val (entrySet, nextPos) = parseFileEntrySet(buf, pos, len, cluster)
                     if (entrySet != null) {
                         entryCache[entrySet.ref] = entrySet
-                        out.add(VolumeDirEntry(entrySet.fileName ?: "", entrySet.ref, entrySet.isDirectory, entrySet.fileSize))
+                        out.add(VolumeDirEntry(entrySet.fileName ?: "", entrySet.ref, entrySet.isDirectory, entrySet.fileSize, entrySet.lastModified))
                     }
                     pos = nextPos
                 }
@@ -236,11 +236,15 @@ class ExFatReader(
         val posRef = 0x4000000000000000L or ((cluster and 0xFFFFFFL) shl 24) or (pos.toLong() and 0xFFFFFFL)
         val startRef = 0x4000000000000000L or ((cluster and 0xFFFFFFL) shl 24) or (start.toLong() and 0xFFFFFFL)
         val ref = if (firstCluster >= 2) firstCluster else startRef
+        val modTime = le16(buf, start + 12)
+        val modDate = le16(buf, start + 14)
+        val lastModified = VolumeTimestampUtil.dosDateTimeToMillis(modDate, modTime)
         val entry = VolumeEntry(
             ref = ref,
             isDirectory = isDir,
             fileName = name.ifEmpty { null },
-            fileSize = dataLength
+            fileSize = dataLength,
+            lastModified = lastModified
         )
         startClusterMap[ref] = firstCluster
         noFatChainMap[ref] = noFatChain
@@ -326,6 +330,9 @@ class ExFatReader(
 
     private fun isEof(v: Long): Boolean = v >= EOF_MARK || v == BAD_CLUSTER
     private fun isValidCluster(c: Long): Boolean = c in 2..0xfffffff6L
+
+    private fun le16(b: ByteArray, off: Int): Int =
+        (b[off].toInt() and 0xff) or ((b[off + 1].toInt() and 0xff) shl 8)
 
     private fun le32(b: ByteArray, off: Int): Long {
         var v = 0L

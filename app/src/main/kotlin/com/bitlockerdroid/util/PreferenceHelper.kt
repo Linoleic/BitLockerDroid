@@ -236,6 +236,17 @@ object PreferenceHelper {
     var notificationsEnabled: Boolean
         get() = try { prefs(ContextProvider.app).getBoolean("notifications_enabled", true) } catch (_: Exception) { true }
         set(v) = try { prefs(ContextProvider.app).edit().putBoolean("notifications_enabled", v).apply() } catch (_: Exception) {}
+
+    fun isSuppressCorruptNotification(context: Context): Boolean =
+        prefs(context).getBoolean("suppress_corrupt_notification", true)
+
+    fun setSuppressCorruptNotification(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean("suppress_corrupt_notification", enabled).apply()
+    }
+
+    var suppressCorruptNotification: Boolean
+        get() = try { prefs(ContextProvider.app).getBoolean("suppress_corrupt_notification", true) } catch (_: Exception) { true }
+        set(v) = try { prefs(ContextProvider.app).edit().putBoolean("suppress_corrupt_notification", v).apply() } catch (_: Exception) {}
 }
 
 /** Holds an application context once the app/service is running. */

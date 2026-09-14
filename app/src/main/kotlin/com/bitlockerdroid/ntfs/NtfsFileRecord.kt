@@ -34,6 +34,21 @@ class NtfsFileRecord(
     val isDirectory: Boolean
         get() = attributes.any { it.type == TYPE_INDEX_ROOT }
 
+    val lastModified: Long
+        get() {
+            for (a in attributes) {
+                if (a.type == TYPE_STANDARD_INFO && a is StandardInfoAttribute) {
+                    if (a.lastModifiedTime > 0L) return a.lastModifiedTime
+                }
+            }
+            for (a in attributes) {
+                if (a.type == TYPE_FILE_NAME && a is FileNameAttribute) {
+                    if (a.lastModifiedTime > 0L) return a.lastModifiedTime
+                }
+            }
+            return 0L
+        }
+
     val fileSize: Long
         get() {
             for (a in attributes) {
@@ -74,11 +89,19 @@ class NtfsFileRecord(
     }
 }
 
+/** Standard information attribute ($STANDARD_INFORMATION). */
+class StandardInfoAttribute(
+    type: Int,
+    val creationTime: Long = 0L,
+    val lastModifiedTime: Long = 0L
+) : NtfsAttribute(type)
+
 /** A file name from a $FILE_NAME attribute (UTF-16LE). */
 class FileNameAttribute(
     type: Int,
     val name: String,
-    val parentRecord: Long = 5L
+    val parentRecord: Long = 5L,
+    val lastModifiedTime: Long = 0L
 ) : NtfsAttribute(type)
 
 /** $DATA attribute with resident content. */
@@ -197,12 +220,23 @@ object NtfsFileRecordParser {
             } else ""
 
             when (type.toInt()) {
+                NtfsFileRecord.TYPE_STANDARD_INFO -> {
+                    val valuePos = attrOff.toInt() + valueOff.toInt()
+                    if (valuePos >= 0 && valuePos + 16 <= rec.size) {
+                        val cTime = VolumeTimestampUtil.filetimeToMillis(le64(rec, valuePos))
+                        val mTime = VolumeTimestampUtil.filetimeToMillis(le64(rec, valuePos + 8))
+                        attrs.add(StandardInfoAttribute(type.toInt(), cTime, mTime))
+                    }
+                }
                 NtfsFileRecord.TYPE_FILE_NAME -> {
                     val valuePos = attrOff.toInt() + valueOff.toInt()
                     if (valuePos >= 0 && valuePos + valueLen.toInt() <= rec.size) {
                         val parentRef = le64(rec, valuePos) and 0x0000ffffffffffffL
+                        val mTime = if (valuePos + 24 <= rec.size) {
+                            VolumeTimestampUtil.filetimeToMillis(le64(rec, valuePos + 16))
+                        } else 0L
                         val name = parseFileName(rec, valuePos, valueLen.toInt())
-                        if (name != null) attrs.add(FileNameAttribute(type.toInt(), name, parentRef))
+                        if (name != null) attrs.add(FileNameAttribute(type.toInt(), name, parentRef, mTime))
                     }
                 }
                 NtfsFileRecord.TYPE_DATA -> {

@@ -190,6 +190,7 @@ object UnlockManager {
     /** Clears a volume from the detected (locked) list, e.g. after it is
      *  unlocked or physically removed. */
     fun forgetDetected(devicePath: String) {
+        StorageNotificationSuppressor.forgetNode(devicePath)
         var removed = false
         synchronized(lock) {
             removed = (detected.remove(devicePath) != null)
@@ -347,6 +348,7 @@ object UnlockManager {
         var removedAny = false
         val toClose = mutableListOf<Pair<String, DislockerCore>>()
         com.bitlockerdroid.util.DeviceIdentity.clearCache()
+        StorageNotificationSuppressor.forgetMissing(presentNodes)
         synchronized(lock) {
             val present = presentNodes.toHashSet()
             val missingDetected = detected.keys.filter { !present.contains(it) }

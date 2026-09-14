@@ -46,7 +46,8 @@ class VolumeEntry(
     val ref: Long,
     val isDirectory: Boolean,
     val fileName: String?,
-    val fileSize: Long
+    val fileSize: Long,
+    val lastModified: Long = 0L
 )
 
 /** A child entry returned by [VolumeReader.listDirectory]. */
@@ -54,5 +55,28 @@ class VolumeDirEntry(
     val name: String,
     val ref: Long,
     val isDirectory: Boolean,
-    val size: Long = 0L
+    val size: Long = 0L,
+    val lastModified: Long = 0L
 )
+
+object VolumeTimestampUtil {
+    fun dosDateTimeToMillis(dosDate: Int, dosTime: Int): Long {
+        if (dosDate == 0) return 0L
+        val year = ((dosDate shr 9) and 0x7f) + 1980
+        val month = ((dosDate shr 5) and 0x0f).coerceIn(1, 12)
+        val day = (dosDate and 0x1f).coerceIn(1, 31)
+        val hour = ((dosTime shr 11) and 0x1f).coerceIn(0, 23)
+        val minute = ((dosTime shr 5) and 0x3f).coerceIn(0, 59)
+        val second = ((dosTime and 0x1f) * 2).coerceIn(0, 59)
+
+        val cal = java.util.Calendar.getInstance()
+        cal.set(year, month - 1, day, hour, minute, second)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
+    }
+
+    fun filetimeToMillis(filetime: Long): Long {
+        if (filetime <= 116444736000000000L) return 0L
+        return (filetime - 116444736000000000L) / 10000L
+    }
+}

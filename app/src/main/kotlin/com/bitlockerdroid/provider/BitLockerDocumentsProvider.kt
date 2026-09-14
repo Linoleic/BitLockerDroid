@@ -428,7 +428,8 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                 ref = newRecord,
                 isDirectory = isDir,
                 fileName = actualName,
-                fileSize = 0L
+                fileSize = 0L,
+                lastModified = System.currentTimeMillis()
             )
         )
         notifyChange(parentDocumentId)
@@ -822,7 +823,8 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                                         ref = record,
                                         isDirectory = false,
                                         fileName = fileName,
-                                        fileSize = finalSize
+                                        fileSize = finalSize,
+                                        lastModified = if (found.lastModified > 0L) found.lastModified else System.currentTimeMillis()
                                     )
                                 )
                                 core.registerCreatedEntry(
@@ -830,7 +832,8 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                                         ref = found.ref,
                                         isDirectory = false,
                                         fileName = fileName,
-                                        fileSize = finalSize
+                                        fileSize = finalSize,
+                                        lastModified = if (found.lastModified > 0L) found.lastModified else System.currentTimeMillis()
                                     )
                                 )
                                 LogFile.write("provider", "Alias registered: old=$record -> new=${found.ref} for $path (size=$finalSize)")
@@ -1099,7 +1102,8 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         row.add("display_name", name)
         row.add(Document.COLUMN_MIME_TYPE, mimeType1)
         row.add(Document.COLUMN_SIZE, rec.fileSize)
-        row.add(Document.COLUMN_LAST_MODIFIED, System.currentTimeMillis())
+        val lastModified = if (rec.lastModified > 0L) rec.lastModified else null
+        row.add(Document.COLUMN_LAST_MODIFIED, lastModified)
         row.add(Document.COLUMN_FLAGS, flags)
     }
 
@@ -1145,7 +1149,8 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         row.add("display_name", entry.name)
         row.add(Document.COLUMN_MIME_TYPE, mimeType2)
         row.add(Document.COLUMN_SIZE, entry.size)
-        row.add(Document.COLUMN_LAST_MODIFIED, System.currentTimeMillis())
+        val lastModified = if (entry.lastModified > 0L) entry.lastModified else null
+        row.add(Document.COLUMN_LAST_MODIFIED, lastModified)
         row.add(Document.COLUMN_FLAGS, flags)
     }
 

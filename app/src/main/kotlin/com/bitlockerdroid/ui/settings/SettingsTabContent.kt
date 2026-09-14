@@ -17,6 +17,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.bitlockerdroid.R
 import com.bitlockerdroid.service.BitLockerCoreService
+import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.ui.theme.SuccessGreen
 import com.bitlockerdroid.util.PreferenceHelper
 import com.bitlockerdroid.util.RootAccess
@@ -111,6 +112,28 @@ fun SettingsTabContent(
                     notificationsEnabled = it
                     PreferenceHelper.notificationsEnabled = it
                     BitLockerCoreService.updateForegroundState(context)
+                }
+            )
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+            )
+            var suppressCorrupt by remember { mutableStateOf(PreferenceHelper.suppressCorruptNotification) }
+            SettingsSwitchItem(
+                title = stringResource(R.string.settings_suppress_corrupt_notification),
+                description = stringResource(R.string.settings_suppress_corrupt_notification_desc),
+                checked = suppressCorrupt,
+                onCheckedChange = {
+                    suppressCorrupt = it
+                    PreferenceHelper.suppressCorruptNotification = it
+                    if (it) {
+                        Thread {
+                            com.bitlockerdroid.service.StorageNotificationSuppressor.ensureListenerEnabled()
+                            UnlockManager.detectedVolumes.forEach { v ->
+                                com.bitlockerdroid.service.StorageNotificationSuppressor.suppressForVolume(context, v.devicePath)
+                            }
+                        }.start()
+                    }
                 }
             )
         }

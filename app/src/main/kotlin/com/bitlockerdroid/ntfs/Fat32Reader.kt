@@ -180,15 +180,19 @@ class Fat32Reader(
             // Skip volume-label entries (attr only VOLUME_ID, cluster 0).
             if (attr == ATTR_VOLUME_ID) { pos += DIR_ENTRY_SIZE; continue }
 
+            val writeTime = le16(e, 22)
+            val writeDate = le16(e, 24)
+            val lastModified = VolumeTimestampUtil.dosDateTimeToMillis(writeDate, writeTime)
+
             val posRef = 0x4000000000000000L or ((cluster and 0xFFFFFFL) shl 24) or (pos.toLong() and 0xFFFFFFL)
             val ref = if (firstCluster >= 2) firstCluster else posRef
-            val entry = VolumeEntry(ref, isDir, name, size)
+            val entry = VolumeEntry(ref, isDir, name, size, lastModified)
             entryCache[ref] = entry
             entryCache[posRef] = entry
             if (firstCluster >= 2) {
                 entryCache[firstCluster] = entry
             }
-            out.add(VolumeDirEntry(name, ref, isDir, size))
+            out.add(VolumeDirEntry(name, ref, isDir, size, lastModified))
             pos += DIR_ENTRY_SIZE
         }
         return false

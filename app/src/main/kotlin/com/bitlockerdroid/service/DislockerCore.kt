@@ -229,7 +229,8 @@ class DislockerCore private constructor(
                     ref = record,
                     isDirectory = direct.isDirectory,
                     fileName = direct.fileName,
-                    fileSize = direct.fileSize
+                    fileSize = direct.fileSize,
+                    lastModified = direct.lastModified
                 )
             } else direct
         }
@@ -261,7 +262,8 @@ class DislockerCore private constructor(
                         ref = record,
                         isDirectory = found.isDirectory,
                         fileName = found.name,
-                        fileSize = found.size
+                        fileSize = found.size,
+                        lastModified = found.lastModified
                     )
                 }
             } catch (e: Exception) {
@@ -276,7 +278,8 @@ class DislockerCore private constructor(
                     ref = record,
                     isDirectory = it.isDirectory,
                     fileName = it.fileName,
-                    fileSize = it.fileSize
+                    fileSize = it.fileSize,
+                    lastModified = it.lastModified
                 )
             } else it
         }

@@ -73,7 +73,8 @@ class NtfsReader(
             ref = ref,
             isDirectory = rec.isDirectory,
             fileName = rec.fileName,
-            fileSize = rec.fileSize
+            fileSize = rec.fileSize,
+            lastModified = rec.lastModified
         )
     }
 
@@ -273,7 +274,10 @@ class NtfsReader(
                                     // determine if directory by reading the record
                                     val child = readRecord(recNum)
                                     val isDir = child?.isDirectory ?: false
-                                    out[dedupeKey] = VolumeDirEntry(name, recNum, isDir, child?.fileSize ?: 0L)
+                                    val idxTime = if (keyStart + 24 <= end) VolumeTimestampUtil.filetimeToMillis(le64(buf, keyStart + 16)) else 0L
+                                    val childTime = child?.lastModified ?: 0L
+                                    val modTime = if (childTime > 0L) childTime else idxTime
+                                    out[dedupeKey] = VolumeDirEntry(name, recNum, isDir, child?.fileSize ?: 0L, modTime)
                                 }
                             }
                         }

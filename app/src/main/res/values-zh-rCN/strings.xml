@@ -67,4 +67,7 @@
     <string name="settings_header_about">关于与核心引擎</string>
     <string name="settings_about_desc">基于 Android SAF 与 dislocker 的 BitLocker 驱动器全功能读写挂载工具</string>
     <string name="about_title">关于</string>
+    <string name="notification_listener_label">BitUnlocker 驱动器通知过滤服务</string>
+    <string name="settings_suppress_corrupt_notification">屏蔽系统格式化警告通知</string>
+    <string name="settings_suppress_corrupt_notification_desc">自动消除系统针对 BitLocker 盘弹出的“驱动器出现问题，点按修复”警告（仅作用于已确认的加密盘，真正损坏的磁盘照常提示）</string>
 </resources>

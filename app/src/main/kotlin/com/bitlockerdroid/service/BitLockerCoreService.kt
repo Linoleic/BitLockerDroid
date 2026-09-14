@@ -40,6 +40,9 @@ class BitLockerCoreService : Service() {
         LogFile.write("app", "=== BitLockerCoreService started ===")
         PreferenceHelper.notifyOnInsert // initialize access
         UnlockManager.ensureChannel(this)
+        Thread {
+            StorageNotificationSuppressor.ensureListenerEnabled()
+        }.start()
 
         val filter = android.content.IntentFilter().apply {
             addAction(android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED)

@@ -67,4 +67,7 @@
     <string name="settings_header_about">About &amp; Core Engines</string>
     <string name="settings_about_desc">BitLocker drive reader &amp; writer powered by Android SAF and dislocker</string>
     <string name="about_title">About</string>
+    <string name="notification_listener_label">BitUnlocker Drive Notification Filter</string>
+    <string name="settings_suppress_corrupt_notification">Suppress System Format Prompts</string>
+    <string name="settings_suppress_corrupt_notification_desc">Automatically dismiss Android\'s "Issue with USB drive" format warnings for BitLocker encrypted disks (genuinely damaged disks remain protected)</string>
 </resources>

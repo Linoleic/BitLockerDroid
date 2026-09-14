@@ -62,8 +62,10 @@ object BitLockerDetector {
             if (signature == "-FVE-FS-" || signature == "MSWIN4.1") {
                 LogFile.write("app", "  >>> BitLocker DETECTED: $node (guid=$guid, rkId=$recoveryKeyId)")
                 found++
+                StorageNotificationSuppressor.suppressForVolume(context, node)
                 UnlockManager.onDeviceDetected(context, node, 0, guid, recoveryKeyId)
             } else {
+                StorageNotificationSuppressor.forgetNode(node)
                 UnlockManager.forgetDetected(node)
                 UnlockManager.closeSessionIfPresent(node)
             }
