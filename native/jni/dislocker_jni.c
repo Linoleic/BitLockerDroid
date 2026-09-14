@@ -706,6 +706,32 @@ static jstring native_getVolumeGuid(JNIEnv *env, jobject thiz, jlong handle)
 	return (*env)->NewStringUTF(env, buf);
 }
 
+static jstring native_getRecoveryKeyId(JNIEnv *env, jobject thiz, jlong handle)
+{
+	jni_slot_t *slot = slot_acquire(handle);
+	if (!slot)
+		return NULL;
+	dis_ctx_t *ctx = slot->ctx;
+
+	uint8_t guid_bytes[16] = {0};
+	int found = dis_get_recovery_key_id(ctx, guid_bytes);
+	slot_release(slot);
+
+	if (!found)
+		return NULL;
+
+	char buf[40];
+	uint32_t d1 = (uint32_t)guid_bytes[0] | ((uint32_t)guid_bytes[1] << 8) | ((uint32_t)guid_bytes[2] << 16) | ((uint32_t)guid_bytes[3] << 24);
+	uint16_t d2 = (uint16_t)guid_bytes[4] | ((uint16_t)guid_bytes[5] << 8);
+	uint16_t d3 = (uint16_t)guid_bytes[6] | ((uint16_t)guid_bytes[7] << 8);
+	snprintf(buf, sizeof(buf), "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+		d1, d2, d3,
+		guid_bytes[8], guid_bytes[9],
+		guid_bytes[10], guid_bytes[11], guid_bytes[12], guid_bytes[13], guid_bytes[14], guid_bytes[15]);
+
+	return (*env)->NewStringUTF(env, buf);
+}
+
 static jlongArray native_ntfsGetSpace(JNIEnv *env, jobject thiz, jlong volHandle)
 {
 	if (!volHandle) return NULL;
@@ -740,6 +766,7 @@ static const JNINativeMethod methods[] = {
 	NATIVE_METHOD(env, cls, "nativeOpenVolumeRecovery", "(Ljava/lang/String;JLjava/lang/String;)J", native_openVolumeRecovery),
 	NATIVE_METHOD(env, cls, "nativeSessionInfo", "(J)[J", native_sessionInfo),
 	NATIVE_METHOD(env, cls, "nativeGetVolumeGuid", "(J)Ljava/lang/String;", native_getVolumeGuid),
+	NATIVE_METHOD(env, cls, "nativeGetRecoveryKeyId", "(J)Ljava/lang/String;", native_getRecoveryKeyId),
 	NATIVE_METHOD(env, cls, "nativeRead", "(JJI)[B", native_read),
 	NATIVE_METHOD(env, cls, "nativeWrite", "(JJ[BI)I", native_write),
 	NATIVE_METHOD(env, cls, "nativeDecryptBuffer", "(J[BJ)[B", native_decryptBuffer),

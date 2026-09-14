@@ -35,6 +35,9 @@ object NativeBridge {
     /** Returns the volume GUID string (e.g. 4967d63b-2e29-4ad8-8399-f6a339e3d001) or null. */
     external fun nativeGetVolumeGuid(handle: Long): String?
 
+    /** Returns the 48-digit recovery key identifier (uppercase GUID) or null. */
+    external fun nativeGetRecoveryKeyId(handle: Long): String?
+
     /** Reads [size] decrypted bytes at [offset]; returns null on error. */
     external fun nativeRead(handle: Long, offset: Long, size: Int): ByteArray?
 

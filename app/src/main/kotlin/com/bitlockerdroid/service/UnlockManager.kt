@@ -116,6 +116,7 @@ object UnlockManager {
                     cipher = core.info.algorithmName,
                     canWrite = (core.writer?.isMounted == true) && !PreferenceHelper.mountReadOnly,
                     guid = core.volumeGuid,
+                    recoveryKeyId = core.recoveryKeyId,
                     deviceName = devInfo.friendlyName,
                     freeBytes = freeBytes,
                     usedBytes = usedBytes
@@ -161,17 +162,19 @@ object UnlockManager {
     }
 
     /** Marks [devicePath] as a BitLocker volume needing unlock. Idempotent. */
-    fun registerDetected(devicePath: String, guid: String? = null) {
+    fun registerDetected(devicePath: String, guid: String? = null, recoveryKeyId: String? = null) {
         var changed = false
         synchronized(lock) {
             if (!sessions.containsKey(devicePath)) {
                 val devInfo = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath, forceRefresh = true)
                 val effectiveGuid = guid ?: BitLockerDetector.getVolumeGuid(devicePath)
+                val effectiveRecoveryKeyId = recoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
                 val prev = detected[devicePath]
-                if (prev == null || prev.guid != effectiveGuid || prev.deviceName != devInfo.friendlyName) {
+                if (prev == null || prev.guid != effectiveGuid || prev.recoveryKeyId != effectiveRecoveryKeyId || prev.deviceName != devInfo.friendlyName) {
                     detected[devicePath] = DetectedVolume(
                         devicePath = devicePath,
                         guid = effectiveGuid,
+                        recoveryKeyId = effectiveRecoveryKeyId,
                         deviceName = devInfo.friendlyName,
                         capacity = devInfo.sizeBytes
                     )
@@ -304,15 +307,17 @@ object UnlockManager {
             val core = sessions.remove(devicePath)
             stale = core
             val guid = core?.volumeGuid ?: BitLockerDetector.getVolumeGuid(devicePath)
+            val recoveryKeyId = core?.recoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
             if (!guid.isNullOrBlank()) {
                 manuallyLockedGuids.add(guid)
             }
             manuallyLockedGuids.add(devicePath)
-            LogFile.write("app", "UnlockManager.lock: manually locked $devicePath (guid=$guid)")
+            LogFile.write("app", "UnlockManager.lock: manually locked $devicePath (guid=$guid, rkId=$recoveryKeyId)")
 
             detected[devicePath] = DetectedVolume(
                 devicePath = devicePath,
                 guid = guid,
+                recoveryKeyId = recoveryKeyId,
                 deviceName = devInfo.friendlyName,
                 capacity = devInfo.sizeBytes
             )
@@ -484,8 +489,9 @@ object UnlockManager {
      *  action). Records the volume so it appears in the management UI, and
      *  auto-unlocks if a saved password exists AND auto-unlock is enabled.
      *  No notification is posted — detection is user-driven via the Scan button. */
-    fun onDeviceDetected(context: Context, devicePath: String, offset: Long, guid: String? = null) {
+    fun onDeviceDetected(context: Context, devicePath: String, offset: Long, guid: String? = null, recoveryKeyId: String? = null) {
         val volumeId = guid ?: BitLockerDetector.getVolumeGuid(devicePath)
+        val rkId = recoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
 
         // Check if an existing session on this node has a DIFFERENT volume GUID (user swapped drive on same USB port)
         val swappedOut: DislockerCore? = synchronized(lock) {
@@ -505,7 +511,7 @@ object UnlockManager {
         }
 
         // Record the volume so it stays reachable from the management UI.
-        registerDetected(devicePath, volumeId)
+        registerDetected(devicePath, volumeId, rkId)
 
         if (isUnlocked(devicePath)) return
         if (volumeId.isNullOrBlank()) return
@@ -553,16 +559,17 @@ object UnlockManager {
         }
     }
 
-    fun showUnlockDialog(context: Context, devicePath: String, offset: Long, guid: String? = null) {
+    fun showUnlockDialog(context: Context, devicePath: String, offset: Long, guid: String? = null, recoveryKeyId: String? = null) {
         val intent = Intent(context, UnlockDialogActivity::class.java).apply {
             putExtra(UnlockDialogActivity.EXTRA_DEVICE_PATH, devicePath)
             putExtra(UnlockDialogActivity.EXTRA_OFFSET, offset)
             if (guid != null) putExtra(UnlockDialogActivity.EXTRA_GUID, guid)
+            if (recoveryKeyId != null) putExtra(UnlockDialogActivity.EXTRA_RECOVERY_KEY_ID, recoveryKeyId)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         try {
             context.startActivity(intent)
-            com.bitlockerdroid.util.LogFile.write("app", "unlock dialog launched for $devicePath")
+            com.bitlockerdroid.util.LogFile.write("app", "unlock dialog launched for $devicePath (guid=$guid, rkId=$recoveryKeyId)")
         } catch (e: Exception) {
             Log.e(TAG, "cannot show unlock dialog", e)
             com.bitlockerdroid.util.LogFile.write("app", "cannot show unlock dialog: ${e.message}")
@@ -588,6 +595,7 @@ data class UnlockedVolume(
     val cipher: String = "",
     val canWrite: Boolean = true,
     val guid: String? = null,
+    val recoveryKeyId: String? = null,
     val deviceName: String = "",
     val freeBytes: Long = 0L,
     val usedBytes: Long = 0L
@@ -597,6 +605,7 @@ data class UnlockedVolume(
 data class DetectedVolume(
     val devicePath: String,
     val guid: String? = null,
+    val recoveryKeyId: String? = null,
     val deviceName: String = "",
     val capacity: Long = 0L
 )

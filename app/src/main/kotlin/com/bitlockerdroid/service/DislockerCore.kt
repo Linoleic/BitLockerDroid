@@ -318,6 +318,10 @@ class DislockerCore private constructor(
         try { NativeBridge.nativeGetVolumeGuid(handle) } catch (e: Exception) { null }
     }
 
+    val recoveryKeyId: String? by lazy {
+        try { NativeBridge.nativeGetRecoveryKeyId(handle) } catch (e: Exception) { null }
+    }
+
     /** Returns Pair(totalBytes, freeBytes) queried from native filesystem, or null if unavailable. */
     fun getSpaceInfo(): Pair<Long, Long>? {
         try {

@@ -22,7 +22,13 @@ object BitLockerDetector {
      */
     data class BitLockerHeaderInfo(
         val signature: String,
-        val guid: String?
+        val guid: String?,
+        val recoveryKeyId: String? = null
+    )
+
+    data class MetadataGuids(
+        val volumeGuid: String?,
+        val recoveryKeyId: String?
     )
 
     /**
@@ -51,11 +57,12 @@ object BitLockerDetector {
             val headerInfo = readHeaderInfo(node)
             val signature = headerInfo?.signature
             val guid = headerInfo?.guid
-            LogFile.write("app", "  node $node sig=$signature guid=$guid")
+            val recoveryKeyId = headerInfo?.recoveryKeyId
+            LogFile.write("app", "  node $node sig=$signature guid=$guid rkId=$recoveryKeyId")
             if (signature == "-FVE-FS-" || signature == "MSWIN4.1") {
-                LogFile.write("app", "  >>> BitLocker DETECTED: $node (guid=$guid)")
+                LogFile.write("app", "  >>> BitLocker DETECTED: $node (guid=$guid, rkId=$recoveryKeyId)")
                 found++
-                UnlockManager.onDeviceDetected(context, node, 0, guid)
+                UnlockManager.onDeviceDetected(context, node, 0, guid, recoveryKeyId)
             } else {
                 UnlockManager.forgetDetected(node)
                 UnlockManager.closeSessionIfPresent(node)
@@ -95,7 +102,7 @@ object BitLockerDetector {
     const val STATIC_BDE_GUID_FIXED = "4967d63b-2e29-4ad8-8399-f6a339e3d000"
     const val STATIC_BDE_GUID_TOGO = "4967d63b-2e29-4ad8-8399-f6a339e3d001"
 
-    /** Reads sector 0 (512 bytes) and extracts signature and true persistent Volume GUID. */
+    /** Reads sector 0 (512 bytes) and extracts signature and true persistent Volume GUID and Recovery Key ID. */
     fun readHeaderInfo(path: String): BitLockerHeaderInfo? {
         if (!com.bitlockerdroid.util.DevicePathSecurity.isValid(path)) {
             LogFile.write("app", "readHeaderInfo rejected unsafe path: $path")
@@ -109,17 +116,20 @@ object BitLockerDetector {
         val sig = String(sector0, 3, 8, Charsets.US_ASCII)
         if (sig != "-FVE-FS-" && sig != "MSWIN4.1") return null
 
-        val guid = extractVolumeGuid(path, sig, sector0)
-        return BitLockerHeaderInfo(sig, guid)
+        val guids = extractMetadataGuids(path, sig, sector0)
+        return BitLockerHeaderInfo(sig, guids.volumeGuid, guids.recoveryKeyId)
     }
 
     /**
-     * Extracts the real unique persistent Volume GUID from the BitLocker metadata block.
+     * Extracts the real unique persistent Volume GUID and Recovery Key Identifier from the BitLocker metadata block.
      * Note: Sector 0 offset 0xa0/0x1a8 only stores the static Microsoft specification GUID
      * (4967d63b-2e29-4ad8-8399-f6a339e3d001), which is identical across ALL BitLocker drives.
      * The actual unique per-volume GUID is located in the dataset header (offset 0x50 of metadata block).
+     * The 48-digit Recovery Key Identifier is in the DATUMS_ENTRY_VMK datum with nonce range 0x0800..0x0fff.
      */
-    fun extractVolumeGuid(path: String, sig: String, sector0: ByteArray): String? {
+    fun extractMetadataGuids(path: String, sig: String, sector0: ByteArray): MetadataGuids {
+        var volumeGuid: String? = null
+        var recoveryKeyId: String? = null
         try {
             var metaOffset = 0L
             if (sig == "-FVE-FS-") {
@@ -139,37 +149,68 @@ object BitLockerDetector {
 
             if (metaOffset > 0L) {
                 val skipSectors = metaOffset / 512L
-                val metaCmd = "dd if='$path' bs=512 skip=$skipSectors count=1 2>/dev/null"
+                // Read 4KB (8 sectors) to cover dataset header and top-level datums
+                val metaCmd = "dd if='$path' bs=512 skip=$skipSectors count=8 2>/dev/null"
                 val metaSector = RootAccess.execBytes(metaCmd, 2500)
                 if (metaSector != null && metaSector.size >= 0x60) {
                     val metaSig = String(metaSector, 0, 8, Charsets.US_ASCII)
                     if (metaSig == "-FVE-FS-") {
                         // Offset 0x40 is dataset, offset 0x10 within dataset is volume guid -> 0x50
-                        val guid = formatGuid(metaSector, 0x50)
+                        val guid = formatGuid(metaSector, 0x50, uppercase = false)
                         if (!guid.isNullOrBlank() &&
                             guid != STATIC_BDE_GUID_TOGO &&
                             guid != STATIC_BDE_GUID_FIXED
                         ) {
-                            return guid
+                            volumeGuid = guid
+                        }
+
+                        // Walk top-level datums to extract the 48-digit Recovery Key Identifier
+                        val headerSize = readShortLE(metaSector, 0x48).toInt() and 0xffff
+                        val copySize = (readShortLE(metaSector, 0x4c).toInt() and 0xffff).let { if (it > 0) it else metaSector.size }
+                        val maxDatumOffset = if (copySize in 0x48..metaSector.size) copySize else metaSector.size
+
+                        var pos = 0x40 + (if (headerSize >= 0x10) headerSize else 0x30)
+                        while (pos + 8 <= maxDatumOffset && pos + 8 <= metaSector.size) {
+                            val datumSize = readShortLE(metaSector, pos).toInt() and 0xffff
+                            if (datumSize < 8) break
+                            val entryType = readShortLE(metaSector, pos + 2).toInt() and 0xffff
+                            val valueType = readShortLE(metaSector, pos + 4).toInt() and 0xffff
+
+                            // DATUMS_ENTRY_VMK (0x0002) and DATUMS_VALUE_VMK (0x0008)
+                            if (entryType == 0x0002 && valueType == 0x0008 && pos + 36 <= metaSector.size) {
+                                // Nonce is at offset 24; range is at nonce[10..11] (offset 34)
+                                val datumRange = readShortLE(metaSector, pos + 34).toInt() and 0xffff
+                                if (datumRange in 0x0800..0x0fff) {
+                                    recoveryKeyId = formatGuid(metaSector, pos + 8, uppercase = true)
+                                    break
+                                }
+                            }
+                            pos += datumSize
                         }
                     }
                 }
             }
         } catch (e: Throwable) {
-            Log.w(TAG, "failed extracting volume GUID from metadata for $path", e)
+            Log.w(TAG, "failed extracting metadata GUIDs for $path", e)
         }
 
         // Fallback: If metadata block could not be read, check fallback offsets but filter out static spec GUIDs
-        val fallbackGuid = if (sig == "-FVE-FS-") formatGuid(sector0, 0xa0) else formatGuid(sector0, 0x1a8)
-        if (!fallbackGuid.isNullOrBlank() &&
-            fallbackGuid != STATIC_BDE_GUID_TOGO &&
-            fallbackGuid != STATIC_BDE_GUID_FIXED
-        ) {
-            return fallbackGuid
+        if (volumeGuid == null) {
+            val fallbackGuid = if (sig == "-FVE-FS-") formatGuid(sector0, 0xa0, uppercase = false) else formatGuid(sector0, 0x1a8, uppercase = false)
+            if (!fallbackGuid.isNullOrBlank() &&
+                fallbackGuid != STATIC_BDE_GUID_TOGO &&
+                fallbackGuid != STATIC_BDE_GUID_FIXED
+            ) {
+                volumeGuid = fallbackGuid
+            }
         }
 
-        return null
+        return MetadataGuids(volumeGuid, recoveryKeyId)
     }
+
+    /** Extracts the real unique persistent Volume GUID from the BitLocker metadata block. */
+    fun extractVolumeGuid(path: String, sig: String, sector0: ByteArray): String? =
+        extractMetadataGuids(path, sig, sector0).volumeGuid
 
     private fun readLongLE(bytes: ByteArray, offset: Int): Long {
         if (offset + 8 > bytes.size) return 0L
@@ -187,8 +228,8 @@ object BitLockerDetector {
         return ((b1 shl 8) or b0).toShort()
     }
 
-    /** Formats a 16-byte Windows GUID into standard UUID string representation (lowercase). */
-    fun formatGuid(bytes: ByteArray, offset: Int): String? {
+    /** Formats a 16-byte Windows GUID into standard UUID string representation. */
+    fun formatGuid(bytes: ByteArray, offset: Int, uppercase: Boolean = false): String? {
         if (offset + 16 > bytes.size) return null
         var allZero = true
         for (i in 0 until 16) {
@@ -207,9 +248,14 @@ object BitLockerDetector {
                 ((bytes[offset + 5].toInt() and 0xff) shl 8)
         val d3 = (bytes[offset + 6].toInt() and 0xff) or
                 ((bytes[offset + 7].toInt() and 0xff) shl 8)
+        val formatStr = if (uppercase) {
+            "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X"
+        } else {
+            "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x"
+        }
         return String.format(
             java.util.Locale.US,
-            "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+            formatStr,
             d1, d2, d3,
             bytes[offset + 8], bytes[offset + 9],
             bytes[offset + 10], bytes[offset + 11], bytes[offset + 12],
@@ -222,6 +268,9 @@ object BitLockerDetector {
 
     /** Returns the persistent volume GUID of the BitLocker device at [path], if detected. */
     fun getVolumeGuid(path: String): String? = readHeaderInfo(path)?.guid
+
+    /** Returns the 48-digit recovery key identifier (uppercase GUID) if present in metadata. */
+    fun getRecoveryKeyId(path: String): String? = readHeaderInfo(path)?.recoveryKeyId
 
     /** Raw signature check on a byte array (first 512 bytes of a device). */
     fun hasBitLockerSignature(sector0: ByteArray): Boolean {

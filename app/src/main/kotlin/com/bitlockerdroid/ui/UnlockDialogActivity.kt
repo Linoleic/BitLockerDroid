@@ -58,6 +58,7 @@ class UnlockDialogActivity : ComponentActivity() {
         const val EXTRA_DEVICE_PATH = "device_path"
         const val EXTRA_OFFSET = "offset"
         const val EXTRA_GUID = "guid"
+        const val EXTRA_RECOVERY_KEY_ID = "recovery_key_id"
         private val RECOVERY_PATTERN = Pattern.compile("^(\\d{6}-){7}\\d{6}$")
     }
 
@@ -65,6 +66,7 @@ class UnlockDialogActivity : ComponentActivity() {
     private var devicePath: String by mutableStateOf("")
     private var offset: Long = 0
     private var initialGuid: String? by mutableStateOf<String?>(null)
+    private var initialRecoveryKeyId: String? by mutableStateOf<String?>(null)
 
     /**
      * Validates and applies a launch intent. Shared by onCreate and
@@ -82,6 +84,7 @@ class UnlockDialogActivity : ComponentActivity() {
         devicePath = rawPath!!
         offset = intent.getLongExtra(EXTRA_OFFSET, 0)
         initialGuid = intent.getStringExtra(EXTRA_GUID)
+        initialRecoveryKeyId = intent.getStringExtra(EXTRA_RECOVERY_KEY_ID)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -106,6 +109,7 @@ class UnlockDialogActivity : ComponentActivity() {
                 UnlockDialogScreen(
                     devicePath = devicePath,
                     initialGuid = initialGuid,
+                    initialRecoveryKeyId = initialRecoveryKeyId,
                     onDismiss = { finish() },
                     onUnlock = { value, isRecovery, remember, autoUnlock, onError, onSuccess ->
                         lifecycleScope.launch(Dispatchers.IO) {
@@ -167,6 +171,7 @@ class UnlockDialogActivity : ComponentActivity() {
 /** Volume metadata loaded off the main thread before the dialog is interactive. */
 private data class VolumePreflight(
     val guid: String?,
+    val recoveryKeyId: String?,
     val savedPlain: String?,
     val devInfo: com.bitlockerdroid.util.DeviceIdentity.DeviceInfo
 )
@@ -176,6 +181,7 @@ private data class VolumePreflight(
 fun UnlockDialogScreen(
     devicePath: String,
     initialGuid: String? = null,
+    initialRecoveryKeyId: String? = null,
     onDismiss: () -> Unit,
     onUnlock: (
         value: String,
@@ -191,18 +197,20 @@ fun UnlockDialogScreen(
     // Resolving the volume GUID reads the device header through root, and the
     // saved-password path decrypts via AndroidKeyStore — both would block the
     // main thread during composition, so load them asynchronously.
-    var preflight by remember(devicePath, initialGuid) { mutableStateOf<VolumePreflight?>(null) }
-    LaunchedEffect(devicePath, initialGuid) {
+    var preflight by remember(devicePath, initialGuid, initialRecoveryKeyId) { mutableStateOf<VolumePreflight?>(null) }
+    LaunchedEffect(devicePath, initialGuid, initialRecoveryKeyId) {
         preflight = withContext(Dispatchers.IO) {
             val g = initialGuid ?: BitLockerDetector.getVolumeGuid(devicePath)
+            val rkId = initialRecoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
             val saved = if (!g.isNullOrBlank()) {
                 PreferenceHelper.getRememberedPassword(context, g)?.let { KeyGuardService.decrypt(it) }
             } else null
             val dev = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath, forceRefresh = true)
-            VolumePreflight(g, saved, dev)
+            VolumePreflight(g, rkId, saved, dev)
         }
     }
     val guid = preflight?.guid
+    val recoveryKeyId = preflight?.recoveryKeyId
     val savedPlain = preflight?.savedPlain
 
     var isRecoveryKey by remember { mutableStateOf(false) }
@@ -426,6 +434,78 @@ fun UnlockDialogScreen(
                         shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
                     ) {
                         Text(text = stringResource(R.string.use_recovery_key), fontSize = 13.sp)
+                    }
+                }
+
+                // Recovery Key Identifier Card (Shown when recovery key mode is selected)
+                AnimatedVisibility(visible = isRecoveryKey && !recoveryKeyId.isNullOrBlank()) {
+                    Column {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = "恢复标识符",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        val prefix = recoveryKeyId?.take(8) ?: ""
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                                        ) {
+                                            Text(
+                                                text = "前 8 位: $prefix",
+                                                style = MaterialTheme.typography.labelSmall.copy(
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                ),
+                                                color = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(3.dp))
+                                    Text(
+                                        text = recoveryKeyId ?: "",
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 11.sp
+                                        ),
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                                        cm?.setPrimaryClip(android.content.ClipData.newPlainText("Recovery Key ID", recoveryKeyId))
+                                        Toast.makeText(context, "恢复标识符已复制", Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        painter = androidx.compose.ui.res.painterResource(id = R.drawable.ic_content_copy),
+                                        contentDescription = "复制恢复标识符",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 

@@ -220,10 +220,11 @@ class BitLockerSettingsActivity : ComponentActivity() {
     }
 
     private fun promptUnlock(devicePath: String) {
-        val guid = UnlockManager.detectedVolumes.firstOrNull { it.devicePath == devicePath }?.guid
-            ?: BitLockerDetector.getVolumeGuid(devicePath)
-        LogFile.write("app", "manual unlock requested for $devicePath (guid=$guid)")
-        UnlockManager.showUnlockDialog(this, devicePath, 0, guid)
+        val detectedVol = UnlockManager.detectedVolumes.firstOrNull { it.devicePath == devicePath }
+        val guid = detectedVol?.guid ?: BitLockerDetector.getVolumeGuid(devicePath)
+        val recoveryKeyId = detectedVol?.recoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
+        LogFile.write("app", "manual unlock requested for $devicePath (guid=$guid, rkId=$recoveryKeyId)")
+        UnlockManager.showUnlockDialog(this, devicePath, 0, guid, recoveryKeyId)
     }
 
     private fun lockVolume(devicePath: String) {

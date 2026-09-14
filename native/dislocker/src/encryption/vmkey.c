@@ -658,3 +658,27 @@ int dis_retrieve_keys(dis_ctx_t *ctx, const uint8_t *user_password,
 
 	return TRUE;
 }
+
+int dis_get_recovery_key_id(dis_ctx_t *ctx, uint8_t guid_out[16])
+{
+	if (!ctx || !guid_out || !ctx->metadata || ctx->metadata_size == 0)
+		return FALSE;
+
+	uint8_t *cur = NULL;
+	while (get_next_datum(ctx, cur, &cur)) {
+		datum_header_safe_t h;
+		memcpy(&h, cur, sizeof(h));
+		if (h.entry_type == DATUMS_ENTRY_VMK && h.value_type == DATUMS_VALUE_VMK) {
+			if ((size_t)(cur - ctx->metadata) + sizeof(datum_vmk_t) <= ctx->metadata_size) {
+				datum_vmk_t *vmk = (datum_vmk_t *)cur;
+				uint16_t datum_range = (uint16_t)vmk->nonce[10] | ((uint16_t)vmk->nonce[11] << 8);
+				if (datum_range >= 0x0800 && datum_range <= 0x0fff) {
+					memcpy(guid_out, &vmk->guid, 16);
+					return TRUE;
+				}
+			}
+		}
+	}
+	return FALSE;
+}
+

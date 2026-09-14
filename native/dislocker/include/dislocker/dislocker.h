@@ -88,6 +88,7 @@ uint16_t dis_sector_size(dis_ctx_t *ctx);
 uint64_t dis_volume_size(dis_ctx_t *ctx);
 uint16_t dis_algorithm(dis_ctx_t *ctx);
 int      dis_fvek_len(dis_ctx_t *ctx);
+int      dis_get_recovery_key_id(dis_ctx_t *ctx, uint8_t guid_out[16]);
 
 /* Last error string (thread-local). */
 const char *dis_get_last_error(void);
