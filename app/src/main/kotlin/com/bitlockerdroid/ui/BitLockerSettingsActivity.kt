@@ -69,10 +69,8 @@ class BitLockerSettingsActivity : ComponentActivity() {
 
     private val stateChangeListener = object : UnlockManager.StateChangeListener {
         override fun onUnlockManagerStateChanged() {
-            runOnUiThread {
-                refreshData()
-                refreshRememberedCredentials()
-            }
+            refreshData()
+            refreshRememberedCredentials()
         }
     }
 
@@ -181,19 +179,26 @@ class BitLockerSettingsActivity : ComponentActivity() {
     }
 
     private fun refreshRememberedCredentials() {
-        val creds = PreferenceHelper.getRememberedCredentials(this)
-        rememberedCredentialsState.clear()
-        rememberedCredentialsState.addAll(creds)
+        lifecycleScope.launch(Dispatchers.IO) {
+            val creds = PreferenceHelper.getRememberedCredentials(this@BitLockerSettingsActivity)
+            withContext(Dispatchers.Main) {
+                rememberedCredentialsState.clear()
+                rememberedCredentialsState.addAll(creds)
+            }
+        }
     }
 
     private fun refreshData() {
-        val currentUnlocked = UnlockManager.unlockedVolumes
-        unlockedVolumesState.clear()
-        unlockedVolumesState.addAll(currentUnlocked)
-
-        val currentDetected = UnlockManager.detectedVolumes
-        detectedVolumesState.clear()
-        detectedVolumesState.addAll(currentDetected)
+        lifecycleScope.launch(Dispatchers.IO) {
+            val currentUnlocked = UnlockManager.unlockedVolumes
+            val currentDetected = UnlockManager.detectedVolumes
+            withContext(Dispatchers.Main) {
+                unlockedVolumesState.clear()
+                unlockedVolumesState.addAll(currentUnlocked)
+                detectedVolumesState.clear()
+                detectedVolumesState.addAll(currentDetected)
+            }
+        }
     }
 
     /** Unified Refresh and Scan */
@@ -211,7 +216,6 @@ class BitLockerSettingsActivity : ComponentActivity() {
                 if (showToast) {
                     UnlockManager.clearManualLockSuppression()
                 }
-                com.bitlockerdroid.util.DeviceIdentity.clearCache()
                 // FUSE daemon may have written to the volume behind our back:
                 // drop every active session's block/FS caches so the refreshed
                 // listing reflects the on-volume truth.

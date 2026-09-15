@@ -112,6 +112,7 @@ object StorageNotificationSuppressor {
     /**
      * Intercepts incoming notifications posted by SystemUI or the Android system.
      * Dismisses the notification immediately if and only if the tag is verified BitLocker.
+     * Asynchronously verifies and snoozes to completely prevent blocking the Main / UI thread.
      */
     fun handleNotificationPosted(listener: BitLockerNotificationListener, sbn: StatusBarNotification) {
         if (!PreferenceHelper.isSuppressCorruptNotification(listener)) return
@@ -119,37 +120,68 @@ object StorageNotificationSuppressor {
         if (pkg != "com.android.systemui" && pkg != "android") return
 
         val tag = sbn.tag ?: return
-        if (isTagBitLocker(tag)) {
-            LogFile.write("app", "StorageNotificationSuppressor: suppressing incoming corrupt warning for $tag (key=${sbn.key})")
+        val key = sbn.key
+
+        // Fast path: if this tag is already known to be a verified BitLocker volume, cancel immediately
+        if (confirmedBitLockerTags.contains(tag)) {
             try {
-                listener.cancelNotification(sbn.key)
+                listener.cancelNotification(key)
             } catch (e: Exception) {
-                Log.w(TAG, "cancelNotification failed for ${sbn.key}", e)
+                Log.w(TAG, "cancelNotification failed for $key", e)
             }
-            RootAccess.exec("cmd notification snooze --for 31536000000000 '${sbn.key}' 2>/dev/null")
+            Thread {
+                try {
+                    RootAccess.exec("cmd notification snooze --for 31536000000000 '$key' 2>/dev/null")
+                } catch (_: Exception) {}
+            }.start()
+            return
         }
+
+        // Slow path: verify signature and snooze on a background thread to prevent UI freezing
+        Thread {
+            try {
+                if (isTagBitLocker(tag)) {
+                    LogFile.write("app", "StorageNotificationSuppressor: suppressing incoming corrupt warning for $tag (key=$key)")
+                    try {
+                        listener.cancelNotification(key)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "cancelNotification failed for $key", e)
+                    }
+                    RootAccess.exec("cmd notification snooze --for 31536000000000 '$key' 2>/dev/null")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "handleNotificationPosted async error for $tag", e)
+            }
+        }.start()
     }
 
     /**
      * Checks all currently active notifications when the listener connects and suppresses
      * any existing corrupt/format warnings for verified BitLocker volumes.
+     * Runs in a background thread to avoid stalling onListenerConnected.
      */
     fun checkAndSuppressActiveNotifications(listener: BitLockerNotificationListener) {
         if (!PreferenceHelper.isSuppressCorruptNotification(listener)) return
 
-        val active = try { listener.activeNotifications } catch (_: Exception) { null } ?: return
-        for (sbn in active) {
-            if (sbn.packageName == "com.android.systemui" || sbn.packageName == "android") {
-                val tag = sbn.tag
-                if (tag != null && isTagBitLocker(tag)) {
-                    LogFile.write("app", "StorageNotificationSuppressor: cancelling active notification for $tag (key=${sbn.key})")
-                    try {
-                        listener.cancelNotification(sbn.key)
-                    } catch (_: Exception) {}
-                    RootAccess.exec("cmd notification snooze --for 31536000000000 '${sbn.key}' 2>/dev/null")
+        Thread {
+            try {
+                val active = try { listener.activeNotifications } catch (_: Exception) { null } ?: return@Thread
+                for (sbn in active) {
+                    if (sbn.packageName == "com.android.systemui" || sbn.packageName == "android") {
+                        val tag = sbn.tag
+                        if (tag != null && isTagBitLocker(tag)) {
+                            LogFile.write("app", "StorageNotificationSuppressor: cancelling active notification for $tag (key=${sbn.key})")
+                            try {
+                                listener.cancelNotification(sbn.key)
+                            } catch (_: Exception) {}
+                            RootAccess.exec("cmd notification snooze --for 31536000000000 '${sbn.key}' 2>/dev/null")
+                        }
+                    }
                 }
+            } catch (e: Exception) {
+                Log.w(TAG, "checkAndSuppressActiveNotifications async error", e)
             }
-        }
+        }.start()
     }
 
     /** Clears tracked tags for missing nodes when drives are unplugged. */

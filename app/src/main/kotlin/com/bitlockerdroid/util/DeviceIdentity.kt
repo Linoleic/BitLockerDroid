@@ -39,10 +39,15 @@ object DeviceIdentity {
         cache.remove(devicePath)
     }
 
+    fun retainOnly(validPaths: Collection<String>) {
+        val validSet = validPaths.toSet()
+        cache.keys.retainAll(validSet)
+    }
+
     /**
      * Resolves hardware info (vendor, model, capacity) directly from sysfs.
-     * Priority 1: Root sysfs for this specific block node (100% accurate SCSI INQUIRY).
-     * Priority 2: Direct sysfs read (if permitted by SELinux).
+     * Priority 1: Direct sysfs read (extremely fast, zero process spawns, no su overhead).
+     * Priority 2: Root sysfs query (if direct read was blocked by SELinux).
      * Priority 3: UsbManager fallback (if sysfs is unavailable).
      */
     fun queryDeviceInfo(devicePath: String, forceRefresh: Boolean = false): DeviceInfo {
@@ -68,8 +73,51 @@ object DeviceIdentity {
                 else -> null
             }
 
-            // Priority 1: Root sysfs query for this EXACT block device (accurate SCSI INQUIRY string)
-            if (RootAccess.hasSu()) {
+            // Priority 1: Direct sysfs read (runs in <0.2ms, no root process creation)
+            val sysDevFile = when {
+                majMin != null -> File("/sys/dev/block/$majMin")
+                File("/sys/class/block/$fileName").exists() -> File("/sys/class/block/$fileName")
+                else -> null
+            }
+            if (sysDevFile != null) {
+                val canonical = try { sysDevFile.canonicalFile } catch (_: Exception) { sysDevFile }
+                if (sizeBytes <= 0L) {
+                    try {
+                        val sizeFile = File(canonical, "size")
+                        if (sizeFile.exists()) {
+                            val sectors = sizeFile.readText().trim().toLongOrNull() ?: 0L
+                            if (sectors > 0) sizeBytes = sectors * 512L
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                val candidates = listOf(
+                    File(canonical, "device"),
+                    canonical.parentFile?.let { File(it, "device") },
+                    canonical.parentFile?.parentFile?.let { File(it, "device") }
+                ).filterNotNull()
+
+                for (devDir in candidates) {
+                    if (devDir.isDirectory) {
+                        try {
+                            val vFile = File(devDir, "vendor")
+                            if (vFile.exists()) {
+                                val v = vFile.readText().trim()
+                                if (v.isNotBlank() && vendor.isBlank()) vendor = v
+                            }
+                            val mFile = File(devDir, "model")
+                            if (mFile.exists()) {
+                                val m = mFile.readText().trim()
+                                if (m.isNotBlank() && model.isBlank()) model = m
+                            }
+                            if (vendor.isNotBlank() || model.isNotBlank()) break
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
+
+            // Priority 2: Root sysfs query fallback only if direct read was incomplete
+            if ((vendor.isBlank() && model.isBlank() || sizeBytes <= 0L) && RootAccess.hasSu()) {
                 val devMajMin = majMin ?: run {
                     val lsOut = RootAccess.exec("ls -l '$devicePath' 2>/dev/null")?.second
                     val match = Regex("""(\d+),\s*(\d+)""").find(lsOut ?: "")
@@ -81,56 +129,11 @@ object DeviceIdentity {
                     val lines = res?.second?.lines()?.map { it.trim() }?.filter { it.isNotEmpty() }
                     if (!lines.isNullOrEmpty()) {
                         val sectors = lines.getOrNull(0)?.toLongOrNull() ?: 0L
-                        if (sectors > 0) sizeBytes = sectors * 512L
+                        if (sectors > 0 && sizeBytes <= 0L) sizeBytes = sectors * 512L
                         val rootVendor = lines.getOrNull(1).orEmpty()
                         val rootModel = lines.getOrNull(2).orEmpty()
-                        if (rootVendor.isNotBlank()) vendor = rootVendor
-                        if (rootModel.isNotBlank()) model = rootModel
-                    }
-                }
-            }
-
-            // Priority 2: Direct sysfs read (if permitted by SELinux / unprivileged)
-            if (vendor.isBlank() && model.isBlank()) {
-                val sysDevFile = when {
-                    majMin != null -> File("/sys/dev/block/$majMin")
-                    File("/sys/class/block/$fileName").exists() -> File("/sys/class/block/$fileName")
-                    else -> null
-                }
-                if (sysDevFile != null) {
-                    val canonical = try { sysDevFile.canonicalFile } catch (_: Exception) { sysDevFile }
-                    if (sizeBytes <= 0L) {
-                        try {
-                            val sizeFile = File(canonical, "size")
-                            if (sizeFile.exists()) {
-                                val sectors = sizeFile.readText().trim().toLongOrNull() ?: 0L
-                                if (sectors > 0) sizeBytes = sectors * 512L
-                            }
-                        } catch (_: Exception) {}
-                    }
-
-                    val candidates = listOf(
-                        File(canonical, "device"),
-                        canonical.parentFile?.let { File(it, "device") },
-                        canonical.parentFile?.parentFile?.let { File(it, "device") }
-                    ).filterNotNull()
-
-                    for (devDir in candidates) {
-                        if (devDir.isDirectory) {
-                            try {
-                                val vFile = File(devDir, "vendor")
-                                if (vFile.exists()) {
-                                    val v = vFile.readText().trim()
-                                    if (v.isNotBlank() && vendor.isBlank()) vendor = v
-                                }
-                                val mFile = File(devDir, "model")
-                                if (mFile.exists()) {
-                                    val m = mFile.readText().trim()
-                                    if (m.isNotBlank() && model.isBlank()) model = m
-                                }
-                                if (vendor.isNotBlank() || model.isNotBlank()) break
-                            } catch (_: Exception) {}
-                        }
+                        if (rootVendor.isNotBlank() && vendor.isBlank()) vendor = rootVendor
+                        if (rootModel.isNotBlank() && model.isBlank()) model = rootModel
                     }
                 }
             }

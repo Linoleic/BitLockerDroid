@@ -170,12 +170,14 @@ object UnlockManager {
 
     /** Marks [devicePath] as a BitLocker volume needing unlock. Idempotent. */
     fun registerDetected(devicePath: String, guid: String? = null, recoveryKeyId: String? = null) {
+        // Query heavy info outside the lock so UI queries are never blocked
+        val effectiveGuid = guid ?: BitLockerDetector.getVolumeGuid(devicePath)
+        val effectiveRecoveryKeyId = recoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
+        val devInfo = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath, forceRefresh = false)
+
         var changed = false
         synchronized(lock) {
             if (!sessions.containsKey(devicePath)) {
-                val devInfo = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath, forceRefresh = true)
-                val effectiveGuid = guid ?: BitLockerDetector.getVolumeGuid(devicePath)
-                val effectiveRecoveryKeyId = recoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
                 val prev = detected[devicePath]
                 if (prev == null || prev.guid != effectiveGuid || prev.recoveryKeyId != effectiveRecoveryKeyId || prev.deviceName != devInfo.friendlyName) {
                     detected[devicePath] = DetectedVolume(
@@ -443,7 +445,7 @@ object UnlockManager {
     fun forgetDetectedMissing(presentNodes: List<String>) {
         var removedAny = false
         val toClose = mutableListOf<Pair<String, DislockerCore>>()
-        com.bitlockerdroid.util.DeviceIdentity.clearCache()
+        com.bitlockerdroid.util.DeviceIdentity.retainOnly(presentNodes)
         StorageNotificationSuppressor.forgetMissing(presentNodes)
         val missingDetectedList = mutableListOf<String>()
         val missingSessionsList = mutableListOf<String>()

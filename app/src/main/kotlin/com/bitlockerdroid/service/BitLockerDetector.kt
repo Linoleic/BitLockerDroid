@@ -42,7 +42,6 @@ object BitLockerDetector {
             return 0
         }
 
-        com.bitlockerdroid.util.DeviceIdentity.clearCache()
         val nodes = enumerateVoldNodes()
         LogFile.write("app", "scanAndDetect: ${nodes.size} vold nodes")
 

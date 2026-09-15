@@ -24,12 +24,15 @@ class BitLockerCoreService : Service() {
             if (action == android.hardware.usb.UsbManager.ACTION_USB_DEVICE_DETACHED) {
                 UnlockManager.onUsbDetached()
             }
-            Thread {
-                try { Thread.sleep(800) } catch (_: Exception) {}
+            Thread({
+                try {
+                    android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+                    Thread.sleep(800)
+                } catch (_: Exception) {}
                 context?.let {
                     BitLockerDetector.scanAndDetect(it)
                 }
-            }.start()
+            }, "BitLocker-UsbScan").start()
         }
     }
 
