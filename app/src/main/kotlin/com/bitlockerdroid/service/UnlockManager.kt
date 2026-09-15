@@ -24,6 +24,8 @@ object UnlockManager {
 
     private const val TAG = "UnlockManager"
     const val CHANNEL_ID = "bitlocker_status"
+    const val CHANNEL_ID_ALERTS = "bitlocker_alerts"
+    const val RECOVERY_PREFIX = "RECOVERY:"
 
     interface StateChangeListener {
         fun onUnlockManagerStateChanged()
@@ -108,6 +110,7 @@ object UnlockManager {
                 val totalBytes = if (space != null && space.first > 0L) space.first else core.info.volumeSize
                 val freeBytes = space?.second ?: -1L
                 val usedBytes = if (freeBytes >= 0L) (totalBytes - freeBytes).coerceAtLeast(0L) else -1L
+                val serial = try { core.reader.volumeSerial() } catch (_: Exception) { 0L }
                 UnlockedVolume(
                     devicePath = path,
                     size = totalBytes,
@@ -119,7 +122,10 @@ object UnlockManager {
                     recoveryKeyId = core.recoveryKeyId,
                     deviceName = devInfo.friendlyName,
                     freeBytes = freeBytes,
-                    usedBytes = usedBytes
+                    usedBytes = usedBytes,
+                    sectorSize = core.info.sectorSize,
+                    volumeSerial = serial,
+                    isRecovery = core.isRecovery
                 )
             }
         }
@@ -191,6 +197,9 @@ object UnlockManager {
      *  unlocked or physically removed. */
     fun forgetDetected(devicePath: String) {
         StorageNotificationSuppressor.forgetNode(devicePath)
+        com.bitlockerdroid.util.ContextProvider.app?.let { app ->
+            dismissAllNotificationsForDevice(app, devicePath)
+        }
         var removed = false
         synchronized(lock) {
             removed = (detected.remove(devicePath) != null)
@@ -214,8 +223,53 @@ object UnlockManager {
         remember: Boolean,
         expectedGuid: String? = null
     ): Result<DislockerCore> {
+        return unlockWithCredential(
+            context = context,
+            devicePath = devicePath,
+            offset = offset,
+            credential = password,
+            isRecovery = false,
+            remember = remember,
+            expectedGuid = expectedGuid
+        )
+    }
+
+    /** Called by the unlock dialog with a 48-digit recovery key. */
+    fun unlockWithRecoveryKey(
+        context: Context,
+        devicePath: String,
+        offset: Long,
+        recoveryKey: String,
+        remember: Boolean,
+        expectedGuid: String? = null
+    ): Result<DislockerCore> {
+        return unlockWithCredential(
+            context = context,
+            devicePath = devicePath,
+            offset = offset,
+            credential = recoveryKey,
+            isRecovery = true,
+            remember = remember,
+            expectedGuid = expectedGuid
+        )
+    }
+
+    /** Unified unlock logic supporting both passwords and 48-digit recovery keys. */
+    fun unlockWithCredential(
+        context: Context,
+        devicePath: String,
+        offset: Long,
+        credential: String,
+        isRecovery: Boolean,
+        remember: Boolean,
+        expectedGuid: String? = null
+    ): Result<DislockerCore> {
         return try {
-            val core = DislockerCore.open(devicePath, offset, password)
+            val core = if (isRecovery) {
+                DislockerCore.openWithRecoveryKey(devicePath, offset, credential)
+            } else {
+                DislockerCore.open(devicePath, offset, credential)
+            }
             val guid = core.volumeGuid ?: expectedGuid ?: BitLockerDetector.getVolumeGuid(devicePath)
             if (!guid.isNullOrBlank()) {
                 manuallyLockedGuids.remove(guid)
@@ -229,11 +283,12 @@ object UnlockManager {
                 old
             }
             stale?.close()
-            // Save the encrypted password only if the user asked to remember it.
+            // Save the encrypted credential only if the user asked to remember it.
             // Keyed strictly by persistent Volume GUID rather than ephemeral device node.
             if (!guid.isNullOrBlank()) {
                 if (remember) {
-                    KeyGuardService.encrypt(password)?.let { blob ->
+                    val rawStored = if (isRecovery) "$RECOVERY_PREFIX$credential" else credential
+                    KeyGuardService.encrypt(rawStored)?.let { blob ->
                         val friendly = core.volumeLabel.ifBlank {
                             com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath, forceRefresh = true).friendlyName
                         }
@@ -243,7 +298,7 @@ object UnlockManager {
                     PreferenceHelper.clearRememberedPassword(context, guid)
                 }
             } else {
-                LogFile.write("app", "unlockWithPassword: no volume GUID found for $devicePath, skipping credential persistence")
+                LogFile.write("app", "unlockWithCredential: no volume GUID found for $devicePath, skipping credential persistence")
             }
 
             // Trigger userspace FUSE virtual mount to /storage/BitLocker_<Label>
@@ -257,14 +312,15 @@ object UnlockManager {
                         context = context,
                         devicePath = devicePath,
                         offset = offset,
-                        key = password,
-                        isRecovery = false,
+                        key = credential,
+                        isRecovery = isRecovery,
                         volumeLabel = effectiveLabel,
                         volumeGuid = effectiveGuid
                     )
                 }.start()
             }
 
+            dismissLockedNotification(context, devicePath)
             BitLockerCoreService.updateForegroundState(context)
             com.bitlockerdroid.provider.BitLockerDocumentsProvider.notifyRootsChanged(context)
             notifyStateChanged()
@@ -284,8 +340,8 @@ object UnlockManager {
 
     /**
      * Ensures a session for [devicePath] exists, re-unlocking from the saved
-     * encrypted password if this process lost it (e.g. after a kill). Returns
-     * the core or null.
+     * encrypted password or recovery key if this process lost it (e.g. after a kill).
+     * Returns the core or null.
      */
     fun ensureUnlocked(context: Context, devicePath: String, offset: Long, guid: String? = null): DislockerCore? {
         synchronized(lock) {
@@ -293,9 +349,11 @@ object UnlockManager {
         }
         val volId = guid ?: BitLockerDetector.getVolumeGuid(devicePath) ?: return null
         val blob = PreferenceHelper.getRememberedPassword(context, volId) ?: return null
-        val password = KeyGuardService.decrypt(blob) ?: return null
-        // Re-unlock with the saved password; keep it remembered.
-        val result = unlockWithPassword(context, devicePath, offset, password, true, expectedGuid = volId)
+        val raw = KeyGuardService.decrypt(blob) ?: return null
+        val isRecovery = raw.startsWith(RECOVERY_PREFIX)
+        val cleanKey = if (isRecovery) raw.removePrefix(RECOVERY_PREFIX) else raw
+        // Re-unlock with the saved credential; keep it remembered.
+        val result = unlockWithCredential(context, devicePath, offset, cleanKey, isRecovery, true, expectedGuid = volId)
         return result.getOrNull()
     }
 
@@ -331,6 +389,7 @@ object UnlockManager {
             core.close()
         }
         app?.let {
+            dismissAllNotificationsForDevice(it, devicePath)
             BitLockerCoreService.updateForegroundState(it)
             com.bitlockerdroid.provider.BitLockerDocumentsProvider.notifyRootsChanged(it)
         }
@@ -349,6 +408,8 @@ object UnlockManager {
         val toClose = mutableListOf<Pair<String, DislockerCore>>()
         com.bitlockerdroid.util.DeviceIdentity.clearCache()
         StorageNotificationSuppressor.forgetMissing(presentNodes)
+        val missingDetectedList = mutableListOf<String>()
+        val missingSessionsList = mutableListOf<String>()
         synchronized(lock) {
             val present = presentNodes.toHashSet()
             val missingDetected = detected.keys.filter { !present.contains(it) }
@@ -357,6 +418,7 @@ object UnlockManager {
                     detected[path]?.guid?.let { manuallyLockedGuids.remove(it) }
                     manuallyLockedGuids.remove(path)
                     detected.remove(path)
+                    missingDetectedList.add(path)
                 }
                 removedAny = true
             }
@@ -368,6 +430,7 @@ object UnlockManager {
                         core.volumeGuid?.let { manuallyLockedGuids.remove(it) }
                         manuallyLockedGuids.remove(path)
                         toClose.add(path to core)
+                        missingSessionsList.add(path)
                         Log.i(TAG, "forgetDetectedMissing: closing stale session for $path (node gone)")
                     }
                 }
@@ -380,6 +443,8 @@ object UnlockManager {
         }
         val closedAny = toClose.isNotEmpty()
         com.bitlockerdroid.util.ContextProvider.app?.let { app ->
+            missingDetectedList.forEach { path -> dismissAllNotificationsForDevice(app, path) }
+            missingSessionsList.forEach { path -> dismissAllNotificationsForDevice(app, path) }
             BitLockerCoreService.updateForegroundState(app)
             if (closedAny) {
                 com.bitlockerdroid.provider.BitLockerDocumentsProvider.notifyRootsChanged(app)
@@ -394,6 +459,10 @@ object UnlockManager {
     fun onUsbDetached() {
         VirtualStorageMountManager.unmountAll()
         com.bitlockerdroid.util.DeviceIdentity.clearCache()
+        com.bitlockerdroid.util.ContextProvider.app?.let { app ->
+            val nm = app.getSystemService(NotificationManager::class.java)
+            nm?.cancelAll()
+        }
         try {
             val nodes = BitLockerDetector.enumerateVoldNodes()
             forgetDetectedMissing(nodes)
@@ -472,12 +541,14 @@ object UnlockManager {
                 }
                 if (!PreferenceHelper.isAutoUnlockEnabled(context, guid)) continue
                 val blob = PreferenceHelper.getRememberedPassword(context, guid) ?: continue
-                val password = KeyGuardService.decrypt(blob) ?: continue
+                val raw = KeyGuardService.decrypt(blob) ?: continue
+                val isRecovery = raw.startsWith(RECOVERY_PREFIX)
+                val cleanKey = if (isRecovery) raw.removePrefix(RECOVERY_PREFIX) else raw
 
-                val r = unlockWithPassword(context, node, 0, password, true, expectedGuid = guid)
+                val r = unlockWithCredential(context, node, 0, cleanKey, isRecovery, true, expectedGuid = guid)
                 if (r.isSuccess) {
                     restored++
-                    Log.i(TAG, "restoreRemembered: unlocked $node via GUID $guid")
+                    Log.i(TAG, "restoreRemembered: unlocked $node via GUID $guid (recovery=$isRecovery)")
                 }
             }
         } catch (e: Exception) {
@@ -487,10 +558,9 @@ object UnlockManager {
         return restored
     }
 
-    /** Called when a BitLocker volume is found on the bus (from the user's Scan
-     *  action). Records the volume so it appears in the management UI, and
-     *  auto-unlocks if a saved password exists AND auto-unlock is enabled.
-     *  No notification is posted — detection is user-driven via the Scan button. */
+    /** Called when a BitLocker volume is found on the bus. Records the volume so it appears in the
+     *  management UI, and auto-unlocks if a saved credential exists AND auto-unlock is enabled.
+     *  Posts a high-priority notification to open directly if ready, or to prompt unlock if locked. */
     fun onDeviceDetected(context: Context, devicePath: String, offset: Long, guid: String? = null, recoveryKeyId: String? = null) {
         val volumeId = guid ?: BitLockerDetector.getVolumeGuid(devicePath)
         val rkId = recoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
@@ -516,23 +586,30 @@ object UnlockManager {
         registerDetected(devicePath, volumeId, rkId)
 
         if (isUnlocked(devicePath)) return
-        if (volumeId.isNullOrBlank()) return
+        if (volumeId.isNullOrBlank()) {
+            notifyVolumeLocked(context, devicePath, offset, volumeId, rkId)
+            return
+        }
 
         if (isManuallyLocked(volumeId, devicePath)) {
             LogFile.write("app", "onDeviceDetected: skipping background auto-unlock for $devicePath (guid=$volumeId) - manually locked")
+            notifyVolumeLocked(context, devicePath, offset, volumeId, rkId)
             return
         }
 
         // Per-drive auto-unlock check:
         if (!PreferenceHelper.isAutoUnlockEnabled(context, volumeId)) {
             LogFile.write("app", "onDeviceDetected: auto-unlock is disabled for $volumeId")
+            notifyVolumeLocked(context, devicePath, offset, volumeId, rkId)
             return
         }
 
         val rememberBlob = PreferenceHelper.getRememberedPassword(context, volumeId)
         if (rememberBlob != null) {
-            val password = KeyGuardService.decrypt(rememberBlob)
-            if (password != null) {
+            val raw = KeyGuardService.decrypt(rememberBlob)
+            if (raw != null) {
+                val isRecovery = raw.startsWith(RECOVERY_PREFIX)
+                val cleanKey = if (isRecovery) raw.removePrefix(RECOVERY_PREFIX) else raw
                 if (!inProgressUnlocks.add(devicePath)) {
                     LogFile.write("app", "onDeviceDetected: unlock already in progress for $devicePath")
                     return
@@ -540,14 +617,18 @@ object UnlockManager {
                 unlockingLatch.incrementAndGet()
                 Thread {
                     try {
-                        val r = unlockWithPassword(context, devicePath, offset, password, true, expectedGuid = volumeId)
+                        val r = unlockWithCredential(context, devicePath, offset, cleanKey, isRecovery, true, expectedGuid = volumeId)
                         if (r.isFailure) {
                             LogFile.write(
                                 "app",
                                 "auto-unlock failed for $devicePath (guid=$volumeId): ${r.exceptionOrNull()?.message}"
                             )
+                            notifyVolumeLocked(context, devicePath, offset, volumeId, rkId)
                         } else {
                             LogFile.write("app", "auto-unlock succeeded for $devicePath (guid=$volumeId)")
+                            r.getOrNull()?.let { core ->
+                                notifyVolumeReady(context, devicePath, core)
+                            }
                         }
                     } finally {
                         inProgressUnlocks.remove(devicePath)
@@ -557,8 +638,108 @@ object UnlockManager {
                         }
                     }
                 }.start()
+                return
             }
         }
+
+        // No saved credential or auto-unlock disabled: post high-priority unlock prompt notification
+        notifyVolumeLocked(context, devicePath, offset, volumeId, rkId)
+    }
+
+    fun notifyVolumeReady(context: Context, devicePath: String, core: DislockerCore) {
+        if (!PreferenceHelper.isNotificationsEnabled(context)) return
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        ensureChannels(context)
+
+        val devInfo = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath)
+        val label = core.volumeLabel.ifBlank { devInfo.friendlyName.ifBlank { "BitLocker 加密卷" } }
+        val serial = try { core.reader.volumeSerial() } catch (_: Exception) { 0L }
+
+        val openIntent = com.bitlockerdroid.provider.BitLockerDocumentsProvider.createOpenVolumeIntent(context, devicePath, serial)
+        val openPendingIntent = PendingIntent.getActivity(
+            context,
+            devicePath.hashCode() and 0x7FFFFFFF,
+            openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val ejectIntent = Intent(context, BitLockerCoreService::class.java).apply {
+            action = BitLockerCoreService.ACTION_SAFE_EJECT
+            putExtra(BitLockerCoreService.EXTRA_DEVICE_PATH, devicePath)
+        }
+        val ejectPendingIntent = PendingIntent.getService(
+            context,
+            (devicePath.hashCode() + 1) and 0x7FFFFFFF,
+            ejectIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notif = NotificationCompat.Builder(context, CHANNEL_ID_ALERTS)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("【$label】已就绪")
+            .setContentText("已自动解锁，点按即可直接打开文件")
+            .setContentIntent(openPendingIntent)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .addAction(
+                R.drawable.ic_drive_bitlocker,
+                "安全弹出",
+                ejectPendingIntent
+            )
+            .build()
+
+        nm.notify("bitlocker_ready:$devicePath", 1, notif)
+    }
+
+    fun notifyVolumeLocked(context: Context, devicePath: String, offset: Long, guid: String? = null, recoveryKeyId: String? = null) {
+        if (!PreferenceHelper.isNotificationsEnabled(context)) return
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        ensureChannels(context)
+
+        val devInfo = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath)
+        val friendly = devInfo.friendlyName.ifBlank { "外接存储设备" }
+
+        val unlockIntent = Intent(context, UnlockDialogActivity::class.java).apply {
+            putExtra(UnlockDialogActivity.EXTRA_DEVICE_PATH, devicePath)
+            putExtra(UnlockDialogActivity.EXTRA_OFFSET, offset)
+            if (guid != null) putExtra(UnlockDialogActivity.EXTRA_GUID, guid)
+            if (recoveryKeyId != null) putExtra(UnlockDialogActivity.EXTRA_RECOVERY_KEY_ID, recoveryKeyId)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val unlockPendingIntent = PendingIntent.getActivity(
+            context,
+            (devicePath.hashCode() + 2) and 0x7FFFFFFF,
+            unlockIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notif = NotificationCompat.Builder(context, CHANNEL_ID_ALERTS)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("检测到 BitLocker 加密盘")
+            .setContentText("【$friendly】已锁定，点按立即解锁")
+            .setContentIntent(unlockPendingIntent)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .build()
+
+        nm.notify("bitlocker_locked:$devicePath", 2, notif)
+    }
+
+    fun dismissReadyNotification(context: Context, devicePath: String) {
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        nm.cancel("bitlocker_ready:$devicePath", 1)
+    }
+
+    fun dismissLockedNotification(context: Context, devicePath: String) {
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        nm.cancel("bitlocker_locked:$devicePath", 2)
+    }
+
+    fun dismissAllNotificationsForDevice(context: Context, devicePath: String) {
+        dismissReadyNotification(context, devicePath)
+        dismissLockedNotification(context, devicePath)
     }
 
     fun showUnlockDialog(context: Context, devicePath: String, offset: Long, guid: String? = null, recoveryKeyId: String? = null) {
@@ -578,15 +759,27 @@ object UnlockManager {
         }
     }
 
-    fun ensureChannel(context: Context) {
+    fun ensureChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "BitLocker status",
+            "BitLocker 状态通知",
             NotificationManager.IMPORTANCE_LOW
         )
         nm.createNotificationChannel(channel)
+
+        val alertChannel = NotificationChannel(
+            CHANNEL_ID_ALERTS,
+            "BitLocker 提醒通知",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "新外接设备插入与解锁提醒"
+            enableVibration(true)
+        }
+        nm.createNotificationChannel(alertChannel)
     }
+
+    fun ensureChannel(context: Context) = ensureChannels(context)
 }
 
 data class UnlockedVolume(
@@ -600,7 +793,10 @@ data class UnlockedVolume(
     val recoveryKeyId: String? = null,
     val deviceName: String = "",
     val freeBytes: Long = 0L,
-    val usedBytes: Long = 0L
+    val usedBytes: Long = 0L,
+    val sectorSize: Int = 512,
+    val volumeSerial: Long = 0L,
+    val isRecovery: Boolean = false
 )
 
 /** A BitLocker volume detected on the bus but not yet unlocked. */

@@ -4,6 +4,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -13,6 +15,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,6 +47,7 @@ fun UnlockedVolumeCard(
     val context = LocalContext.current
     val activeMounts by VirtualStorageMountManager.activeMountsFlow.collectAsState()
     val vMount = activeMounts[volume.devicePath]
+    var detailsExpanded by remember { mutableStateOf(false) }
 
     LaunchedEffect(volume.devicePath, vMount) {
         if (vMount == null &&
@@ -376,6 +382,120 @@ fun UnlockedVolumeCard(
                 )
             }
 
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Expandable Hardware & Volume Metadata Section
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { detailsExpanded = !detailsExpanded }
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "详细硬件与卷参数",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = if (detailsExpanded) "收起 ▲" else "展开 ▼",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            AnimatedVisibility(visible = detailsExpanded) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // 1. 底层块设备节点路径
+                            VolumeDetailRow(
+                                label = "底层设备节点",
+                                value = volume.devicePath,
+                                isMonospace = true,
+                                onCopy = {
+                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                    cm?.setPrimaryClip(ClipData.newPlainText("Device Node", volume.devicePath))
+                                    Toast.makeText(context, "设备节点路径已复制", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+
+                            // 2. 卷序列号
+                            if (volume.volumeSerial != 0L) {
+                                val hexSerial = if ((volume.volumeSerial ushr 32) != 0L) {
+                                    "%016X".format(volume.volumeSerial)
+                                } else {
+                                    "%08X".format(volume.volumeSerial)
+                                }
+                                VolumeDetailRow(
+                                    label = "卷序列号",
+                                    value = "0x$hexSerial",
+                                    isMonospace = true,
+                                    onCopy = {
+                                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                        cm?.setPrimaryClip(ClipData.newPlainText("Volume Serial", "0x$hexSerial"))
+                                        Toast.makeText(context, "卷序列号已复制", Toast.LENGTH_SHORT).show()
+                                    }
+                                )
+                            }
+
+                            // 3. 扇区大小与对齐情况
+                            val sectorDesc = if (volume.sectorSize >= 4096) {
+                                "${volume.sectorSize} B (4Kn · 16KB 对齐就绪)"
+                            } else {
+                                "${volume.sectorSize} B (512e · 16KB 对齐就绪)"
+                            }
+                            VolumeDetailRow(
+                                label = "扇区与对齐",
+                                value = sectorDesc,
+                                isMonospace = false
+                            )
+
+                            // 4. 解锁方式
+                            val unlockMethodDesc = if (volume.isRecovery) "48 位恢复密钥" else "用户密码"
+                            VolumeDetailRow(
+                                label = "解锁方式",
+                                value = unlockMethodDesc,
+                                isMonospace = false
+                            )
+
+                            // 5. 系统挂载权限状态
+                            val permissionDesc = if (volume.canWrite) "读写 (Read / Write)" else "只读 (Read-Only)"
+                            VolumeDetailRow(
+                                label = "挂载权限",
+                                value = permissionDesc,
+                                isMonospace = false
+                            )
+                        }
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
 
             // Action Buttons
@@ -395,6 +515,58 @@ fun UnlockedVolumeCard(
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text(text = stringResource(R.string.open))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VolumeDetailRow(
+    label: String,
+    value: String,
+    isMonospace: Boolean = false,
+    onCopy: (() -> Unit)? = null
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(90.dp)
+        )
+        Row(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = value,
+                style = if (isMonospace) {
+                    MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                } else {
+                    MaterialTheme.typography.bodySmall
+                },
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+            if (onCopy != null) {
+                Spacer(modifier = Modifier.width(4.dp))
+                IconButton(
+                    onClick = onCopy,
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_content_copy),
+                        contentDescription = "复制 $label",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(14.dp)
+                    )
                 }
             }
         }

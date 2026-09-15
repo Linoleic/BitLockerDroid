@@ -22,7 +22,8 @@ class DislockerCore private constructor(
     val devicePath: String,
     val offset: Long,
     val handle: Long,
-    val info: NativeBridge.SessionInfo
+    val info: NativeBridge.SessionInfo,
+    val isRecovery: Boolean = false
 ) : AutoCloseable {
 
     val reader: VolumeReader by lazy { buildReader() }
@@ -467,7 +468,7 @@ class DislockerCore private constructor(
                 ?: run { NativeBridge.nativeClose(handle); throw UnlockException("Cannot read session info") }
 
             Log.i(TAG, "opened volume at $devicePath: ${info.algorithmName} ${info.volumeSize} bytes")
-            return DislockerCore(devicePath, offset, handle, info)
+            return DislockerCore(devicePath, offset, handle, info, isRecovery = false)
         }
 
         /** Unlocks with a 48-digit recovery key. */
@@ -480,7 +481,7 @@ class DislockerCore private constructor(
             }
             val info = NativeBridge.sessionInfo(handle)
                 ?: run { NativeBridge.nativeClose(handle); throw UnlockException("Cannot read session info") }
-            return DislockerCore(devicePath, offset, handle, info)
+            return DislockerCore(devicePath, offset, handle, info, isRecovery = true)
         }
     }
 }

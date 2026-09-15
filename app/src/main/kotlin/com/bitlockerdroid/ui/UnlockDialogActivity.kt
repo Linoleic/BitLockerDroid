@@ -114,19 +114,9 @@ class UnlockDialogActivity : ComponentActivity() {
                     onUnlock = { value, isRecovery, remember, autoUnlock, onError, onSuccess ->
                         lifecycleScope.launch(Dispatchers.IO) {
                             var errorMsg: String? = null
-                            val success = if (isRecovery) {
-                                try {
-                                    val core = DislockerCore.openWithRecoveryKey(devicePath, offset, value)
-                                    UnlockManager.registerDirect(core, this@UnlockDialogActivity, key = value, isRecovery = true)
-                                    true
-                                } catch (e: Exception) {
-                                    errorMsg = e.message
-                                    LogFile.write("app", "unlock recovery failed: $errorMsg")
-                                    false
-                                }
-                            } else {
-                                val guid = initialGuid ?: com.bitlockerdroid.service.BitLockerDetector.getVolumeGuid(devicePath)
-                                val res = UnlockManager.unlockWithPassword(
+                            val guid = initialGuid ?: com.bitlockerdroid.service.BitLockerDetector.getVolumeGuid(devicePath)
+                            val res = if (isRecovery) {
+                                UnlockManager.unlockWithRecoveryKey(
                                     this@UnlockDialogActivity,
                                     devicePath,
                                     offset,
@@ -134,21 +124,29 @@ class UnlockDialogActivity : ComponentActivity() {
                                     remember,
                                     expectedGuid = guid
                                 )
-                                if (res.isSuccess) {
-                                    val effectiveGuid = res.getOrNull()?.volumeGuid ?: guid
-                                    if (!effectiveGuid.isNullOrBlank()) {
-                                        PreferenceHelper.setAutoUnlockEnabled(
-                                            this@UnlockDialogActivity,
-                                            effectiveGuid,
-                                            if (remember) autoUnlock else false
-                                        )
-                                    }
+                            } else {
+                                UnlockManager.unlockWithPassword(
+                                    this@UnlockDialogActivity,
+                                    devicePath,
+                                    offset,
+                                    value,
+                                    remember,
+                                    expectedGuid = guid
+                                )
+                            }
+                            val success = res.isSuccess
+                            if (success) {
+                                val effectiveGuid = res.getOrNull()?.volumeGuid ?: guid
+                                if (!effectiveGuid.isNullOrBlank()) {
+                                    PreferenceHelper.setAutoUnlockEnabled(
+                                        this@UnlockDialogActivity,
+                                        effectiveGuid,
+                                        if (remember) autoUnlock else false
+                                    )
                                 }
-                                if (res.isFailure) {
-                                    errorMsg = res.exceptionOrNull()?.message
-                                    LogFile.write("app", "unlock password failed: $errorMsg")
-                                }
-                                res.isSuccess
+                            } else {
+                                errorMsg = res.exceptionOrNull()?.message
+                                LogFile.write("app", "unlock failed (isRecovery=$isRecovery): $errorMsg")
                             }
 
                             withContext(Dispatchers.Main) {
@@ -223,10 +221,17 @@ fun UnlockDialogScreen(
     // the user has not started typing yet.
     LaunchedEffect(preflight) {
         val pf = preflight ?: return@LaunchedEffect
-        if (!isRecoveryKey && inputValue.isEmpty()) {
-            pf.savedPlain?.let {
-                inputValue = it
-                rememberPassword = true
+        if (inputValue.isEmpty()) {
+            pf.savedPlain?.let { saved ->
+                if (saved.startsWith(UnlockManager.RECOVERY_PREFIX)) {
+                    isRecoveryKey = true
+                    inputValue = saved.removePrefix(UnlockManager.RECOVERY_PREFIX)
+                    rememberPassword = true
+                } else {
+                    isRecoveryKey = false
+                    inputValue = saved
+                    rememberPassword = true
+                }
             }
         }
         if (!pf.guid.isNullOrBlank()) {
@@ -414,7 +419,7 @@ fun UnlockDialogScreen(
                         onClick = {
                             if (!isUnlocking) {
                                 isRecoveryKey = false
-                                inputValue = savedPlain ?: ""
+                                inputValue = if (savedPlain?.startsWith(UnlockManager.RECOVERY_PREFIX) == false) savedPlain else ""
                                 errorMessage = null
                             }
                         },
@@ -427,7 +432,9 @@ fun UnlockDialogScreen(
                         onClick = {
                             if (!isUnlocking) {
                                 isRecoveryKey = true
-                                inputValue = ""
+                                inputValue = if (savedPlain?.startsWith(UnlockManager.RECOVERY_PREFIX) == true) {
+                                    savedPlain.removePrefix(UnlockManager.RECOVERY_PREFIX)
+                                } else ""
                                 errorMessage = null
                             }
                         },
@@ -584,57 +591,55 @@ fun UnlockDialogScreen(
                     shape = RoundedCornerShape(12.dp)
                 )
 
-                // Options (Only for password mode)
-                if (!isRecoveryKey) {
-                    Spacer(modifier = Modifier.height(8.dp))
+                // Options (Remember credential & Auto unlock for both Password and Recovery Key)
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(enabled = !isUnlocking) {
+                            rememberPassword = !rememberPassword
+                            if (rememberPassword && !guid.isNullOrBlank()) {
+                                autoUnlockOnScan = PreferenceHelper.isAutoUnlockEnabled(context, guid)
+                            }
+                        }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = rememberPassword,
+                        onCheckedChange = null,
+                        enabled = !isUnlocking
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (isRecoveryKey) "记住恢复密钥" else stringResource(R.string.remember_password),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                AnimatedVisibility(visible = rememberPassword) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .padding(start = 16.dp)
                             .clip(RoundedCornerShape(8.dp))
-                            .clickable(enabled = !isUnlocking) {
-                                rememberPassword = !rememberPassword
-                                if (rememberPassword && !guid.isNullOrBlank()) {
-                                    autoUnlockOnScan = PreferenceHelper.isAutoUnlockEnabled(context, guid)
-                                }
-                            }
+                            .clickable(enabled = !isUnlocking) { autoUnlockOnScan = !autoUnlockOnScan }
                             .padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Checkbox(
-                            checked = rememberPassword,
+                            checked = autoUnlockOnScan,
                             onCheckedChange = null,
                             enabled = !isUnlocking
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = stringResource(R.string.remember_password),
+                            text = "插入此盘时自动解锁",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
-                    }
-
-                    AnimatedVisibility(visible = rememberPassword) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 16.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable(enabled = !isUnlocking) { autoUnlockOnScan = !autoUnlockOnScan }
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Checkbox(
-                                checked = autoUnlockOnScan,
-                                onCheckedChange = null,
-                                enabled = !isUnlocking
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "插入此盘时自动解锁",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
                     }
                 }
 

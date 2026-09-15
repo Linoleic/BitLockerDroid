@@ -15,9 +15,22 @@ class BootReceiver : BroadcastReceiver() {
             intent.action == Intent.ACTION_LOCKED_BOOT_COMPLETED
         ) {
             ContextProvider.app = context.applicationContext
-            context.startService(
-                Intent(context, BitLockerCoreService::class.java)
-            )
+            val serviceIntent = Intent(context, BitLockerCoreService::class.java).apply {
+                putExtra("extra_from_fgs", true)
+            }
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    context.startForegroundService(serviceIntent)
+                } else {
+                    context.startService(serviceIntent)
+                }
+            } catch (e: Exception) {
+                com.bitlockerdroid.util.LogFile.write("app", "BootReceiver: failed to start service: ${e.message}")
+            }
+            Thread {
+                try { Thread.sleep(2000) } catch (_: Exception) {}
+                BitLockerDetector.scanAndDetect(context)
+            }.start()
         }
     }
 }

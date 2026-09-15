@@ -43,10 +43,15 @@ fun ShowPasswordDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    var visible by remember { mutableStateOf(false) }
-    val passwordPlain = remember(credential) {
-        PreferenceHelper.getRememberedPassword(context, credential.id)
+    val decryptedRaw = remember(credential) {
+        val blob = PreferenceHelper.getRememberedPassword(context, credential.id)
+        blob?.let { com.bitlockerdroid.service.KeyGuardService.decrypt(it) }
     }
+    val isRecovery = decryptedRaw?.startsWith("RECOVERY:") == true
+    val passwordPlain = remember(decryptedRaw) {
+        if (isRecovery) decryptedRaw?.removePrefix("RECOVERY:") else decryptedRaw
+    }
+    var visible by remember { mutableStateOf(false) }
 
     // Reveal / copy require proving device ownership: whoever holds the phone
     // must pass the lock-screen credential first.
@@ -201,7 +206,7 @@ fun ShowPasswordDialog(
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = "BitLocker 解密密码",
+                            text = if (isRecovery) "BitLocker 48位恢复密钥" else "BitLocker 解密密码",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold
@@ -213,7 +218,10 @@ fun ShowPasswordDialog(
                             ) {
                                 Text(
                                     text = if (visible) passwordPlain else "••••••••••••••••",
-                                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace),
+                                    style = MaterialTheme.typography.titleMedium.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = if (isRecovery && visible) 12.sp else 16.sp
+                                    ),
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.weight(1f)
@@ -230,6 +238,27 @@ fun ShowPasswordDialog(
                                         tint = if (visible) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                                         modifier = Modifier.size(20.dp)
                                     )
+                                }
+                                if (visible) {
+                                    IconButton(
+                                        onClick = {
+                                            requireAuth {
+                                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                                val clip = ClipData.newPlainText("BitLocker Credential", passwordPlain)
+                                                markClipboardSensitive(clip)
+                                                cm?.setPrimaryClip(clip)
+                                                Toast.makeText(context, if (isRecovery) "恢复密钥已复制" else "密码已复制", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.ic_content_copy),
+                                            contentDescription = "复制凭据",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
                                 }
                             }
                         } else {

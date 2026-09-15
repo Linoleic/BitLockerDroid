@@ -242,33 +242,11 @@ class BitLockerSettingsActivity : ComponentActivity() {
             return
         }
         val serial = try { core.reader.volumeSerial() } catch (_: Exception) { 0L }
-        val rootId = BitLockerDocumentsProvider.rootIdFor(devicePath, serial)
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            addCategory(Intent.CATEGORY_DEFAULT)
-            setDataAndType(
-                DocumentsContract.buildRootUri(BitLockerDocumentsProvider.AUTHORITY, rootId),
-                DocumentsContract.Document.MIME_TYPE_DIR
-            )
-            addFlags(
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
-        }
-
         try {
-            intent.setPackage("com.google.android.documentsui")
+            val intent = BitLockerDocumentsProvider.createOpenVolumeIntent(this, devicePath, serial)
             startActivity(intent)
         } catch (_: Exception) {
-            try {
-                intent.setPackage("com.android.documentsui")
-                startActivity(intent)
-            } catch (_: Exception) {
-                try {
-                    intent.setPackage(null)
-                    startActivity(intent)
-                } catch (_: Exception) {
-                    Toast.makeText(this, R.string.open_failed, Toast.LENGTH_SHORT).show()
-                }
-            }
+            Toast.makeText(this, R.string.open_failed, Toast.LENGTH_SHORT).show()
         }
     }
 

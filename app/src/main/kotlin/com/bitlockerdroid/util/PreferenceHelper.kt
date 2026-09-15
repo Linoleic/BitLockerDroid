@@ -18,7 +18,8 @@ object PreferenceHelper {
         val id: String,
         val displayLabel: String,
         val subtitle: String = "",
-        val autoUnlock: Boolean = true
+        val autoUnlock: Boolean = true,
+        val isRecoveryKey: Boolean = false
     )
 
     // ------- remembered passwords (encrypted blobs) -------
@@ -143,14 +144,24 @@ object PreferenceHelper {
                     else -> "USB 存储设备"
                 }
 
-                val subtitle = if (isGuid) "卷 GUID: $shortGuid" else "设备标识: $shortGuid"
+                val rawBlob = p.getString(key, null)
+                val isRecovery = if (rawBlob != null) {
+                    try {
+                        val decrypted = com.bitlockerdroid.service.KeyGuardService.decrypt(rawBlob)
+                        decrypted?.startsWith("RECOVERY:") == true
+                    } catch (_: Exception) { false }
+                } else false
+
+                val credType = if (isRecovery) "恢复密钥" else "密码"
+                val subtitle = if (isGuid) "卷 GUID: $shortGuid · $credType" else "设备标识: $shortGuid · $credType"
                 val autoUnlock = isAutoUnlockEnabled(context, id)
 
                 SavedCredential(
                     id = id,
                     displayLabel = displayLabel,
                     subtitle = subtitle,
-                    autoUnlock = autoUnlock
+                    autoUnlock = autoUnlock,
+                    isRecoveryKey = isRecovery
                 )
             }
     }

@@ -1,5 +1,7 @@
 package com.bitlockerdroid.provider
 
+import android.content.Context
+import android.content.Intent
 import android.content.res.AssetFileDescriptor
 import android.database.Cursor
 import android.database.MatrixCursor
@@ -76,6 +78,42 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                 android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP
             )
             return "$b64$SEP$serial"
+        }
+
+        /**
+         * Creates an Intent to open the unlocked volume in the system DocumentsUI
+         * or preferred file manager.
+         */
+        fun createOpenVolumeIntent(context: Context, devicePath: String, serial: Long): Intent {
+            val rootId = rootIdFor(devicePath, serial)
+            val rootUri = DocumentsContract.buildRootUri(AUTHORITY, rootId)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                addCategory(Intent.CATEGORY_DEFAULT)
+                setDataAndType(rootUri, DocumentsContract.Document.MIME_TYPE_DIR)
+                addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_ACTIVITY_NEW_TASK
+                )
+            }
+            val pm = context.packageManager
+            if (intent.resolveActivity(pm) != null) {
+                return intent
+            }
+            val docUiIntent = Intent(Intent.ACTION_VIEW).apply {
+                setPackage("com.google.android.documentsui")
+                setDataAndType(rootUri, DocumentsContract.Document.MIME_TYPE_DIR)
+                addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_ACTIVITY_NEW_TASK
+                )
+            }
+            if (docUiIntent.resolveActivity(pm) != null) {
+                return docUiIntent
+            }
+            docUiIntent.setPackage("com.android.documentsui")
+            return docUiIntent
         }
 
         /** Encode the device path + volume serial into the docId so the

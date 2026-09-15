@@ -37,6 +37,12 @@ class BitLockerApplication : Application() {
             com.bitlockerdroid.util.PreferenceHelper.purgeLegacyNodeKeys(applicationContext)
             com.bitlockerdroid.util.RootAccess.ensureDaemonInstalled(applicationContext)
             com.bitlockerdroid.util.RootAccess.ensureFuseDaemonInstalled(applicationContext)
+            try {
+                val serviceIntent = android.content.Intent(applicationContext, com.bitlockerdroid.service.BitLockerCoreService::class.java)
+                startService(serviceIntent)
+            } catch (e: Throwable) {
+                LogFile.write("app", "Failed to start BitLockerCoreService from App: ${e.message}")
+            }
             Thread {
                 com.bitlockerdroid.service.VirtualStorageMountManager.syncStateWithSystem()
                 com.bitlockerdroid.service.UnlockManager.restoreRemembered(applicationContext)
