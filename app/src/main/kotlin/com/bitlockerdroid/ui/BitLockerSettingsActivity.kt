@@ -96,6 +96,7 @@ class BitLockerSettingsActivity : ComponentActivity() {
         setContent {
             BitLockerTheme {
                 MainAppScreen(
+                    initialTab = intent?.getIntExtra("tab", 0) ?: 0,
                     unlockedVolumes = unlockedVolumesState,
                     detectedVolumes = detectedVolumesState,
                     isRefreshing = isRefreshingState.value,
@@ -340,9 +341,10 @@ fun MainAppScreen(
     onClearAllCredentials: () -> Unit,
     onOpenVolume: (String) -> Unit,
     onLockVolume: (String) -> Unit,
-    onUnlockDetected: (String) -> Unit
+    onUnlockDetected: (String) -> Unit,
+    initialTab: Int = 0
 ) {
-    var selectedTab by remember { mutableStateOf(0) }
+    var selectedTab by remember { mutableStateOf(initialTab) }
     var showCredentialsDialog by remember { mutableStateOf(false) }
     var credentialForPasswordDialog by remember { mutableStateOf<PreferenceHelper.SavedCredential?>(null) }
 

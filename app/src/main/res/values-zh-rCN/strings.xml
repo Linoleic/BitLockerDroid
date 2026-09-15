@@ -70,4 +70,6 @@
     <string name="notification_listener_label">BitUnlocker 驱动器通知过滤服务</string>
     <string name="settings_suppress_corrupt_notification">屏蔽系统格式化警告通知</string>
     <string name="settings_suppress_corrupt_notification_desc">自动消除系统针对 BitLocker 盘弹出的“驱动器出现问题，点按修复”警告（仅作用于已确认的加密盘，真正损坏的磁盘照常提示）</string>
+    <string name="settings_hide_svi">隐藏 System Volume Information 目录</string>
+    <string name="settings_hide_svi_desc">在文件管理器中过滤 Windows 系统生成的隐藏元数据目录（SVI）</string>
 </resources>

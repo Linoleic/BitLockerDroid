@@ -136,6 +136,24 @@ fun SettingsTabContent(
                     }
                 }
             )
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+            )
+            var hideSvi by remember { mutableStateOf(PreferenceHelper.hideSviFolder) }
+            SettingsSwitchItem(
+                title = stringResource(R.string.settings_hide_svi),
+                description = stringResource(R.string.settings_hide_svi_desc),
+                checked = hideSvi,
+                onCheckedChange = {
+                    hideSvi = it
+                    PreferenceHelper.hideSviFolder = it
+                    UnlockManager.activeSessions.forEach { s ->
+                        s.invalidateCache()
+                    }
+                    com.bitlockerdroid.provider.BitLockerDocumentsProvider.notifyRootsChanged(context)
+                }
+            )
         }
 
         // Group 3: System Environment & Diagnostics with Real Root Solution Info

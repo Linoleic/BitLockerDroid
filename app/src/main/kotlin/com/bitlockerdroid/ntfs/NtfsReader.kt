@@ -338,7 +338,8 @@ class NtfsReader(
                             // file reference: low 48 bits = MFT record number
                             val recNum = fileRef and 0x0000FFFFFFFFFFFFL
                             // Hide NTFS internal system metadata files (MFT 0..15, $*, System Volume Information)
-                            val isSystemMeta = recNum < 16L || name.startsWith("$") || name.equals("System Volume Information", ignoreCase = true)
+                            val hideSvi = try { com.bitlockerdroid.util.PreferenceHelper.hideSviFolder } catch (_: Throwable) { true }
+                            val isSystemMeta = recNum < 16L || name.startsWith("$") || (hideSvi && name.equals("System Volume Information", ignoreCase = true))
                             if (!isSystemMeta) {
                                 val dedupeKey = name.lowercase()
                                 if (!out.containsKey(dedupeKey)) {

@@ -258,6 +258,17 @@ object PreferenceHelper {
     var suppressCorruptNotification: Boolean
         get() = try { prefs(ContextProvider.app).getBoolean("suppress_corrupt_notification", true) } catch (_: Exception) { true }
         set(v) = try { prefs(ContextProvider.app).edit().putBoolean("suppress_corrupt_notification", v).apply() } catch (_: Exception) {}
+
+    fun isHideSviFolder(context: Context): Boolean =
+        prefs(context).getBoolean("hide_svi_folder", true)
+
+    fun setHideSviFolder(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean("hide_svi_folder", enabled).apply()
+    }
+
+    var hideSviFolder: Boolean
+        get() = try { prefs(ContextProvider.app).getBoolean("hide_svi_folder", true) } catch (_: Exception) { true }
+        set(v) = try { prefs(ContextProvider.app).edit().putBoolean("hide_svi_folder", v).apply() } catch (_: Exception) {}
 }
 
 /** Holds an application context once the app/service is running. */

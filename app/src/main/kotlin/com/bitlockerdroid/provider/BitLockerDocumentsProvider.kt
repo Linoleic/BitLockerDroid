@@ -21,6 +21,7 @@ import com.bitlockerdroid.ntfs.VolumeReader
 import com.bitlockerdroid.service.DislockerCore
 import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.util.LogFile
+import com.bitlockerdroid.util.PreferenceHelper
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileNotFoundException
@@ -172,9 +173,18 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
 
         fun notifyRootsChanged(context: android.content.Context) {
             try {
+                val resolver = context.contentResolver
                 val rootsUri = DocumentsContract.buildRootsUri(AUTHORITY)
-                context.contentResolver.notifyChange(rootsUri, null)
-                Log.i(TAG, "notifyRootsChanged: notified system that roots changed")
+                resolver.notifyChange(rootsUri, null)
+                for (v in UnlockManager.unlockedVolumes) {
+                    val core = UnlockManager.get(v.devicePath)
+                    val rootRef = core?.reader?.rootRef ?: 0L
+                    val serial = try { core?.reader?.volumeSerial() ?: 0L } catch (_: Exception) { 0L }
+                    val rootDocId = docIdFor(v.devicePath, serial, rootRef)
+                    resolver.notifyChange(DocumentsContract.buildDocumentUri(AUTHORITY, rootDocId), null)
+                    resolver.notifyChange(DocumentsContract.buildChildDocumentsUri(AUTHORITY, rootDocId), null)
+                }
+                Log.i(TAG, "notifyRootsChanged: notified system that roots and root documents changed")
             } catch (e: Exception) {
                 Log.w(TAG, "notifyRootsChanged failed", e)
             }
@@ -358,7 +368,11 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             val entries = core.reader.listDirectory(record)
             LogFile.write("provider", "queryChildDocuments: listDirectory returned ${entries.size} entries for $parentPath")
             val serial = try { core.reader.volumeSerial() } catch (e: Exception) { 0L }
+            val hideSvi = try { PreferenceHelper.hideSviFolder } catch (_: Throwable) { true }
             for (e in entries) {
+                if (hideSvi && e.name.equals("System Volume Information", ignoreCase = true)) {
+                    continue
+                }
                 val childPath = if (parentPath == "/") "/${e.name}" else "$parentPath/${e.name}"
                 core.registerPath(e.ref, childPath, record)
                 addDocumentRow(result, docIdFor(core.devicePath, serial, e.ref), e)
