@@ -2,6 +2,7 @@ package com.bitlockerdroid.util
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.bitlockerdroid.R
 
 /**
  * Thin wrapper over the module's SharedPreferences. All stored values are
@@ -140,8 +141,8 @@ object PreferenceHelper {
 
                 val displayLabel = when {
                     !savedName.isNullOrBlank() -> savedName
-                    isGuid -> "BitLocker 加密卷 (${id.take(8)})"
-                    else -> "USB 存储设备"
+                    isGuid -> context.getString(R.string.encrypted_volume_format, id.take(8))
+                    else -> context.getString(R.string.usb_storage_device)
                 }
 
                 val rawBlob = p.getString(key, null)
@@ -152,8 +153,12 @@ object PreferenceHelper {
                     } catch (_: Exception) { false }
                 } else false
 
-                val credType = if (isRecovery) "恢复密钥" else "密码"
-                val subtitle = if (isGuid) "卷 GUID: $shortGuid · $credType" else "设备标识: $shortGuid · $credType"
+                val credType = if (isRecovery) context.getString(R.string.creds_type_recovery) else context.getString(R.string.creds_type_password)
+                val subtitle = if (isGuid) {
+                    context.getString(R.string.creds_subtitle_guid, shortGuid, credType)
+                } else {
+                    context.getString(R.string.creds_subtitle_id, shortGuid, credType)
+                }
                 val autoUnlock = isAutoUnlockEnabled(context, id)
 
                 SavedCredential(

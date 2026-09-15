@@ -16,6 +16,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.bitlockerdroid.R
 import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.ui.theme.SuccessGreen
 import com.bitlockerdroid.ui.theme.WarningAmber
@@ -29,6 +32,7 @@ fun BenchmarkDialog(
     devicePath: String,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val core = remember(devicePath) {
         UnlockManager.activeSessions.find { it.devicePath == devicePath }
@@ -42,24 +46,24 @@ fun BenchmarkDialog(
 
     fun startTest() {
         if (core == null) {
-            errorMessage = "无法定位该卷的解密会话，请确保卷已解锁挂载"
+            errorMessage = context.getString(R.string.benchmark_session_lost)
             return
         }
         isRunning = true
         errorMessage = null
         result = null
         currentProgress = 0f
-        currentPhase = "准备测试..."
+        currentPhase = context.getString(R.string.benchmark_preparing)
 
         coroutineScope.launch {
             try {
-                val res = BenchmarkEngine.runBenchmark(core) { phase, progress ->
+                val res = BenchmarkEngine.runBenchmark(core, context) { phase, progress ->
                     currentPhase = phase
                     currentProgress = progress
                 }
                 result = res
             } catch (e: Exception) {
-                errorMessage = "测速异常: ${e.message}"
+                errorMessage = context.getString(R.string.benchmark_error, e.message ?: "")
             } finally {
                 isRunning = false
             }
@@ -74,7 +78,7 @@ fun BenchmarkDialog(
                 Spacer(modifier = Modifier.width(8.dp))
                 Column {
                     Text(
-                        text = "驱动器基准测速",
+                        text = stringResource(R.string.benchmark_dialog_title),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
@@ -94,7 +98,7 @@ fun BenchmarkDialog(
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Text(
-                    text = "基准测试将通过底层驱动进行全链路读取与延时探测，并诊断 OTG 物理协议，全过程严格只读，不影响数据安全。",
+                    text = stringResource(R.string.benchmark_intro),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -167,7 +171,7 @@ fun BenchmarkDialog(
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Text(
-                                text = "基准测试结果",
+                                text = stringResource(R.string.benchmark_results),
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
@@ -179,7 +183,7 @@ fun BenchmarkDialog(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "连续读取速率",
+                                    text = stringResource(R.string.benchmark_seq_read),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -199,7 +203,7 @@ fun BenchmarkDialog(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "4K 随机读取延时",
+                                    text = stringResource(R.string.benchmark_4k_latency),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -219,7 +223,7 @@ fun BenchmarkDialog(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "物理链路协议",
+                                    text = stringResource(R.string.benchmark_link_speed),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -256,7 +260,7 @@ fun BenchmarkDialog(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = if (result != null) "重新测速" else "开始测速")
+                    Text(text = if (result != null) stringResource(R.string.benchmark_restart) else stringResource(R.string.benchmark_start))
                 }
             }
         },
@@ -266,7 +270,7 @@ fun BenchmarkDialog(
                     onClick = onDismiss,
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text(text = "关闭")
+                    Text(text = stringResource(R.string.close))
                 }
             }
         }

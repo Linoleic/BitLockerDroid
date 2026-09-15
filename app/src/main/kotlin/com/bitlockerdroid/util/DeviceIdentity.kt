@@ -1,5 +1,6 @@
 package com.bitlockerdroid.util
 
+import com.bitlockerdroid.R
 import java.io.File
 import java.util.Locale
 
@@ -21,7 +22,10 @@ object DeviceIdentity {
                 }
                 model.isNotBlank() -> model
                 vendor.isNotBlank() -> vendor
-                else -> "USB 存储设备"
+                else -> {
+                    val ctx = try { ContextProvider.app } catch (_: Throwable) { null }
+                    ctx?.getString(R.string.usb_storage_device) ?: "USB Storage Device"
+                }
             }
     }
 
@@ -46,7 +50,7 @@ object DeviceIdentity {
 
         if (!forceRefresh) {
             cache[devicePath]?.let { cached ->
-                if (cached.friendlyName != "USB 存储设备" && cached.sizeBytes > 0) {
+                if ((cached.vendor.isNotBlank() || cached.model.isNotBlank()) && cached.sizeBytes > 0) {
                     return cached
                 }
             }
@@ -162,6 +166,13 @@ object DeviceIdentity {
         }
     }
 
+    private fun isGenericUsbLabel(name: String?, defaultUsb: String): Boolean {
+        if (name.isNullOrBlank()) return true
+        if (name == defaultUsb) return true
+        if (name == "USB Storage Device" || name == "\u0055\u0053\u0042 \u5b58\u50a8\u8bbe\u5907") return true
+        return false
+    }
+
     /**
      * Formats a clean, user-friendly display title for a BitLocker drive.
      * Never returns raw node paths like `/dev/block/vold/...`.
@@ -174,13 +185,16 @@ object DeviceIdentity {
         if (!label.isNullOrBlank() && label.isNotBlank()) {
             return label
         }
-        if (!deviceName.isNullOrBlank() && deviceName.isNotBlank() && deviceName != "USB 存储设备") {
+        val ctx = try { ContextProvider.app } catch (_: Throwable) { null }
+        val defaultUsb = ctx?.getString(R.string.usb_storage_device) ?: "USB Storage Device"
+        if (!deviceName.isNullOrBlank() && !isGenericUsbLabel(deviceName, defaultUsb)) {
             return deviceName
         }
         if (!guid.isNullOrBlank()) {
-            return "BitLocker 加密卷 (${guid.take(8)})"
+            return ctx?.getString(R.string.encrypted_volume_format, guid.take(8))
+                ?: "BitLocker Volume (${guid.take(8)})"
         }
-        return "BitLocker 加密 U 盘"
+        return ctx?.getString(R.string.encrypted_usb_drive) ?: "BitLocker Encrypted USB Drive"
     }
 
     /**
@@ -193,7 +207,9 @@ object DeviceIdentity {
         guid: String? = null
     ): String {
         val parts = mutableListOf<String>()
-        if (!deviceName.isNullOrBlank() && deviceName.isNotBlank() && deviceName != "USB 存储设备") {
+        val ctx = try { ContextProvider.app } catch (_: Throwable) { null }
+        val defaultUsb = ctx?.getString(R.string.usb_storage_device) ?: "USB Storage Device"
+        if (!deviceName.isNullOrBlank() && !isGenericUsbLabel(deviceName, defaultUsb)) {
             parts.add(deviceName)
         }
         if (sizeBytes > 0) {
@@ -201,9 +217,11 @@ object DeviceIdentity {
         }
         if (!guid.isNullOrBlank()) {
             val shortGuid = if (guid.length >= 12) "${guid.take(8)}...${guid.takeLast(4)}" else guid
-            parts.add("卷 ID: $shortGuid")
+            val guidText = ctx?.getString(R.string.volume_id_format, shortGuid) ?: "Volume ID: $shortGuid"
+            parts.add(guidText)
         }
-        return parts.joinToString(" · ").ifBlank { "已连接" }
+        val connectedText = ctx?.getString(R.string.device_connected) ?: "Connected"
+        return parts.joinToString(" · ").ifBlank { connectedText }
     }
 
     fun formatSize(bytes: Long): String {

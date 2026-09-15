@@ -147,7 +147,7 @@ fun UnlockedVolumeCard(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "卷 GUID",
+                                text = stringResource(R.string.volume_guid),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.outline
@@ -163,13 +163,13 @@ fun UnlockedVolumeCard(
                             onClick = {
                                 val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                                 cm?.setPrimaryClip(ClipData.newPlainText("Volume GUID", volume.guid))
-                                Toast.makeText(context, "GUID 已复制", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, R.string.guid_copied, Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.size(28.dp)
                         ) {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_content_copy),
-                                contentDescription = "复制 GUID",
+                                contentDescription = stringResource(R.string.copy_guid),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -195,7 +195,7 @@ fun UnlockedVolumeCard(
                         Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = "恢复标识符",
+                                    text = stringResource(R.string.recovery_key_id),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.primary
@@ -207,7 +207,7 @@ fun UnlockedVolumeCard(
                                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                                 ) {
                                     Text(
-                                        text = "前缀 $prefix",
+                                        text = stringResource(R.string.prefix_format, prefix),
                                         style = MaterialTheme.typography.labelSmall.copy(
                                             fontFamily = FontFamily.Monospace,
                                             fontSize = 9.sp,
@@ -232,13 +232,13 @@ fun UnlockedVolumeCard(
                             onClick = {
                                 val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                                 cm?.setPrimaryClip(ClipData.newPlainText("Recovery Key ID", volume.recoveryKeyId))
-                                Toast.makeText(context, "恢复标识符已复制", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, R.string.recovery_id_copied, Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.size(28.dp)
                         ) {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_content_copy),
-                                contentDescription = "复制恢复标识符",
+                                contentDescription = stringResource(R.string.copy_recovery_id),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -263,7 +263,7 @@ fun UnlockedVolumeCard(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "POSIX 挂载路径",
+                                text = stringResource(R.string.posix_mount_path),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.primary
@@ -283,13 +283,13 @@ fun UnlockedVolumeCard(
                             onClick = {
                                 val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                                 cm?.setPrimaryClip(ClipData.newPlainText("Mount Path", vMount.mountPoint))
-                                Toast.makeText(context, "挂载路径已复制", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, R.string.mount_path_copied, Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.size(28.dp)
                         ) {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_content_copy),
-                                contentDescription = "复制挂载路径",
+                                contentDescription = stringResource(R.string.copy_mount_path),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -304,7 +304,11 @@ fun UnlockedVolumeCard(
                             val res = VirtualStorageMountManager.mountRemembered(context, volume.devicePath)
                             if (res.isFailure) {
                                 (context as? android.app.Activity)?.runOnUiThread {
-                                    Toast.makeText(context, "挂载失败: ${res.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
+                                    Toast.makeText(
+                                        context,
+                                        context.getString(R.string.mount_failed_toast, res.exceptionOrNull()?.message ?: ""),
+                                        Toast.LENGTH_LONG
+                                    ).show()
                                 }
                             }
                         }.start()
@@ -318,7 +322,7 @@ fun UnlockedVolumeCard(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("虚拟挂载到 /storage")
+                    Text(stringResource(R.string.virtual_mount_to_storage))
                 }
             }
 
@@ -338,13 +342,13 @@ fun UnlockedVolumeCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "已用 $usedText ($usedPercent%)",
+                            text = stringResource(R.string.storage_used, usedText, usedPercent),
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "可用 $freeText / 共 $totalText",
+                            text = stringResource(R.string.storage_available, freeText, totalText),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -388,7 +392,7 @@ fun UnlockedVolumeCard(
                 )
                 if (volume.isDirty) {
                     MetaChip(
-                        text = "⚠️ 脏卷 (未安全弹出)",
+                        text = stringResource(R.string.dirty_volume_warning_chip),
                         color = WarningAmber
                     )
                 }
@@ -415,14 +419,14 @@ fun UnlockedVolumeCard(
                         )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "卷未安全移除警告",
+                                text = stringResource(R.string.dirty_volume_title),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = WarningAmber
                             )
                             Spacer(modifier = Modifier.height(3.dp))
                             Text(
-                                text = "该分区上次未安全弹出。为防止数据损坏，建议开启只读保护或在电脑上修复。",
+                                text = stringResource(R.string.dirty_volume_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -450,13 +454,13 @@ fun UnlockedVolumeCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "详细硬件与卷参数",
+                        text = stringResource(R.string.hardware_details_title),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = if (detailsExpanded) "收起 ▲" else "展开 ▼",
+                        text = if (detailsExpanded) stringResource(R.string.collapse) else stringResource(R.string.expand),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold
@@ -484,13 +488,13 @@ fun UnlockedVolumeCard(
                         ) {
                             // 1. 底层块设备节点路径
                             VolumeDetailRow(
-                                label = "底层设备节点",
+                                label = stringResource(R.string.device_node),
                                 value = volume.devicePath,
                                 isMonospace = true,
                                 onCopy = {
                                     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                                     cm?.setPrimaryClip(ClipData.newPlainText("Device Node", volume.devicePath))
-                                    Toast.makeText(context, "设备节点路径已复制", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, R.string.device_node_copied, Toast.LENGTH_SHORT).show()
                                 }
                             )
 
@@ -502,49 +506,61 @@ fun UnlockedVolumeCard(
                                     "%08X".format(volume.volumeSerial)
                                 }
                                 VolumeDetailRow(
-                                    label = "卷序列号",
+                                    label = stringResource(R.string.volume_serial),
                                     value = "0x$hexSerial",
                                     isMonospace = true,
                                     onCopy = {
                                         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                                         cm?.setPrimaryClip(ClipData.newPlainText("Volume Serial", "0x$hexSerial"))
-                                        Toast.makeText(context, "卷序列号已复制", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, R.string.volume_serial_copied, Toast.LENGTH_SHORT).show()
                                     }
                                 )
                             }
 
                             // 3. 扇区大小与对齐情况
                             val sectorDesc = if (volume.sectorSize >= 4096) {
-                                "${volume.sectorSize} B (4Kn · 16KB 对齐就绪)"
+                                stringResource(R.string.sector_4kn_aligned, volume.sectorSize)
                             } else {
-                                "${volume.sectorSize} B (512e · 16KB 对齐就绪)"
+                                stringResource(R.string.sector_512e_aligned, volume.sectorSize)
                             }
                             VolumeDetailRow(
-                                label = "扇区与对齐",
+                                label = stringResource(R.string.sector_and_alignment),
                                 value = sectorDesc,
                                 isMonospace = false
                             )
 
                             // 4. 解锁方式
-                            val unlockMethodDesc = if (volume.isRecovery) "48 位恢复密钥" else "用户密码"
+                            val unlockMethodDesc = if (volume.isRecovery) {
+                                stringResource(R.string.method_recovery_key)
+                            } else {
+                                stringResource(R.string.method_user_password)
+                            }
                             VolumeDetailRow(
-                                label = "解锁方式",
+                                label = stringResource(R.string.unlock_method),
                                 value = unlockMethodDesc,
                                 isMonospace = false
                             )
 
                             // 5. 系统挂载权限状态
-                            val permissionDesc = if (volume.canWrite) "读写 (Read / Write)" else "只读 (Read-Only)"
+                            val permissionDesc = if (volume.canWrite) {
+                                stringResource(R.string.perm_read_write)
+                            } else {
+                                stringResource(R.string.perm_read_only)
+                            }
                             VolumeDetailRow(
-                                label = "挂载权限",
+                                label = stringResource(R.string.mount_permission),
                                 value = permissionDesc,
                                 isMonospace = false
                             )
 
                             // 6. 文件系统健康度
-                            val healthDesc = if (volume.isDirty) "异常 (Dirty Bit 置位，未安全弹出)" else "健康 (Clean，正常卸载)"
+                            val healthDesc = if (volume.isDirty) {
+                                stringResource(R.string.health_dirty)
+                            } else {
+                                stringResource(R.string.health_clean)
+                            }
                             VolumeDetailRow(
-                                label = "卷健康状态",
+                                label = stringResource(R.string.volume_health),
                                 value = healthDesc,
                                 isMonospace = false
                             )
@@ -577,7 +593,7 @@ fun UnlockedVolumeCard(
                     Column(modifier = Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = "只读保护模式",
+                                text = stringResource(R.string.readonly_mode_title),
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 color = if (mountReadOnly) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
@@ -589,7 +605,7 @@ fun UnlockedVolumeCard(
                                         else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                             ) {
                                 Text(
-                                    text = if (mountReadOnly) "已开启 (只读)" else "正常读写",
+                                    text = if (mountReadOnly) stringResource(R.string.readonly_mode_on) else stringResource(R.string.readonly_mode_off),
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold
@@ -601,8 +617,8 @@ fun UnlockedVolumeCard(
                         }
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = if (mountReadOnly) "已启用只读硬保护，严格禁止新建、覆盖、修改或删除文件"
-                                   else "允许对该加密盘进行新建、重命名、编辑与删除文件",
+                            text = if (mountReadOnly) stringResource(R.string.readonly_mode_desc_on)
+                                   else stringResource(R.string.readonly_mode_desc_off),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -630,7 +646,7 @@ fun UnlockedVolumeCard(
                     enabled = !isEjecting,
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text(text = "基准测速")
+                    Text(text = stringResource(R.string.benchmark_btn))
                 }
 
                 OutlinedButton(
@@ -721,7 +737,7 @@ private fun VolumeDetailRow(
                 ) {
                     Icon(
                         painter = painterResource(id = R.drawable.ic_content_copy),
-                        contentDescription = "复制 $label",
+                        contentDescription = stringResource(R.string.copy_field_format, label),
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(14.dp)
                     )

@@ -74,7 +74,7 @@ class BitLockerCoreService : Service() {
                 try {
                     if (devPath != null) {
                         val res = UnlockManager.safeEject(devPath)
-                        val label = res.getOrDefault("BitLocker 加密盘")
+                        val label = res.getOrDefault(getString(com.bitlockerdroid.R.string.notification_drive_title))
                         Handler(Looper.getMainLooper()).post {
                             android.widget.Toast.makeText(
                                 applicationContext,
@@ -90,7 +90,7 @@ class BitLockerCoreService : Service() {
                         Handler(Looper.getMainLooper()).post {
                             android.widget.Toast.makeText(
                                 applicationContext,
-                                "所有加密盘已安全弹出，现在可以安全拔出设备",
+                                getString(com.bitlockerdroid.R.string.notification_all_ejected),
                                 android.widget.Toast.LENGTH_LONG
                             ).show()
                         }
@@ -113,7 +113,7 @@ class BitLockerCoreService : Service() {
                 val notification = androidx.core.app.NotificationCompat.Builder(this, UnlockManager.CHANNEL_ID)
                     .setSmallIcon(com.bitlockerdroid.R.drawable.ic_notification)
                     .setContentTitle(getString(com.bitlockerdroid.R.string.app_name))
-                    .setContentText("BitLocker 存储服务")
+                    .setContentText(getString(com.bitlockerdroid.R.string.notification_service_channel))
                     .setPriority(androidx.core.app.NotificationCompat.PRIORITY_MIN)
                     .build()
                 try {
@@ -146,9 +146,9 @@ class BitLockerCoreService : Service() {
         }
 
         val firstVol = volumes.first()
-        val firstLabel = firstVol.label.ifBlank { firstVol.deviceName.ifBlank { "BitLocker 驱动器" } }
+        val firstLabel = firstVol.label.ifBlank { firstVol.deviceName.ifBlank { getString(com.bitlockerdroid.R.string.notification_drives_title) } }
         val title = if (volumes.size == 1) firstLabel else getString(com.bitlockerdroid.R.string.app_name)
-        val text = if (volumes.size == 1) "已就绪，点按浏览文件" else "${volumes.size} 个加密驱动器已就绪"
+        val text = if (volumes.size == 1) getString(com.bitlockerdroid.R.string.notification_drive_ready_single) else getString(com.bitlockerdroid.R.string.notification_drives_ready_multi, volumes.size)
 
         // File manager intent for the first volume
         val filesIntent = com.bitlockerdroid.provider.BitLockerDocumentsProvider.createOpenVolumeIntent(
@@ -180,7 +180,7 @@ class BitLockerCoreService : Service() {
             this, 101, ejectIntent,
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
         )
-        val ejectTitle = if (volumes.size == 1) "安全弹出" else "全部弹出"
+        val ejectTitle = if (volumes.size == 1) getString(com.bitlockerdroid.R.string.safe_eject) else getString(com.bitlockerdroid.R.string.notification_eject_all)
 
         val notification = androidx.core.app.NotificationCompat.Builder(this, UnlockManager.CHANNEL_ID)
             .setSmallIcon(com.bitlockerdroid.R.drawable.ic_notification)
@@ -191,7 +191,7 @@ class BitLockerCoreService : Service() {
             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
             .addAction(
                 com.bitlockerdroid.R.drawable.ic_drive_bitlocker,
-                "浏览文件",
+                getString(com.bitlockerdroid.R.string.notification_browse_files),
                 filesPendingIntent
             )
             .addAction(

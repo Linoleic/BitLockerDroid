@@ -72,7 +72,7 @@ fun LogViewerDialog(
                 IconButton(onClick = onRefresh) {
                     Icon(
                         imageVector = Icons.Default.Refresh,
-                        contentDescription = "刷新日志",
+                        contentDescription = stringResource(R.string.refresh_log),
                         tint = MaterialTheme.colorScheme.primary
                     )
                 }
@@ -92,7 +92,7 @@ fun LogViewerDialog(
                         .verticalScroll(rememberScrollState())
                 ) {
                     Text(
-                        text = logContent.ifBlank { "(暂无日志内容)" },
+                        text = logContent.ifBlank { stringResource(R.string.no_log_content) },
                         fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp,
                         lineHeight = 16.sp,

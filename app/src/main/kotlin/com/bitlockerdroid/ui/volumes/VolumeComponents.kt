@@ -99,7 +99,7 @@ fun EmptyStateView(
             Spacer(modifier = Modifier.height(20.dp))
 
             Text(
-                text = "暂无已挂载的加密盘",
+                text = stringResource(R.string.no_unlocked_volumes_empty),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,

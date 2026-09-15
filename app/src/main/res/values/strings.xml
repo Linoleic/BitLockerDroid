@@ -89,4 +89,175 @@
     <string name="safe_eject_failed">Safe eject warning: %1$s</string>
     <string name="safe_to_unplug_title">【%1$s】Safely Ejected</string>
     <string name="safe_to_unplug_desc">All data synced. It is now safe to unplug the device.</string>
+
+    <!-- General UI & Headers -->
+    <string name="app_subtitle">BitLocker Storage Manager</string>
+    <string name="usb_storage_device">USB Storage Device</string>
+    <string name="encrypted_storage_device">BitLocker Encrypted Storage</string>
+    <string name="encrypted_usb_drive">BitLocker Encrypted USB Drive</string>
+    <string name="encrypted_volume_format">BitLocker Volume (%1$s)</string>
+    <string name="volume_id_format">Volume ID: %1$s</string>
+    <string name="device_connected">Connected</string>
+    <string name="locked_status">Locked</string>
+    <string name="locked_status_with_size">%1$s · Locked</string>
+    <string name="no_unlocked_volumes_empty">No mounted encrypted volumes</string>
+    <string name="credential_cleared_toast">Credential cleared for this device</string>
+    <string name="read_log_failed">Failed to read log: %1$s</string>
+    <string name="no_app_log">(No app logs yet)</string>
+
+    <!-- Settings Tab Details -->
+    <string name="settings_posix_mount">Global POSIX Mount</string>
+    <string name="settings_posix_mount_desc">Mount to /storage for direct path access by local apps</string>
+    <string name="settings_show_notification">Show Persistent Notification</string>
+    <string name="settings_show_notification_desc">Show drive status and quick actions in notification bar</string>
+    <string name="settings_creds_item_title">Remembered Drive Credentials</string>
+    <string name="settings_creds_badge_devices">%1$d devices</string>
+    <string name="settings_creds_badge_empty">No credentials</string>
+    <string name="settings_creds_desc_none">No remembered device credentials</string>
+    <string name="settings_creds_desc_no_auto">%1$d credentials saved · Auto-unlock disabled</string>
+    <string name="settings_creds_desc_all_auto">%1$d credentials saved · Auto-unlock enabled for all</string>
+    <string name="settings_creds_desc_partial_auto">%1$d credentials saved · %2$d auto-unlock enabled</string>
+    <string name="root_status_authorized">Granted</string>
+    <string name="root_status_unauthorized">Not granted</string>
+    <string name="root_status_authorized_desc">Root access granted</string>
+    <string name="root_status_unauthorized_desc">Root access not granted</string>
+
+    <!-- Volumes & Cards -->
+    <string name="volume_guid">Volume GUID</string>
+    <string name="guid_copied">GUID copied</string>
+    <string name="copy_guid">Copy GUID</string>
+    <string name="recovery_key_id">Recovery Key ID</string>
+    <string name="prefix_format">Prefix %1$s</string>
+    <string name="prefix_8_digits">First 8 digits: %1$s</string>
+    <string name="recovery_id_copied">Recovery Key ID copied</string>
+    <string name="copy_recovery_id">Copy Recovery Key ID</string>
+    <string name="unlock_readonly_mode">Unlock in Read-Only Mode</string>
+    <string name="mount_readonly_desc_active">Read-only protection, write disabled</string>
+    <string name="mount_full_access">Full read/write access</string>
+    <string name="posix_mount_path">POSIX Mount Path</string>
+    <string name="mount_path_copied">Mount path copied</string>
+    <string name="copy_mount_path">Copy Mount Path</string>
+    <string name="mount_failed_toast">Mount failed: %1$s</string>
+    <string name="virtual_mount_to_storage">Mount to /storage</string>
+    <string name="storage_used">Used %1$s (%2$d%%)</string>
+    <string name="storage_available">%1$s free of %2$s</string>
+    <string name="dirty_volume_warning_chip">⚠️ Dirty volume (Unclean unmount)</string>
+    <string name="dirty_volume_title">Unclean Unmount Warning</string>
+    <string name="dirty_volume_desc">This volume was not cleanly unmounted. To prevent data corruption, read-only mode or repairing on PC is recommended.</string>
+    <string name="hardware_details_title">Hardware &amp; Volume Details</string>
+    <string name="collapse">Collapse ▲</string>
+    <string name="expand">Expand ▼</string>
+    <string name="device_node">Block Device Node</string>
+    <string name="device_node_copied">Device node path copied</string>
+    <string name="volume_serial">Volume Serial</string>
+    <string name="volume_serial_copied">Volume serial copied</string>
+    <string name="sector_and_alignment">Sector &amp; Alignment</string>
+    <string name="sector_4kn_aligned">%1$d B (4Kn · 16KB aligned)</string>
+    <string name="sector_512e_aligned">%1$d B (512e · 16KB aligned)</string>
+    <string name="unlock_method">Unlock Method</string>
+    <string name="method_recovery_key">48-digit Recovery Key</string>
+    <string name="method_user_password">User Password</string>
+    <string name="mount_permission">Mount Permissions</string>
+    <string name="perm_read_write">Read / Write</string>
+    <string name="perm_read_only">Read-Only</string>
+    <string name="volume_health">Volume Health</string>
+    <string name="health_dirty">Dirty (Dirty bit set, unclean unmount)</string>
+    <string name="health_clean">Clean (Cleanly unmounted)</string>
+    <string name="readonly_mode_title">Read-Only Protection</string>
+    <string name="readonly_mode_on">Enabled (Read-only)</string>
+    <string name="readonly_mode_off">Disabled (Read/Write)</string>
+    <string name="readonly_mode_desc_on">Strict read-only protection active; file creation, edit, or deletion is prohibited</string>
+    <string name="readonly_mode_desc_off">Full write access enabled; creating, editing, renaming, and deleting files are permitted</string>
+    <string name="benchmark_btn">Benchmark</string>
+    <string name="copy_field_format">Copy %1$s</string>
+
+    <!-- Benchmark Dialog & Engine -->
+    <string name="benchmark_session_lost">Cannot locate decryption session. Ensure the volume is unlocked and mounted.</string>
+    <string name="benchmark_preparing">Preparing benchmark…</string>
+    <string name="benchmark_error">Benchmark error: %1$s</string>
+    <string name="benchmark_dialog_title">Drive Benchmark</string>
+    <string name="benchmark_intro">Benchmark tests sequential read, 4K latency, and physical link speed via the native driver. Entirely read-only and non-destructive.</string>
+    <string name="benchmark_results">Benchmark Results</string>
+    <string name="benchmark_seq_read">Sequential Read Speed</string>
+    <string name="benchmark_4k_latency">4K Random Read Latency</string>
+    <string name="benchmark_link_speed">Physical Link Protocol</string>
+    <string name="benchmark_restart">Rerun Benchmark</string>
+    <string name="benchmark_start">Start Benchmark</string>
+    <string name="benchmark_step_seq">Testing sequential read…</string>
+    <string name="benchmark_step_seq_progress">Testing sequential read (%1$d MB / %2$d MB)…</string>
+    <string name="benchmark_step_4k">Testing 4K random latency…</string>
+    <string name="benchmark_step_4k_progress">Testing 4K random latency (%1$d/%2$d)…</string>
+    <string name="benchmark_step_link">Detecting hardware link speed…</string>
+    <string name="benchmark_usb_unknown">Unknown USB Protocol</string>
+    <string name="benchmark_usb_superspeed_plus">USB 3.1+ (10 Gbps SuperSpeed+)</string>
+    <string name="benchmark_usb_superspeed">USB 3.0 (5 Gbps SuperSpeed)</string>
+    <string name="benchmark_done">Benchmark completed</string>
+
+    <!-- Credentials Manager & Show Password Dialogs -->
+    <string name="done">Done</string>
+    <string name="creds_dialog_title">Remembered Device Credentials</string>
+    <string name="creds_empty">No saved credentials</string>
+    <string name="creds_total_count">%1$d device credentials in total</string>
+    <string name="creds_delete">Delete Credential</string>
+    <string name="creds_auto_unlock_enabled">Auto-unlock on insertion</string>
+    <string name="creds_auto_unlock_disabled">Manual unlock only</string>
+    <string name="creds_view_password">View Credential</string>
+    <string name="creds_type_recovery">Recovery Key</string>
+    <string name="creds_type_password">Password</string>
+    <string name="creds_subtitle_guid">Volume GUID: %1$s · %2$s</string>
+    <string name="creds_subtitle_id">Device ID: %1$s · %2$s</string>
+    <string name="auth_failed">Authentication failed</string>
+    <string name="auth_title">Verify Identity</string>
+    <string name="auth_subtitle">Please confirm device lock screen credential to view BitLocker credentials</string>
+    <string name="auth_start_failed">Unable to start authentication</string>
+    <string name="copied_to_clipboard">Copied to clipboard</string>
+    <string name="copy_password">Copy Password</string>
+    <string name="credential_details">Credential Details</string>
+    <string name="volume_full_guid">Full Volume GUID</string>
+    <string name="device_unique_id">Device Unique ID</string>
+    <string name="bitlocker_recovery_key_title">BitLocker 48-digit Recovery Key</string>
+    <string name="bitlocker_password_title">BitLocker Decryption Password</string>
+    <string name="hide">Hide</string>
+    <string name="show">Show</string>
+    <string name="recovery_key_copied">Recovery key copied</string>
+    <string name="password_copied">Password copied</string>
+    <string name="copy_credential">Copy Credential</string>
+    <string name="credential_corrupted">Unable to decrypt or credential corrupted</string>
+    <string name="refresh_log">Refresh Log</string>
+    <string name="no_log_content">(No log content)</string>
+
+    <!-- Unlock Dialog Screen Extras -->
+    <string name="usb_device_default">USB Device</string>
+    <string name="guid_copied_to_clipboard">GUID copied to clipboard</string>
+    <string name="password_autofilled">Saved password auto-filled</string>
+    <string name="paste">Paste</string>
+    <string name="remember_recovery_key">Remember recovery key</string>
+    <string name="auto_unlock_on_insert">Auto-unlock when this drive is inserted</string>
+    <string name="unlocking_progress">Unlocking…</string>
+
+    <!-- Notifications & Service Strings -->
+    <string name="notification_drive_title">BitLocker Encrypted Drive</string>
+    <string name="notification_all_ejected">All drives safely ejected. It is now safe to unplug the device.</string>
+    <string name="notification_service_channel">BitLocker Storage Service</string>
+    <string name="notification_drives_title">BitLocker Drives</string>
+    <string name="notification_drive_ready_single">Ready, tap to browse files</string>
+    <string name="notification_drives_ready_multi">%1$d encrypted drives ready</string>
+    <string name="notification_eject_all">Eject All</string>
+    <string name="notification_browse_files">Browse Files</string>
+    <string name="notification_status_channel">BitLocker Status Notifications</string>
+    <string name="notification_alert_channel">BitLocker Alerts</string>
+    <string name="notification_alert_desc">Notifications for connected drives and unlock prompts</string>
+    <string name="notification_drive_detected_title">BitLocker Drive Detected</string>
+    <string name="notification_drive_detected_desc">【%1$s】is locked, tap to unlock</string>
+
+    <!-- About Card Tech Badges -->
+    <string name="about_tech_saf">SAF Framework</string>
+    <string name="about_tech_fuse">FUSE Virtual Mount</string>
+    <string name="about_tech_align">16KB Aligned</string>
+
+    <!-- Mount Error Messages -->
+    <string name="mount_err_cannot_get_guid">Cannot obtain volume GUID</string>
+    <string name="mount_err_manually_locked">Volume was manually locked or safely ejected; auto-mount cancelled</string>
+    <string name="mount_err_no_saved_password">No remembered password found. Please unlock and save password again</string>
+    <string name="mount_err_decrypt_password_failed">Failed to decrypt remembered password</string>
 </resources>

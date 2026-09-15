@@ -89,4 +89,175 @@
     <string name="safe_eject_failed">安全弹出遇到警告: %1$s</string>
     <string name="safe_to_unplug_title">【%1$s】已安全弹出</string>
     <string name="safe_to_unplug_desc">数据已全部同步，现在可以安全拔出设备</string>
+
+    <!-- 通用 UI 与标头 -->
+    <string name="app_subtitle">BitLocker 存储管理器</string>
+    <string name="usb_storage_device">USB 存储设备</string>
+    <string name="encrypted_storage_device">BitLocker 加密存储设备</string>
+    <string name="encrypted_usb_drive">BitLocker 加密 U 盘</string>
+    <string name="encrypted_volume_format">BitLocker 加密卷 (%1$s)</string>
+    <string name="volume_id_format">卷 ID: %1$s</string>
+    <string name="device_connected">已连接</string>
+    <string name="locked_status">未解锁</string>
+    <string name="locked_status_with_size">%1$s · 未解锁</string>
+    <string name="no_unlocked_volumes_empty">暂无已挂载的加密盘</string>
+    <string name="credential_cleared_toast">已清除该设备凭据</string>
+    <string name="read_log_failed">读取日志失败: %1$s</string>
+    <string name="no_app_log">(暂无应用日志)</string>
+
+    <!-- 设置页详情 -->
+    <string name="settings_posix_mount">全局 POSIX 虚拟挂载</string>
+    <string name="settings_posix_mount_desc">挂载至 /storage，应用可直接通过绝对路径访问</string>
+    <string name="settings_show_notification">显示挂载常驻通知</string>
+    <string name="settings_show_notification_desc">在通知栏展示挂载状态及快捷操作</string>
+    <string name="settings_creds_item_title">已记住的驱动器凭据</string>
+    <string name="settings_creds_badge_devices">%1$d 个设备</string>
+    <string name="settings_creds_badge_empty">无凭据</string>
+    <string name="settings_creds_desc_none">暂无已记住密码的设备</string>
+    <string name="settings_creds_desc_no_auto">已保存 %1$d 个设备凭据 · 未开启自动解锁</string>
+    <string name="settings_creds_desc_all_auto">已保存 %1$d 个设备凭据 · 全部开启自动解锁</string>
+    <string name="settings_creds_desc_partial_auto">已保存 %1$d 个设备凭据 · %2$d 个开启自动解锁</string>
+    <string name="root_status_authorized">已授权</string>
+    <string name="root_status_unauthorized">未授权</string>
+    <string name="root_status_authorized_desc">已获取 Root 权限</string>
+    <string name="root_status_unauthorized_desc">未获取 Root 权限</string>
+
+    <!-- 驱动器卡片 -->
+    <string name="volume_guid">卷 GUID</string>
+    <string name="guid_copied">GUID 已复制</string>
+    <string name="copy_guid">复制 GUID</string>
+    <string name="recovery_key_id">恢复标识符</string>
+    <string name="prefix_format">前缀 %1$s</string>
+    <string name="prefix_8_digits">前 8 位: %1$s</string>
+    <string name="recovery_id_copied">恢复标识符已复制</string>
+    <string name="copy_recovery_id">复制恢复标识符</string>
+    <string name="unlock_readonly_mode">以只读模式解锁</string>
+    <string name="mount_readonly_desc_active">只读保护，禁止写入修改</string>
+    <string name="mount_full_access">完整读写访问</string>
+    <string name="posix_mount_path">POSIX 挂载路径</string>
+    <string name="mount_path_copied">挂载路径已复制</string>
+    <string name="copy_mount_path">复制挂载路径</string>
+    <string name="mount_failed_toast">挂载失败: %1$s</string>
+    <string name="virtual_mount_to_storage">虚拟挂载到 /storage</string>
+    <string name="storage_used">已用 %1$s (%2$d%%)</string>
+    <string name="storage_available">可用 %1$s / 共 %2$s</string>
+    <string name="dirty_volume_warning_chip">⚠️ 脏卷 (未安全弹出)</string>
+    <string name="dirty_volume_title">卷未安全移除警告</string>
+    <string name="dirty_volume_desc">该分区上次未安全弹出。为防止数据损坏，建议开启只读保护或在电脑上修复。</string>
+    <string name="hardware_details_title">详细硬件与卷参数</string>
+    <string name="collapse">收起 ▲</string>
+    <string name="expand">展开 ▼</string>
+    <string name="device_node">底层设备节点</string>
+    <string name="device_node_copied">设备节点路径已复制</string>
+    <string name="volume_serial">卷序列号</string>
+    <string name="volume_serial_copied">卷序列号已复制</string>
+    <string name="sector_and_alignment">扇区与对齐</string>
+    <string name="sector_4kn_aligned">%1$d B (4Kn · 16KB 对齐就绪)</string>
+    <string name="sector_512e_aligned">%1$d B (512e · 16KB 对齐就绪)</string>
+    <string name="unlock_method">解锁方式</string>
+    <string name="method_recovery_key">48 位恢复密钥</string>
+    <string name="method_user_password">用户密码</string>
+    <string name="mount_permission">挂载权限</string>
+    <string name="perm_read_write">读写 (Read / Write)</string>
+    <string name="perm_read_only">只读 (Read-Only)</string>
+    <string name="volume_health">卷健康状态</string>
+    <string name="health_dirty">异常 (Dirty Bit 置位，未安全弹出)</string>
+    <string name="health_clean">健康 (Clean，正常卸载)</string>
+    <string name="readonly_mode_title">只读保护模式</string>
+    <string name="readonly_mode_on">已开启 (只读)</string>
+    <string name="readonly_mode_off">正常读写</string>
+    <string name="readonly_mode_desc_on">已启用只读硬保护，严格禁止新建、覆盖、修改或删除文件</string>
+    <string name="readonly_mode_desc_off">允许对该加密盘进行新建、重命名、编辑与删除文件</string>
+    <string name="benchmark_btn">基准测速</string>
+    <string name="copy_field_format">复制 %1$s</string>
+
+    <!-- 基准测速对话框 -->
+    <string name="benchmark_session_lost">无法定位该卷的解密会话，请确保卷已解锁挂载</string>
+    <string name="benchmark_preparing">准备测试…</string>
+    <string name="benchmark_error">测速异常: %1$s</string>
+    <string name="benchmark_dialog_title">驱动器基准测速</string>
+    <string name="benchmark_intro">基准测试将通过底层驱动进行全链路读取与延时探测，并诊断 OTG 物理协议，全过程严格只读，不影响数据安全。</string>
+    <string name="benchmark_results">基准测试结果</string>
+    <string name="benchmark_seq_read">连续读取速率</string>
+    <string name="benchmark_4k_latency">4K 随机读取延时</string>
+    <string name="benchmark_link_speed">物理链路协议</string>
+    <string name="benchmark_restart">重新测速</string>
+    <string name="benchmark_start">开始测速</string>
+    <string name="benchmark_step_seq">连续读取测速中…</string>
+    <string name="benchmark_step_seq_progress">连续读取测速中 (%1$d MB / %2$d MB)…</string>
+    <string name="benchmark_step_4k">4K 随机读取延时测试中…</string>
+    <string name="benchmark_step_4k_progress">4K 随机延时测试 (%1$d/%2$d)…</string>
+    <string name="benchmark_step_link">检测硬件链路速率…</string>
+    <string name="benchmark_usb_unknown">未知 USB 协议</string>
+    <string name="benchmark_usb_superspeed_plus">USB 3.1+ (10 Gbps 超高速)</string>
+    <string name="benchmark_usb_superspeed">USB 3.0 (5 Gbps 高速)</string>
+    <string name="benchmark_done">测速完成</string>
+
+    <!-- 凭据管理与密码详情 -->
+    <string name="done">完成</string>
+    <string name="creds_dialog_title">已记住的设备凭据</string>
+    <string name="creds_empty">暂无已保存凭据</string>
+    <string name="creds_total_count">共 %1$d 个设备凭据</string>
+    <string name="creds_delete">删除凭据</string>
+    <string name="creds_auto_unlock_enabled">插盘自动解锁</string>
+    <string name="creds_auto_unlock_disabled">仅手动解锁</string>
+    <string name="creds_view_password">查看密码</string>
+    <string name="creds_type_recovery">恢复密钥</string>
+    <string name="creds_type_password">密码</string>
+    <string name="creds_subtitle_guid">卷 GUID: %1$s · %2$s</string>
+    <string name="creds_subtitle_id">设备标识: %1$s · %2$s</string>
+    <string name="auth_failed">身份验证未通过</string>
+    <string name="auth_title">验证身份</string>
+    <string name="auth_subtitle">请验证设备锁屏凭据以查看 BitLocker 凭据</string>
+    <string name="auth_start_failed">无法启动身份验证</string>
+    <string name="copied_to_clipboard">已复制到剪贴板</string>
+    <string name="copy_password">复制密码</string>
+    <string name="credential_details">凭据详情</string>
+    <string name="volume_full_guid">卷完整 GUID</string>
+    <string name="device_unique_id">设备唯一标识</string>
+    <string name="bitlocker_recovery_key_title">BitLocker 48位恢复密钥</string>
+    <string name="bitlocker_password_title">BitLocker 解密密码</string>
+    <string name="hide">隐藏</string>
+    <string name="show">显示</string>
+    <string name="recovery_key_copied">恢复密钥已复制</string>
+    <string name="password_copied">密码已复制</string>
+    <string name="copy_credential">复制凭据</string>
+    <string name="credential_corrupted">无法解密或凭据已损坏</string>
+    <string name="refresh_log">刷新日志</string>
+    <string name="no_log_content">(暂无日志内容)</string>
+
+    <!-- 解锁弹窗补充 -->
+    <string name="usb_device_default">USB 设备</string>
+    <string name="guid_copied_to_clipboard">GUID 已复制到剪贴板</string>
+    <string name="password_autofilled">已自动填充已保存密码</string>
+    <string name="paste">粘贴</string>
+    <string name="remember_recovery_key">记住恢复密钥</string>
+    <string name="auto_unlock_on_insert">插入此盘时自动解锁</string>
+    <string name="unlocking_progress">正在解锁…</string>
+
+    <!-- 通知与后台服务 -->
+    <string name="notification_drive_title">BitLocker 加密盘</string>
+    <string name="notification_all_ejected">所有加密盘已安全弹出，现在可以安全拔出设备</string>
+    <string name="notification_service_channel">BitLocker 存储服务</string>
+    <string name="notification_drives_title">BitLocker 驱动器</string>
+    <string name="notification_drive_ready_single">已就绪，点按浏览文件</string>
+    <string name="notification_drives_ready_multi">%1$d 个加密驱动器已就绪</string>
+    <string name="notification_eject_all">全部弹出</string>
+    <string name="notification_browse_files">浏览文件</string>
+    <string name="notification_status_channel">BitLocker 状态通知</string>
+    <string name="notification_alert_channel">BitLocker 提醒通知</string>
+    <string name="notification_alert_desc">新外接设备插入与解锁提醒</string>
+    <string name="notification_drive_detected_title">检测到 BitLocker 加密盘</string>
+    <string name="notification_drive_detected_desc">【%1$s】已锁定，点按立即解锁</string>
+
+    <!-- 关于卡片技术标签 -->
+    <string name="about_tech_saf">SAF 框架</string>
+    <string name="about_tech_fuse">FUSE 虚拟挂载</string>
+    <string name="about_tech_align">16KB 对齐</string>
+
+    <!-- 挂载错误提示 -->
+    <string name="mount_err_cannot_get_guid">无法获取卷 GUID</string>
+    <string name="mount_err_manually_locked">卷已被手动锁定或安全弹出，取消自动挂载</string>
+    <string name="mount_err_no_saved_password">未找到已记住的密码，请重新解锁并保存密码</string>
+    <string name="mount_err_decrypt_password_failed">解密已保存密码失败</string>
 </resources>

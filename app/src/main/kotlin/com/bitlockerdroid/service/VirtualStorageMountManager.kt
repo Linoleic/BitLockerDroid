@@ -2,6 +2,7 @@ package com.bitlockerdroid.service
 
 import android.content.Context
 import android.util.Log
+import com.bitlockerdroid.R
 import com.bitlockerdroid.util.DeviceIdentity
 import com.bitlockerdroid.util.DevicePathSecurity
 import com.bitlockerdroid.util.LogFile
@@ -156,14 +157,14 @@ object VirtualStorageMountManager {
      */
     fun mountRemembered(context: Context, devicePath: String): Result<VirtualMountInfo> {
         val guid = BitLockerDetector.getVolumeGuid(devicePath)
-            ?: return Result.failure(IllegalStateException("无法获取卷 GUID"))
+            ?: return Result.failure(IllegalStateException(context.getString(R.string.mount_err_cannot_get_guid)))
         if (UnlockManager.isManuallyLocked(guid, devicePath)) {
-            return Result.failure(IllegalStateException("卷已被手动锁定或安全弹出，取消自动挂载"))
+            return Result.failure(IllegalStateException(context.getString(R.string.mount_err_manually_locked)))
         }
         val blob = PreferenceHelper.getRememberedPassword(context, guid)
-            ?: return Result.failure(IllegalStateException("未找到已记住的密码，请重新解锁并保存密码"))
+            ?: return Result.failure(IllegalStateException(context.getString(R.string.mount_err_no_saved_password)))
         val password = KeyGuardService.decrypt(blob)
-            ?: return Result.failure(IllegalStateException("解密已保存密码失败"))
+            ?: return Result.failure(IllegalStateException(context.getString(R.string.mount_err_decrypt_password_failed)))
         val devInfo = DeviceIdentity.queryDeviceInfo(devicePath)
         return mount(
             context = context,

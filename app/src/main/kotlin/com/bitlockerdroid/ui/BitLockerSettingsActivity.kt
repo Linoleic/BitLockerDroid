@@ -143,7 +143,7 @@ class BitLockerSettingsActivity : ComponentActivity() {
                     onDeleteCredential = { id ->
                         PreferenceHelper.clearRememberedPassword(this, id)
                         refreshRememberedCredentials()
-                        Toast.makeText(this, "已清除该设备凭据", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, R.string.credential_cleared_toast, Toast.LENGTH_SHORT).show()
                     },
                     onClearAllCredentials = {
                         PreferenceHelper.clearAllRememberedPasswords(this)
@@ -333,10 +333,10 @@ class BitLockerSettingsActivity : ComponentActivity() {
                     val raw = appFile.readText(Charsets.UTF_8)
                     formatLogForDisplay(raw)
                 } catch (e: Exception) {
-                    "读取日志失败: ${e.message}"
+                    getString(R.string.read_log_failed, e.message ?: "")
                 }
             } else {
-                "(暂无应用日志)"
+                getString(R.string.no_app_log)
             }
             withContext(Dispatchers.Main) {
                 logContentState.value = text
@@ -425,7 +425,7 @@ fun MainAppScreen(
                             )
                             if (selectedTab == 0) {
                                 Text(
-                                    text = "BitLocker 存储管理器",
+                                    text = stringResource(R.string.app_subtitle),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

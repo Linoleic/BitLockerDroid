@@ -66,7 +66,7 @@ fun DetectedVolumeCard(
                 val displayName = if (volume.deviceName.isNotBlank()) {
                     volume.deviceName
                 } else {
-                    "BitLocker 加密存储设备"
+                    stringResource(R.string.encrypted_storage_device)
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -77,7 +77,11 @@ fun DetectedVolumeCard(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = if (volume.capacity > 0L) "${DeviceIdentity.formatSize(volume.capacity)} · 未解锁" else "未解锁",
+                        text = if (volume.capacity > 0L) {
+                            stringResource(R.string.locked_status_with_size, DeviceIdentity.formatSize(volume.capacity))
+                        } else {
+                            stringResource(R.string.locked_status)
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -108,7 +112,7 @@ fun DetectedVolumeCard(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "卷 GUID",
+                                text = stringResource(R.string.volume_guid),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.SemiBold,
                                 color = WarningAmber
@@ -127,13 +131,13 @@ fun DetectedVolumeCard(
                             onClick = {
                                 val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                                 cm?.setPrimaryClip(ClipData.newPlainText("Volume GUID", volume.guid))
-                                Toast.makeText(context, "GUID 已复制", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, R.string.guid_copied, Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.size(28.dp)
                         ) {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_content_copy),
-                                contentDescription = "复制 GUID",
+                                contentDescription = stringResource(R.string.copy_guid),
                                 tint = WarningAmber,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -159,7 +163,7 @@ fun DetectedVolumeCard(
                         Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = "恢复标识符",
+                                    text = stringResource(R.string.recovery_key_id),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.SemiBold,
                                     color = WarningAmber
@@ -171,7 +175,7 @@ fun DetectedVolumeCard(
                                     color = WarningAmber.copy(alpha = 0.25f)
                                 ) {
                                     Text(
-                                        text = "前缀 $prefix",
+                                        text = stringResource(R.string.prefix_format, prefix),
                                         style = MaterialTheme.typography.labelSmall.copy(
                                             fontFamily = FontFamily.Monospace,
                                             fontSize = 9.sp,
@@ -196,13 +200,13 @@ fun DetectedVolumeCard(
                             onClick = {
                                 val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                                 cm?.setPrimaryClip(ClipData.newPlainText("Recovery Key ID", volume.recoveryKeyId))
-                                Toast.makeText(context, "恢复标识符已复制", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, R.string.recovery_id_copied, Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.size(28.dp)
                         ) {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_content_copy),
-                                contentDescription = "复制恢复标识符",
+                                contentDescription = stringResource(R.string.copy_recovery_id),
                                 tint = WarningAmber,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -228,13 +232,13 @@ fun DetectedVolumeCard(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "以只读模式解锁",
+                            text = stringResource(R.string.unlock_readonly_mode),
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = if (mountReadOnly) "只读保护，禁止写入修改" else "完整读写访问",
+                            text = if (mountReadOnly) stringResource(R.string.mount_readonly_desc_active) else stringResource(R.string.mount_full_access),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

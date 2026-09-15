@@ -253,9 +253,9 @@ fun UnlockDialogScreen(
     val triggerUnlock: () -> Unit = {
         val trimmed = if (isRecoveryKey) normalizeRecoveryKey(inputValue) else inputValue.trim()
         if (trimmed.isEmpty()) {
-            errorMessage = "请输入密码或恢复密钥"
+            errorMessage = context.getString(R.string.password_required)
         } else if (isRecoveryKey && !recoveryPattern.matcher(trimmed).matches()) {
-            errorMessage = "恢复密钥必须为 8 组各 6 位的有效格式 (XXXXXX-XXXXXX-...)"
+            errorMessage = context.getString(R.string.invalid_recovery_key)
         } else {
             isUnlocking = true
             errorMessage = null
@@ -347,7 +347,7 @@ fun UnlockDialogScreen(
                         color = MaterialTheme.colorScheme.surfaceVariant
                     ) {
                         Text(
-                            text = devInfo?.friendlyName ?: "USB 设备",
+                            text = devInfo?.friendlyName ?: stringResource(R.string.usb_device_default),
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -386,7 +386,7 @@ fun UnlockDialogScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "卷 GUID",
+                                    text = stringResource(R.string.volume_guid),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.outline
@@ -402,13 +402,13 @@ fun UnlockDialogScreen(
                                 onClick = {
                                     val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
                                     cm?.setPrimaryClip(android.content.ClipData.newPlainText("Volume GUID", guid))
-                                    Toast.makeText(context, "GUID 已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, R.string.guid_copied_to_clipboard, Toast.LENGTH_SHORT).show()
                                 },
                                 modifier = Modifier.size(28.dp)
                             ) {
                                 Icon(
                                     painter = androidx.compose.ui.res.painterResource(id = R.drawable.ic_content_copy),
-                                    contentDescription = "复制 GUID",
+                                    contentDescription = stringResource(R.string.copy_guid),
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(16.dp)
                                 )
@@ -470,7 +470,7 @@ fun UnlockDialogScreen(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
-                                            text = "恢复标识符",
+                                            text = stringResource(R.string.recovery_key_id),
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.Bold,
                                             color = MaterialTheme.colorScheme.primary
@@ -482,7 +482,7 @@ fun UnlockDialogScreen(
                                             color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
                                         ) {
                                             Text(
-                                                text = "前 8 位: $prefix",
+                                                text = stringResource(R.string.prefix_8_digits, prefix),
                                                 style = MaterialTheme.typography.labelSmall.copy(
                                                     fontFamily = FontFamily.Monospace,
                                                     fontSize = 10.sp,
@@ -507,13 +507,13 @@ fun UnlockDialogScreen(
                                     onClick = {
                                         val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
                                         cm?.setPrimaryClip(android.content.ClipData.newPlainText("Recovery Key ID", recoveryKeyId))
-                                        Toast.makeText(context, "恢复标识符已复制", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, R.string.recovery_id_copied, Toast.LENGTH_SHORT).show()
                                     },
                                     modifier = Modifier.size(32.dp)
                                 ) {
                                     Icon(
                                         painter = androidx.compose.ui.res.painterResource(id = R.drawable.ic_content_copy),
-                                        contentDescription = "复制恢复标识符",
+                                        contentDescription = stringResource(R.string.copy_recovery_id),
                                         tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.size(16.dp)
                                     )
@@ -548,7 +548,7 @@ fun UnlockDialogScreen(
                     supportingText = if (!isRecoveryKey && savedPlain != null && inputValue == savedPlain) {
                         {
                             Text(
-                                text = "已自动填充已保存密码",
+                                text = stringResource(R.string.password_autofilled),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -571,7 +571,7 @@ fun UnlockDialogScreen(
                         if (!isRecoveryKey) {
                             TextButton(onClick = { passwordVisible = !passwordVisible }) {
                                 Text(
-                                    text = if (passwordVisible) "隐藏" else "显示",
+                                    text = if (passwordVisible) stringResource(R.string.hide) else stringResource(R.string.show),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.primary
                                 )
@@ -588,7 +588,7 @@ fun UnlockDialogScreen(
                                 }
                             }) {
                                 Text(
-                                    text = "粘贴",
+                                    text = stringResource(R.string.paste),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.primary
                                 )
@@ -620,7 +620,7 @@ fun UnlockDialogScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (isRecoveryKey) "记住恢复密钥" else stringResource(R.string.remember_password),
+                        text = if (isRecoveryKey) stringResource(R.string.remember_recovery_key) else stringResource(R.string.remember_password),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -643,7 +643,7 @@ fun UnlockDialogScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "插入此盘时自动解锁",
+                            text = stringResource(R.string.auto_unlock_on_insert),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -699,7 +699,7 @@ fun UnlockDialogScreen(
                                 color = MaterialTheme.colorScheme.onPrimary
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = "正在解锁…")
+                            Text(text = stringResource(R.string.unlocking_progress))
                         } else {
                             Text(text = stringResource(R.string.unlock_action))
                         }

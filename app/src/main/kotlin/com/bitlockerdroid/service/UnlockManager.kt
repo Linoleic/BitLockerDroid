@@ -379,8 +379,9 @@ object UnlockManager {
                 manuallyLockedGuids.add(guid)
             }
             manuallyLockedGuids.add(devicePath)
-            effectiveLabel = core?.volumeLabel?.ifBlank { devInfo.friendlyName.ifBlank { "BitLocker 加密盘" } }
-                ?: devInfo.friendlyName.ifBlank { "BitLocker 加密盘" }
+            val fallbackLabel = app?.getString(R.string.notification_drive_title) ?: "BitLocker"
+            effectiveLabel = core?.volumeLabel?.ifBlank { devInfo.friendlyName.ifBlank { fallbackLabel } }
+                ?: devInfo.friendlyName.ifBlank { fallbackLabel }
 
             LogFile.write("app", "UnlockManager.safeEject: ejecting $devicePath ($effectiveLabel, guid=$guid, rkId=$recoveryKeyId)")
 
@@ -689,7 +690,7 @@ object UnlockManager {
         ensureChannels(context)
 
         val devInfo = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath)
-        val friendly = devInfo.friendlyName.ifBlank { "外接存储设备" }
+        val friendly = devInfo.friendlyName.ifBlank { context.getString(R.string.usb_storage_device) }
 
         val unlockIntent = Intent(context, UnlockDialogActivity::class.java).apply {
             putExtra(UnlockDialogActivity.EXTRA_DEVICE_PATH, devicePath)
@@ -707,8 +708,8 @@ object UnlockManager {
 
         val notif = NotificationCompat.Builder(context, CHANNEL_ID_ALERTS)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("检测到 BitLocker 加密盘")
-            .setContentText("【$friendly】已锁定，点按立即解锁")
+            .setContentTitle(context.getString(R.string.notification_drive_detected_title))
+            .setContentText(context.getString(R.string.notification_drive_detected_desc, friendly))
             .setContentIntent(unlockPendingIntent)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -780,17 +781,17 @@ object UnlockManager {
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "BitLocker 状态通知",
+            context.getString(R.string.notification_status_channel),
             NotificationManager.IMPORTANCE_LOW
         )
         nm.createNotificationChannel(channel)
 
         val alertChannel = NotificationChannel(
             CHANNEL_ID_ALERTS,
-            "BitLocker 提醒通知",
+            context.getString(R.string.notification_alert_channel),
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
-            description = "新外接设备插入与解锁提醒"
+            description = context.getString(R.string.notification_alert_desc)
             enableVibration(true)
         }
         nm.createNotificationChannel(alertChannel)

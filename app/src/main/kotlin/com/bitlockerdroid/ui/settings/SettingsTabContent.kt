@@ -39,12 +39,17 @@ fun SettingsTabContent(
     onLanguageChange: (String) -> Unit,
     onOpenLog: () -> Unit
 ) {
+    val authName = stringResource(R.string.root_status_authorized)
+    val unauthName = stringResource(R.string.root_status_unauthorized)
+    val authSummary = stringResource(R.string.root_status_authorized_desc)
+    val unauthSummary = stringResource(R.string.root_status_unauthorized_desc)
+
     val rootSolution by produceState(
         initialValue = RootAccess.cachedRootSolution ?: RootAccess.RootSolutionInfo(
             hasRoot = RootAccess.cachedHasSu ?: false,
-            solutionName = if (RootAccess.cachedHasSu == true) "已授权" else "未授权",
+            solutionName = if (RootAccess.cachedHasSu == true) authName else unauthName,
             version = null,
-            summary = if (RootAccess.cachedHasSu == true) "已获取 Root 权限" else "未获取 Root 权限"
+            summary = if (RootAccess.cachedHasSu == true) authSummary else unauthSummary
         )
     ) {
         value = withContext(Dispatchers.IO) { RootAccess.getRootSolution() }
@@ -68,15 +73,15 @@ fun SettingsTabContent(
             val totalCount = rememberedCredentials.size
             val autoUnlockCount = rememberedCredentials.count { it.autoUnlock }
             val subtitleText = when {
-                totalCount == 0 -> "暂无已记住密码的设备"
-                autoUnlockCount == 0 -> "已保存 $totalCount 个设备凭据 · 未开启自动解锁"
-                autoUnlockCount == totalCount -> "已保存 $totalCount 个设备凭据 · 全部开启自动解锁"
-                else -> "已保存 $totalCount 个设备凭据 · $autoUnlockCount 个开启自动解锁"
+                totalCount == 0 -> stringResource(R.string.settings_creds_desc_none)
+                autoUnlockCount == 0 -> stringResource(R.string.settings_creds_desc_no_auto, totalCount)
+                autoUnlockCount == totalCount -> stringResource(R.string.settings_creds_desc_all_auto, totalCount)
+                else -> stringResource(R.string.settings_creds_desc_partial_auto, totalCount, autoUnlockCount)
             }
             SettingsClickableItem(
-                title = "已记住的驱动器凭据",
+                title = stringResource(R.string.settings_creds_item_title),
                 description = subtitleText,
-                badgeText = if (totalCount > 0) "${totalCount}个设备" else "无凭据",
+                badgeText = if (totalCount > 0) stringResource(R.string.settings_creds_badge_devices, totalCount) else stringResource(R.string.settings_creds_badge_empty),
                 badgeColor = if (totalCount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                 onClick = onOpenCredentialsManager
             )
@@ -96,8 +101,8 @@ fun SettingsTabContent(
             )
             var virtualMount by remember { mutableStateOf(PreferenceHelper.virtualMountEnabled) }
             SettingsSwitchItem(
-                title = "全局 POSIX 虚拟挂载",
-                description = "挂载至 /storage，应用可直接通过绝对路径访问",
+                title = stringResource(R.string.settings_posix_mount),
+                description = stringResource(R.string.settings_posix_mount_desc),
                 checked = virtualMount,
                 onCheckedChange = {
                     virtualMount = it
@@ -111,8 +116,8 @@ fun SettingsTabContent(
             var notificationsEnabled by remember { mutableStateOf(PreferenceHelper.notificationsEnabled) }
             val context = LocalContext.current
             SettingsSwitchItem(
-                title = "显示挂载常驻通知",
-                description = "在通知栏展示挂载状态及快捷操作",
+                title = stringResource(R.string.settings_show_notification),
+                description = stringResource(R.string.settings_show_notification_desc),
                 checked = notificationsEnabled,
                 onCheckedChange = {
                     notificationsEnabled = it
@@ -229,10 +234,23 @@ fun SettingsTabContent(
 
         // Group 4: System Environment & Diagnostics with Real Root Solution Info
         SettingsGroup(title = stringResource(R.string.settings_header_diag)) {
+            val knownSolutions = setOf("KernelSU", "Magisk", "APatch", "SU")
+            val rootSummary = if (!rootSolution.hasRoot) {
+                unauthSummary
+            } else if (rootSolution.solutionName in knownSolutions) {
+                if (rootSolution.version != null) {
+                    "$authName · ${rootSolution.solutionName} (${rootSolution.version})"
+                } else {
+                    "$authName · ${rootSolution.solutionName}"
+                }
+            } else {
+                authSummary
+            }
+
             SettingsStatusItem(
                 title = stringResource(R.string.settings_root_status),
-                description = rootSolution.summary,
-                badgeText = if (rootSolution.hasRoot) rootSolution.solutionName else "未授权",
+                description = rootSummary,
+                badgeText = if (rootSolution.hasRoot) rootSolution.solutionName else unauthName,
                 badgeColor = if (rootSolution.hasRoot) SuccessGreen else MaterialTheme.colorScheme.error
             )
             HorizontalDivider(

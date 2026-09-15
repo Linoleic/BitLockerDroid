@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -67,7 +68,7 @@ fun ShowPasswordDialog(
         if (result.resultCode == Activity.RESULT_OK) {
             action?.invoke()
         } else {
-            Toast.makeText(context, "身份验证未通过", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, R.string.auth_failed, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -78,8 +79,8 @@ fun ShowPasswordDialog(
         }
         @Suppress("DEPRECATION")
         val intent = keyguard?.createConfirmDeviceCredentialIntent(
-            "验证身份",
-            "请验证设备锁屏凭据以查看 BitLocker 凭据"
+            context.getString(R.string.auth_title),
+            context.getString(R.string.auth_subtitle)
         )
         if (intent == null) {
             action()
@@ -90,7 +91,7 @@ fun ShowPasswordDialog(
             authLauncher.launch(intent)
         } catch (e: Exception) {
             pendingAction = null
-            Toast.makeText(context, "无法启动身份验证", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, R.string.auth_start_failed, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -101,7 +102,7 @@ fun ShowPasswordDialog(
                 onClick = onDismiss,
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text(text = "关闭")
+                Text(text = stringResource(R.string.close))
             }
         },
         dismissButton = {
@@ -113,7 +114,7 @@ fun ShowPasswordDialog(
                             val clip = ClipData.newPlainText("BitLocker Password", passwordPlain)
                             markClipboardSensitive(clip)
                             cm?.setPrimaryClip(clip)
-                            Toast.makeText(context, "密码已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, R.string.copied_to_clipboard, Toast.LENGTH_SHORT).show()
                         }
                     }
                 ) {
@@ -123,14 +124,14 @@ fun ShowPasswordDialog(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = "复制密码")
+                    Text(text = stringResource(R.string.copy_password))
                 }
             }
         },
         title = {
             Column {
                 Text(
-                    text = "凭据详情",
+                    text = stringResource(R.string.credential_details),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -162,7 +163,7 @@ fun ShowPasswordDialog(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = if (credential.id.contains("-")) "卷完整 GUID" else "设备唯一标识",
+                                    text = if (credential.id.contains("-")) stringResource(R.string.volume_full_guid) else stringResource(R.string.device_unique_id),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.primary,
                                     fontWeight = FontWeight.Bold
@@ -181,13 +182,13 @@ fun ShowPasswordDialog(
                                 onClick = {
                                     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                                     cm?.setPrimaryClip(ClipData.newPlainText("Volume GUID", credential.id))
-                                    Toast.makeText(context, "GUID 已复制", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, R.string.guid_copied, Toast.LENGTH_SHORT).show()
                                 },
                                 modifier = Modifier.size(28.dp)
                             ) {
                                 Icon(
                                     painter = painterResource(id = R.drawable.ic_content_copy),
-                                    contentDescription = "复制 GUID",
+                                    contentDescription = stringResource(R.string.copy_guid),
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(16.dp)
                                 )
@@ -206,7 +207,7 @@ fun ShowPasswordDialog(
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = if (isRecovery) "BitLocker 48位恢复密钥" else "BitLocker 解密密码",
+                            text = if (isRecovery) stringResource(R.string.bitlocker_recovery_key_title) else stringResource(R.string.bitlocker_password_title),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold
@@ -234,7 +235,7 @@ fun ShowPasswordDialog(
                                 ) {
                                     Icon(
                                         painter = painterResource(id = R.drawable.ic_visibility),
-                                        contentDescription = if (visible) "隐藏" else "显示",
+                                        contentDescription = if (visible) stringResource(R.string.hide) else stringResource(R.string.show),
                                         tint = if (visible) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                                         modifier = Modifier.size(20.dp)
                                     )
@@ -247,14 +248,14 @@ fun ShowPasswordDialog(
                                                 val clip = ClipData.newPlainText("BitLocker Credential", passwordPlain)
                                                 markClipboardSensitive(clip)
                                                 cm?.setPrimaryClip(clip)
-                                                Toast.makeText(context, if (isRecovery) "恢复密钥已复制" else "密码已复制", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, if (isRecovery) R.string.recovery_key_copied else R.string.password_copied, Toast.LENGTH_SHORT).show()
                                             }
                                         },
                                         modifier = Modifier.size(32.dp)
                                     ) {
                                         Icon(
                                             painter = painterResource(id = R.drawable.ic_content_copy),
-                                            contentDescription = "复制凭据",
+                                            contentDescription = stringResource(R.string.copy_credential),
                                             tint = MaterialTheme.colorScheme.primary,
                                             modifier = Modifier.size(18.dp)
                                         )
@@ -263,7 +264,7 @@ fun ShowPasswordDialog(
                             }
                         } else {
                             Text(
-                                text = "无法解密或凭据已损坏",
+                                text = stringResource(R.string.credential_corrupted),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.error
                             )

@@ -67,7 +67,11 @@ fun AboutSettingsCard() {
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            listOf("SAF 框架", "FUSE 虚拟挂载", "16KB 对齐").forEach { tag ->
+            listOf(
+                stringResource(R.string.about_tech_saf),
+                stringResource(R.string.about_tech_fuse),
+                stringResource(R.string.about_tech_align)
+            ).forEach { tag ->
                 Surface(
                     shape = RoundedCornerShape(6.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)

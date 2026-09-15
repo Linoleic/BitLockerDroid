@@ -1,5 +1,7 @@
 package com.bitlockerdroid.util
 
+import android.content.Context
+import com.bitlockerdroid.R
 import com.bitlockerdroid.service.DislockerCore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -73,13 +75,15 @@ object BenchmarkEngine {
 
     suspend fun runBenchmark(
         core: DislockerCore,
+        context: Context? = null,
         onProgress: (phase: String, progress: Float) -> Unit
     ): BenchmarkResult = withContext(Dispatchers.IO) {
         val volumeSize = core.info.volumeSize
         val sectorSize = core.info.sectorSize.coerceAtLeast(512)
 
         // Phase 1: Sequential Read (16 MB in 512KB chunks)
-        onProgress("连续读取测速中...", 0.05f)
+        val stepSeq = context?.getString(R.string.benchmark_step_seq) ?: "Testing sequential read…"
+        onProgress(stepSeq, 0.05f)
         val chunkSize = 512 * 1024
         val numChunks = 32 // 16 MB total
         var totalBytesRead = 0L
@@ -94,7 +98,10 @@ object BenchmarkEngine {
                 totalBytesRead += buf.size
             }
             val curProgress = 0.05f + (0.60f * (i + 1) / numChunks)
-            onProgress("连续读取测速中 (${(i + 1) * 512 / 1024} MB / 16 MB)...", curProgress)
+            val readMb = (i + 1) * 512 / 1024
+            val seqProgressMsg = context?.getString(R.string.benchmark_step_seq_progress, readMb, 16)
+                ?: "Testing sequential read ($readMb MB / 16 MB)…"
+            onProgress(seqProgressMsg, curProgress)
         }
         val seqElapsedSec = (System.nanoTime() - seqStartNano) / 1_000_000_000.0
         val seqMbPerSec = if (seqElapsedSec > 0 && totalBytesRead > 0) {
@@ -102,7 +109,8 @@ object BenchmarkEngine {
         } else 0.0
 
         // Phase 2: Random 4K Read (50 iterations)
-        onProgress("4K 随机读取延时测试中...", 0.68f)
+        val step4k = context?.getString(R.string.benchmark_step_4k) ?: "Testing 4K random latency…"
+        onProgress(step4k, 0.68f)
         val numRandomReads = 50
         val randomChunkSize = 4096
         val maxOffset = (volumeSize - randomChunkSize).coerceAtLeast(startOffset)
@@ -120,25 +128,29 @@ object BenchmarkEngine {
                 successfulRandomReads++
             }
             val curProgress = 0.68f + (0.28f * (i + 1) / numRandomReads)
-            onProgress("4K 随机延时测试 (${i + 1}/$numRandomReads)...", curProgress)
+            val randProgressMsg = context?.getString(R.string.benchmark_step_4k_progress, i + 1, numRandomReads)
+                ?: "Testing 4K random latency (${i + 1}/$numRandomReads)…"
+            onProgress(randProgressMsg, curProgress)
         }
 
         val avgLatencyMs = if (successfulRandomReads > 0) totalRandomTimeMs / successfulRandomReads else 0.0
         val iops = if (avgLatencyMs > 0) 1000.0 / avgLatencyMs else 0.0
 
         // Phase 3: Hardware Link Speed
-        onProgress("检测硬件链路速率...", 0.98f)
+        val stepLink = context?.getString(R.string.benchmark_step_link) ?: "Detecting hardware link speed…"
+        onProgress(stepLink, 0.98f)
         val usbSpeed = detectUsbSpeed(core.devicePath)
         val usbDesc = when {
-            usbSpeed == null -> "未知 USB 协议"
-            usbSpeed >= 10000 -> "USB 3.1+ (10 Gbps 超高速)"
-            usbSpeed >= 5000 -> "USB 3.0 (5 Gbps 高速)"
+            usbSpeed == null -> context?.getString(R.string.benchmark_usb_unknown) ?: "Unknown USB Protocol"
+            usbSpeed >= 10000 -> context?.getString(R.string.benchmark_usb_superspeed_plus) ?: "USB 3.1+ (10 Gbps SuperSpeed+)"
+            usbSpeed >= 5000 -> context?.getString(R.string.benchmark_usb_superspeed) ?: "USB 3.0 (5 Gbps SuperSpeed)"
             usbSpeed == 480 -> "USB 2.0 (480 Mbps)"
             usbSpeed == 12 -> "USB 1.1 (12 Mbps)"
             else -> "USB ($usbSpeed Mbps)"
         }
 
-        onProgress("测速完成", 1.0f)
+        val stepDone = context?.getString(R.string.benchmark_done) ?: "Benchmark completed"
+        onProgress(stepDone, 1.0f)
 
         BenchmarkResult(
             sequentialReadMbPerSec = seqMbPerSec,

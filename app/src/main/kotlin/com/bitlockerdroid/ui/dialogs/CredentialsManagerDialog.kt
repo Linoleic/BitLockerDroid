@@ -38,7 +38,7 @@ fun CredentialsManagerDialog(
                 onClick = onDismiss,
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text(text = "完成")
+                Text(text = stringResource(R.string.done))
             }
         },
         dismissButton = {
@@ -76,13 +76,13 @@ fun CredentialsManagerDialog(
         title = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = "已记住的设备凭据",
+                    text = stringResource(R.string.creds_dialog_title),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = if (credentials.isEmpty()) "暂无已保存凭据" else "共 ${credentials.size} 个设备凭据",
+                    text = if (credentials.isEmpty()) stringResource(R.string.creds_empty) else stringResource(R.string.creds_total_count, credentials.size),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -155,7 +155,7 @@ fun CredentialsManagerDialog(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Delete,
-                                            contentDescription = "删除凭据",
+                                            contentDescription = stringResource(R.string.creds_delete),
                                             tint = MaterialTheme.colorScheme.error,
                                             modifier = Modifier.size(18.dp)
                                         )
@@ -173,7 +173,7 @@ fun CredentialsManagerDialog(
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Text(
-                                        text = if (cred.autoUnlock) "插盘自动解锁" else "仅手动解锁",
+                                        text = if (cred.autoUnlock) stringResource(R.string.creds_auto_unlock_enabled) else stringResource(R.string.creds_auto_unlock_disabled),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Medium,
                                         color = if (cred.autoUnlock) SuccessGreen else MaterialTheme.colorScheme.outline
@@ -192,7 +192,7 @@ fun CredentialsManagerDialog(
                                         modifier = Modifier.height(34.dp)
                                     ) {
                                         Text(
-                                            text = "查看密码",
+                                            text = stringResource(R.string.creds_view_password),
                                             style = MaterialTheme.typography.labelSmall
                                         )
                                     }

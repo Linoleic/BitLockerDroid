@@ -1,6 +1,7 @@
 package com.bitlockerdroid.util
 
 import android.util.Log
+import com.bitlockerdroid.R
 
 /**
  * Runs shell commands via KernelSU / Magisk `su` so the module app can read
@@ -58,15 +59,21 @@ object RootAccess {
             return cachedRootSolution!!
         }
 
+        val ctx = try { ContextProvider.app } catch (_: Throwable) { null }
+        val granted = ctx?.getString(R.string.root_status_authorized) ?: "Granted"
+        val unauth = ctx?.getString(R.string.root_status_unauthorized) ?: "Not granted"
+        val unauthDesc = ctx?.getString(R.string.root_status_unauthorized_desc) ?: "Root access not granted"
+        val authDesc = ctx?.getString(R.string.root_status_authorized_desc) ?: "Root access granted"
+
         if (!hasSu(forceRefresh)) {
-            val unauth = RootSolutionInfo(
+            val unauthInfo = RootSolutionInfo(
                 hasRoot = false,
-                solutionName = "未授权",
+                solutionName = unauth,
                 version = null,
-                summary = "未获取 Root 权限"
+                summary = unauthDesc
             )
-            cachedRootSolution = unauth
-            return unauth
+            cachedRootSolution = unauthInfo
+            return unauthInfo
         }
 
         var rawVersion = ""
@@ -104,7 +111,7 @@ object RootAccess {
                     hasRoot = true,
                     solutionName = "KernelSU",
                     version = cleanVer,
-                    summary = if (cleanVer != null) "已授权 · KernelSU ($cleanVer)" else "已授权 · KernelSU"
+                    summary = if (cleanVer != null) "$granted · KernelSU ($cleanVer)" else "$granted · KernelSU"
                 )
             }
             rawVersion.contains("MAGISK", ignoreCase = true) -> {
@@ -114,7 +121,7 @@ object RootAccess {
                     hasRoot = true,
                     solutionName = "Magisk",
                     version = cleanVer,
-                    summary = if (cleanVer != null) "已授权 · Magisk ($cleanVer)" else "已授权 · Magisk"
+                    summary = if (cleanVer != null) "$granted · Magisk ($cleanVer)" else "$granted · Magisk"
                 )
             }
             rawVersion.contains("APatch", ignoreCase = true) -> {
@@ -124,7 +131,7 @@ object RootAccess {
                     hasRoot = true,
                     solutionName = "APatch",
                     version = cleanVer,
-                    summary = if (cleanVer != null) "已授权 · APatch ($cleanVer)" else "已授权 · APatch"
+                    summary = if (cleanVer != null) "$granted · APatch ($cleanVer)" else "$granted · APatch"
                 )
             }
             rawVersion.isNotBlank() -> {
@@ -132,15 +139,15 @@ object RootAccess {
                     hasRoot = true,
                     solutionName = "SU",
                     version = rawVersion,
-                    summary = "已正常授权 ($rawVersion)"
+                    summary = "$granted ($rawVersion)"
                 )
             }
             else -> {
                 RootSolutionInfo(
                     hasRoot = true,
-                    solutionName = "正常",
+                    solutionName = granted,
                     version = null,
-                    summary = "已正常获取 Root 权限"
+                    summary = authDesc
                 )
             }
         }
