@@ -21,6 +21,7 @@ fun VolumesTabContent(
     detectedVolumes: List<DetectedVolume>,
     isRefreshing: Boolean,
     mountReadOnly: Boolean,
+    ejectingPaths: Set<String> = emptySet(),
     onMountReadOnlyChange: (Boolean) -> Unit,
     onRefreshAndScan: () -> Unit,
     onOpenVolume: (String) -> Unit,
@@ -89,7 +90,8 @@ fun VolumesTabContent(
                                 mountReadOnly = mountReadOnly,
                                 onMountReadOnlyChange = onMountReadOnlyChange,
                                 onOpen = { onOpenVolume(volume.devicePath) },
-                                onLock = { onLockVolume(volume.devicePath) }
+                                onLock = { onLockVolume(volume.devicePath) },
+                                isEjecting = ejectingPaths.contains(volume.devicePath)
                             )
                         }
                     }

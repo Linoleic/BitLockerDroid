@@ -73,15 +73,27 @@ class BitLockerCoreService : Service() {
             Thread {
                 try {
                     if (devPath != null) {
-                        UnlockManager.lock(devPath)
+                        val res = UnlockManager.safeEject(devPath)
+                        val label = res.getOrDefault("BitLocker 加密盘")
+                        Handler(Looper.getMainLooper()).post {
+                            android.widget.Toast.makeText(
+                                applicationContext,
+                                getString(com.bitlockerdroid.R.string.safe_eject_success, label),
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        }
                     } else {
                         val all = UnlockManager.unlockedVolumes
                         for (v in all) {
-                            UnlockManager.lock(v.devicePath)
+                            UnlockManager.safeEject(v.devicePath)
                         }
-                    }
-                    Handler(Looper.getMainLooper()).post {
-                        android.widget.Toast.makeText(applicationContext, "已安全弹出加密盘", android.widget.Toast.LENGTH_SHORT).show()
+                        Handler(Looper.getMainLooper()).post {
+                            android.widget.Toast.makeText(
+                                applicationContext,
+                                "所有加密盘已安全弹出，现在可以安全拔出设备",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        }
                     }
                 } catch (e: Exception) {
                     LogFile.write("app", "Safe eject failed: ${e.message}")

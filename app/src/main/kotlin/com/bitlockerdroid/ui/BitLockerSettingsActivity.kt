@@ -51,6 +51,7 @@ class BitLockerSettingsActivity : ComponentActivity() {
     private var unlockedVolumesState = mutableStateListOf<UnlockedVolume>()
     private var detectedVolumesState = mutableStateListOf<DetectedVolume>()
     private var isRefreshingState = mutableStateOf(false)
+    private var ejectingPathsState = mutableStateListOf<String>()
     private var showLogDialogState = mutableStateOf(false)
     private var logContentState = mutableStateOf("")
     private var rememberedCredentialsState = mutableStateListOf<PreferenceHelper.SavedCredential>()
@@ -130,7 +131,8 @@ class BitLockerSettingsActivity : ComponentActivity() {
                     },
                     onOpenVolume = { path -> openVolumeInFiles(path) },
                     onLockVolume = { path -> lockVolume(path) },
-                    onUnlockDetected = { path -> promptUnlock(path) }
+                    onUnlockDetected = { path -> promptUnlock(path) },
+                    ejectingPaths = ejectingPathsState.toSet()
                 )
             }
         }
@@ -229,10 +231,31 @@ class BitLockerSettingsActivity : ComponentActivity() {
     }
 
     private fun lockVolume(devicePath: String) {
-        LogFile.write("app", "locking volume $devicePath")
-        UnlockManager.lock(devicePath)
-        refreshData()
-        Toast.makeText(this, R.string.locked, Toast.LENGTH_SHORT).show()
+        if (ejectingPathsState.contains(devicePath)) return
+        ejectingPathsState.add(devicePath)
+        LogFile.write("app", "safe eject requested for $devicePath")
+        lifecycleScope.launch(Dispatchers.IO) {
+            val result = UnlockManager.safeEject(devicePath)
+            withContext(Dispatchers.Main) {
+                ejectingPathsState.remove(devicePath)
+                if (result.isSuccess) {
+                    val label = result.getOrNull() ?: ""
+                    Toast.makeText(
+                        this@BitLockerSettingsActivity,
+                        getString(R.string.safe_eject_success, label),
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    val err = result.exceptionOrNull()?.message ?: ""
+                    Toast.makeText(
+                        this@BitLockerSettingsActivity,
+                        getString(R.string.safe_eject_failed, err),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                refreshData()
+            }
+        }
     }
 
     private fun openVolumeInFiles(devicePath: String) {
@@ -342,6 +365,7 @@ fun MainAppScreen(
     onOpenVolume: (String) -> Unit,
     onLockVolume: (String) -> Unit,
     onUnlockDetected: (String) -> Unit,
+    ejectingPaths: Set<String> = emptySet(),
     initialTab: Int = 0
 ) {
     var selectedTab by remember { mutableStateOf(initialTab) }
@@ -448,6 +472,7 @@ fun MainAppScreen(
                     detectedVolumes = detectedVolumes,
                     isRefreshing = isRefreshing,
                     mountReadOnly = mountReadOnly,
+                    ejectingPaths = ejectingPaths,
                     onMountReadOnlyChange = onMountReadOnlyChange,
                     onRefreshAndScan = onRefreshAndScan,
                     onOpenVolume = onOpenVolume,

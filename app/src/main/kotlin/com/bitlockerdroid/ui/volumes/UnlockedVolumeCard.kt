@@ -44,7 +44,8 @@ fun UnlockedVolumeCard(
     mountReadOnly: Boolean,
     onMountReadOnlyChange: (Boolean) -> Unit,
     onOpen: () -> Unit,
-    onLock: () -> Unit
+    onLock: () -> Unit,
+    isEjecting: Boolean = false
 ) {
     val context = LocalContext.current
     val activeMounts by VirtualStorageMountManager.activeMountsFlow.collectAsState()
@@ -52,10 +53,12 @@ fun UnlockedVolumeCard(
     var detailsExpanded by remember { mutableStateOf(false) }
     var showBenchmarkDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(volume.devicePath, vMount) {
+    LaunchedEffect(volume.devicePath) {
         if (vMount == null &&
+            !isEjecting &&
             VirtualStorageMountManager.isEnabled(context) &&
-            VirtualStorageMountManager.isSupported()
+            VirtualStorageMountManager.isSupported() &&
+            !com.bitlockerdroid.service.UnlockManager.isManuallyLocked(volume.guid, volume.devicePath)
         ) {
             withContext(Dispatchers.IO) {
                 VirtualStorageMountManager.mountRemembered(context, volume.devicePath)
@@ -624,6 +627,7 @@ fun UnlockedVolumeCard(
             ) {
                 OutlinedButton(
                     onClick = { showBenchmarkDialog = true },
+                    enabled = !isEjecting,
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text(text = "测速诊断")
@@ -631,13 +635,34 @@ fun UnlockedVolumeCard(
 
                 OutlinedButton(
                     onClick = onLock,
-                    shape = RoundedCornerShape(12.dp)
+                    enabled = !isEjecting,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.primary
+                    )
                 ) {
-                    Text(text = stringResource(R.string.lock))
+                    if (isEjecting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(text = stringResource(R.string.safe_ejecting))
+                    } else {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_eject),
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(text = stringResource(R.string.safe_eject))
+                    }
                 }
 
                 Button(
                     onClick = onOpen,
+                    enabled = !isEjecting,
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text(text = stringResource(R.string.open))

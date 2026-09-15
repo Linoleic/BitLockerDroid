@@ -358,11 +358,18 @@ object UnlockManager {
         return result.getOrNull()
     }
 
-    fun lock(devicePath: String) {
+    /**
+     * Safely ejects an unlocked BitLocker volume:
+     * 1. Unmounts FUSE virtual mount and waits for daemon clean exit
+     * 2. Drains in-flight SAF stream writes
+     * 3. Flushes and closes decrypted session and block device
+     * 4. Updates DocumentsProvider roots, foreground state, and posts safe-to-unplug notification
+     */
+    fun safeEject(devicePath: String): Result<String> {
         val app = com.bitlockerdroid.util.ContextProvider.app
-        VirtualStorageMountManager.unmount(devicePath)
         val devInfo = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath, forceRefresh = true)
         val stale: DislockerCore?
+        val effectiveLabel: String
         synchronized(lock) {
             val core = sessions.remove(devicePath)
             stale = core
@@ -372,7 +379,10 @@ object UnlockManager {
                 manuallyLockedGuids.add(guid)
             }
             manuallyLockedGuids.add(devicePath)
-            LogFile.write("app", "UnlockManager.lock: manually locked $devicePath (guid=$guid, rkId=$recoveryKeyId)")
+            effectiveLabel = core?.volumeLabel?.ifBlank { devInfo.friendlyName.ifBlank { "BitLocker 加密盘" } }
+                ?: devInfo.friendlyName.ifBlank { "BitLocker 加密盘" }
+
+            LogFile.write("app", "UnlockManager.safeEject: ejecting $devicePath ($effectiveLabel, guid=$guid, rkId=$recoveryKeyId)")
 
             detected[devicePath] = DetectedVolume(
                 devicePath = devicePath,
@@ -382,19 +392,44 @@ object UnlockManager {
                 capacity = devInfo.sizeBytes
             )
         }
-        stale?.let { core ->
-            // Safe eject: let in-flight SAF pipe writes land, then flush the
-            // encrypted block device before tearing the session down.
-            com.bitlockerdroid.provider.BitLockerDocumentsProvider.drainActiveWrites()
-            core.flush()
-            core.close()
+
+        // 1. Unmount POSIX FUSE mount first so external apps can no longer issue IO
+        try {
+            VirtualStorageMountManager.unmount(devicePath)
+        } catch (e: Throwable) {
+            Log.w(TAG, "Virtual mount unmount warning for $devicePath", e)
         }
+
+        // 2. Drain in-flight SAF pipe writes (bounded wait)
+        com.bitlockerdroid.provider.BitLockerDocumentsProvider.drainActiveWrites()
+
+        // 3. Flush & close decrypted session
+        stale?.let { core ->
+            try {
+                core.flush()
+            } catch (e: Throwable) {
+                Log.w(TAG, "core flush warning during eject", e)
+            }
+            try {
+                core.close()
+            } catch (e: Throwable) {
+                Log.w(TAG, "core close warning during eject", e)
+            }
+        }
+
+        // 4. Update system framework, notifications and roots
         app?.let {
             dismissAllNotificationsForDevice(it, devicePath)
             BitLockerCoreService.updateForegroundState(it)
             com.bitlockerdroid.provider.BitLockerDocumentsProvider.notifyRootsChanged(it)
+            postSafeToUnplugNotification(it, devicePath, effectiveLabel)
         }
         notifyStateChanged()
+        return Result.success(effectiveLabel)
+    }
+
+    fun lock(devicePath: String) {
+        safeEject(devicePath)
     }
 
     /**
@@ -738,9 +773,35 @@ object UnlockManager {
         nm.cancel("bitlocker_locked:$devicePath", 2)
     }
 
+    fun dismissEjectedNotification(context: Context, devicePath: String) {
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        nm.cancel("bitlocker_ejected:$devicePath", 3)
+    }
+
     fun dismissAllNotificationsForDevice(context: Context, devicePath: String) {
         dismissReadyNotification(context, devicePath)
         dismissLockedNotification(context, devicePath)
+        dismissEjectedNotification(context, devicePath)
+    }
+
+    fun postSafeToUnplugNotification(context: Context, devicePath: String, label: String) {
+        if (!PreferenceHelper.isNotificationsEnabled(context)) return
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        ensureChannels(context)
+
+        val title = context.getString(R.string.safe_to_unplug_title, label)
+        val text = context.getString(R.string.safe_to_unplug_desc)
+
+        val notif = NotificationCompat.Builder(context, CHANNEL_ID_ALERTS)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setAutoCancel(true)
+            .setTimeoutAfter(8000)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+
+        nm.notify("bitlocker_ejected:$devicePath", 3, notif)
     }
 
     fun showUnlockDialog(context: Context, devicePath: String, offset: Long, guid: String? = null, recoveryKeyId: String? = null) {

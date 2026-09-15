@@ -72,4 +72,10 @@
     <string name="settings_suppress_corrupt_notification_desc">自动消除系统针对 BitLocker 盘弹出的“驱动器出现问题，点按修复”警告（仅作用于已确认的加密盘，真正损坏的磁盘照常提示）</string>
     <string name="settings_hide_svi">隐藏 System Volume Information 目录</string>
     <string name="settings_hide_svi_desc">在文件管理器中过滤 Windows 系统生成的隐藏元数据目录（SVI）</string>
+    <string name="safe_eject">安全弹出</string>
+    <string name="safe_ejecting">正在安全同步与弹出…</string>
+    <string name="safe_eject_success">【%1$s】已安全弹出，现在可以安全拔出设备</string>
+    <string name="safe_eject_failed">安全弹出遇到警告: %1$s</string>
+    <string name="safe_to_unplug_title">【%1$s】已安全弹出</string>
+    <string name="safe_to_unplug_desc">数据已全部同步，现在可以安全拔出设备</string>
 </resources>

@@ -157,6 +157,9 @@ object VirtualStorageMountManager {
     fun mountRemembered(context: Context, devicePath: String): Result<VirtualMountInfo> {
         val guid = BitLockerDetector.getVolumeGuid(devicePath)
             ?: return Result.failure(IllegalStateException("无法获取卷 GUID"))
+        if (UnlockManager.isManuallyLocked(guid, devicePath)) {
+            return Result.failure(IllegalStateException("卷已被手动锁定或安全弹出，取消自动挂载"))
+        }
         val blob = PreferenceHelper.getRememberedPassword(context, guid)
             ?: return Result.failure(IllegalStateException("未找到已记住的密码，请重新解锁并保存密码"))
         val password = KeyGuardService.decrypt(blob)
@@ -342,6 +345,14 @@ object VirtualStorageMountManager {
             }
             if (info != null && info.pid > 1) {
                 RootAccess.exec("su -c 'kill -TERM ${info.pid} 2>/dev/null'")
+                // Wait up to 1000ms for daemon to flush and cleanly terminate
+                for (i in 1..10) {
+                    val alive = try {
+                        RootAccess.execTimeout("su -c 'kill -0 ${info.pid} 2>/dev/null && echo alive'", 200)?.contains("alive") == true
+                    } catch (_: Exception) { false }
+                    if (!alive) break
+                    Thread.sleep(100)
+                }
             }
             // Also cleanup any bitlocker_fuse matching this devicePath
             RootAccess.exec("su -c 'for pid in \$(pidof bitlocker_fuse 2>/dev/null); do if grep -q \"$devicePath\" /proc/\$pid/cmdline 2>/dev/null; then kill -TERM \$pid 2>/dev/null; fi; done'")
@@ -361,8 +372,9 @@ object VirtualStorageMountManager {
         activeMounts.clear()
         notifyStateChanged()
         try {
+            RootAccess.exec("su -M -c 'for m in \$(grep bitlocker_fuse /proc/mounts 2>/dev/null | awk \"{print \\\$2}\"); do umount -l \"\$m\" 2>/dev/null; rmdir \"\$m\" 2>/dev/null; done'")
             RootAccess.exec("su -M -c 'for m in /storage/BitLocker_*; do if [ -d \"\$m\" ]; then umount -l \"\$m\" 2>/dev/null; rmdir \"\$m\" 2>/dev/null; fi; done'")
-            RootAccess.exec("su -c 'pkill -9 bitlocker_fuse 2>/dev/null'")
+            RootAccess.exec("su -c 'pkill -TERM bitlocker_fuse 2>/dev/null; sleep 0.2; pkill -9 bitlocker_fuse 2>/dev/null'")
         } catch (_: Throwable) {}
     }
 }

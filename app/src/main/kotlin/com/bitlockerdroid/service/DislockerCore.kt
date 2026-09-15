@@ -439,6 +439,11 @@ class DislockerCore private constructor(
             } catch (e: Throwable) {
                 Log.w(TAG, "writer close failed", e)
             }
+            try {
+                flush()
+            } catch (e: Throwable) {
+                Log.w(TAG, "flush during close failed", e)
+            }
             cachedSource.clear()
             createdEntries.clear()
             pathCache.clear()

@@ -72,4 +72,10 @@
     <string name="settings_suppress_corrupt_notification_desc">Automatically dismiss Android\'s "Issue with USB drive" format warnings for BitLocker encrypted disks (genuinely damaged disks remain protected)</string>
     <string name="settings_hide_svi">Hide System Volume Information (SVI) Directory</string>
     <string name="settings_hide_svi_desc">Filter out Windows-generated hidden System Volume Information folders in the file manager</string>
+    <string name="safe_eject">Safe Eject</string>
+    <string name="safe_ejecting">Ejecting…</string>
+    <string name="safe_eject_success">Drive \"%1$s\" safely ejected. It is now safe to unplug the device.</string>
+    <string name="safe_eject_failed">Safe eject warning: %1$s</string>
+    <string name="safe_to_unplug_title">【%1$s】Safely Ejected</string>
+    <string name="safe_to_unplug_desc">All data synced. It is now safe to unplug the device.</string>
 </resources>
