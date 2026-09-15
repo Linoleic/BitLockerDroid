@@ -74,7 +74,18 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          ./gradlew assembleRelease assembleDebug --stacktrace
+          ./gradlew assembleRelease assembleDebug --stacktrace 2>&1 | tee build.log || {
+            echo "::error::Gradle build failed. Printing last 150 lines of log:"
+            tail -n 150 build.log
+            exit 1
+          }
+
+      - name: Upload Build Log on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-failure-log
+          path: build.log
 
       - name: Prepare Artifacts & Checksums
         run: |
