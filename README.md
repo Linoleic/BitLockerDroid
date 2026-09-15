@@ -22,7 +22,7 @@
 3. 解锁后直接在 Android 系统原生文件管理器（DocumentsUI）中进行**文件浏览、新建、重命名、读写编辑与安全删除**；
 4. 同时支持启动**全局 POSIX 虚拟挂载**（FUSE `/storage/XXXX-XXXX`），让第三方应用（如 MT 管理器、Termux、影音播放器等）通过绝对路径直接读写访问。
 
-> **运行要求**：无需 Xposed/LSPosed 框架，作为普通 APK 安装运行，仅需系统具备 Root 权限（KernelSU、Magisk 或 APatch）以获取底层块设备读写能力。
+> **运行要求**：系统具备 Root 权限（KernelSU、Magisk 或 APatch）以获取底层块设备读写能力。
 
 ---
 
@@ -107,7 +107,7 @@
 
 | 维度 | 支持范围 | 说明 |
 |---|---|---|
-| **实测环境** | Android 16 / 17 (Xiaomi HyperOS) | 目前在搭载 KernelSU 的 HyperOS 设备上测试通过，其他系统及版本尚未做完整回归 |
+| **支持环境** | Android 8+ | 目前在搭载 KernelSU/Magisk 的 HyperOS（A15+） 设备上测试通过，其他系统及版本尚未做完整回归 |
 | **Root 方案** | KernelSU, Magisk, APatch | 用于授权应用读取底层 `/dev/block/vold/*` 块设备节点 |
 | **文件系统** | **NTFS**, **FAT32**, **exFAT** | 支持读写增删改查，并可切换只读模式 |
 | **加密算法** | AES-XTS (128/256 位), AES-CBC (128/256 位) | 覆盖主流 Windows 默认及兼容模式 |
