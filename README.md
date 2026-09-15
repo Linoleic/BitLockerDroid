@@ -12,7 +12,7 @@
 
 ---
 
-## 📖 简介 / Introduction
+## 简介 / Introduction
 
 **BitLockerDroid**（手机端显示为 **BitUnlocker**）是一款 Android 原生存储管理应用，让手机/平板等移动设备能够直接访问 Windows **BitLocker 加密盘**（通过 USB OTG 连接的 U 盘、移动固态硬盘或 SD 卡）。
 
@@ -22,19 +22,19 @@
 3. 解锁后直接在 Android 系统原生文件管理器（DocumentsUI）中进行**文件浏览、新建、重命名、读写编辑与安全删除**；
 4. 同时支持启动**全局 POSIX 虚拟挂载**（FUSE `/storage/XXXX-XXXX`），让第三方应用（如 MT 管理器、Termux、影音播放器等）通过绝对路径直接读写访问。
 
-> 💡 **运行要求**：无需 Xposed/LSPosed 框架，作为普通 APK 安装运行，仅需系统具备 Root 权限（KernelSU、Magisk 或 APatch）以获取底层块设备读写能力。
+> **运行要求**：无需 Xposed/LSPosed 框架，作为普通 APK 安装运行，仅需系统具备 Root 权限（KernelSU、Magisk 或 APatch）以获取底层块设备读写能力。
 
 ---
 
-## ✨ 核心特性 / Features
+## 核心特性 / Features
 
-### 📁 1. 主流文件系统读写 (Full Read/Write CRUD)
+### 1. 主流文件系统读写 (Full Read/Write CRUD)
 - **NTFS**：集成裁剪版 **`libntfs-3g`**，支持文件与目录的新建、读取、修改写入、重命名与删除；底层设置扇区级写屏障，禁止覆盖 `-FVE-FS-` 元数据保留区。
 - **FAT32**：集成裁剪版 **`FatFs`**，支持长文件名与完整读写。
 - **exFAT**：支持读取与写入，内置 FAT 簇链与 Entry Set 动态维护。
 - **快速文件检索**：接入 DocumentsProvider 原生搜索接口，支持在系统文件管理器中按关键字检索卷内文件。
 
-### 🛡️ 2. 数据安全与卸载保护
+### 2. 数据安全与卸载保护
 - **安全弹出 (Safe Eject)**：
   - 卸载前强制双向 `sync` 数据落盘并清理 Dirty Bit 状态，降低因直接拔出 OTG 导致文件损坏或在 Windows 上报错的概率。
 - **只读保护开关 (Read-Only Mode)**：
@@ -42,18 +42,18 @@
 - **Dirty 状态检测**：
   - 自动识别上次在电脑或其他设备上未正常弹出的脏卷（Dirty Bit 置位）并在卡片中警示。
 
-### 🌐 3. 全局 POSIX 虚拟挂载 (`/storage/XXXX-XXXX`)
+### 3. 全局 POSIX 虚拟挂载 (`/storage/XXXX-XXXX`)
 - 内置用户态 **FUSE 守护进程**（运行于 PID 1 挂载命名空间），将解密卷模拟为系统的外置存储盘。
 - 挂载路径采用规范的十六进制格式（如 `/storage/78F0-B809`）。
 - MT 管理器、Termux、本地播放器等第三方应用可直接通过绝对路径进行文件读写。
 
-### ⚡ 4. 驱动器基准测速 (Drive Benchmark)
+### 4. 驱动器基准测速 (Drive Benchmark)
 - 内置只读硬件测速逻辑，不破坏磁盘数据：
   - **连续读取速率**：测试大文件顺序读取带宽（MB/s）；
   - **4K 随机读取延时**：测试闪存小块寻道响应（ms）；
   - **OTG 物理链路检测**：识别当前接口工作在 USB 2.0、USB 3.0 (5 Gbps) 还是 USB 3.1+ (10 Gbps)。
 
-### 🔑 5. 凭据管理与自动解锁
+### 5. 凭据管理与自动解锁
 - **解锁方式**：支持用户密码（PBKDF2/SHA-256）与 48 位数字恢复密钥。在识别到恢复密钥时，自动显示其对应的**恢复标识符（Recovery Key ID）前 8 位**以方便核对。
 - **凭据存储**：记住的密码由 Android Keystore 硬件加密存储；在凭据管理界面查看明文需通过设备锁屏/生物识别验证。
 - **插盘自动解锁**：对已记住凭据的设备，检测到插入时可自动执行解密挂载。
@@ -61,7 +61,7 @@
 
 ---
 
-## 🛠️ 工作原理 / Architecture
+## 工作原理 / Architecture
 
 ```
                        外接 USB OTG 加密设备
@@ -77,7 +77,7 @@
 │                              ▼                              │
 │   [解锁弹窗 / Keystore] ──► [DislockerCore (JNI)]           │
 │   (密码 / 恢复密钥)          │ mbedtls 密钥派生与解析        │
-│                              │ 解密 VMK ➔ FVEK 会话         │
+│                              │ 解密 VMK -> FVEK 会话         │
 │                              ▼                              │
 │                     [按需扇区解密引擎]                      │
 │                      (AES-XTS / AES-CBC)                    │
@@ -103,7 +103,7 @@
 
 ---
 
-## 📋 兼容性与技术规格 / Specifications
+## 兼容性与技术规格 / Specifications
 
 | 维度 | 支持范围 | 说明 |
 |---|---|---|
@@ -116,10 +116,10 @@
 
 ---
 
-## 🚀 快速上手 / Quick Start
+## 快速上手 / Quick Start
 
 ### 1. 安装与 Root 授权
-1. 安装构建产物 `app-debug.apk`（或自行编译）。
+1. 从 Releases 下载最新的 `app-release.apk`（或自行编译安装）。
 2. 在 **KernelSU** / **Magisk** / **APatch** 中为 **BitUnlocker** 授予 Root (su) 权限。
 
 ### 2. 解锁与使用
@@ -134,7 +134,7 @@
 
 ---
 
-## 🏗️ 源码编译 / Build from Source
+## 源码编译 / Build from Source
 
 项目使用标准 Gradle + Android NDK (C/CMake) 构建。
 
@@ -144,19 +144,25 @@
 - **Android NDK**（`26.3.11579264` / `r26d`）
 - **CMake**（`3.22.1+`）
 
-### 编译 Debug APK
+### 编译 Release APK (推荐)
 ```bash
 git clone https://github.com/Linoleic/BitLockerDroid.git
 cd BitLockerDroid
 
 chmod +x gradlew
+./gradlew :app:assembleRelease
+```
+产物位置：`app/build/outputs/apk/release/app-release.apk`。
+
+### 编译 Debug APK
+```bash
 ./gradlew :app:assembleDebug
 ```
 产物位置：`app/build/outputs/apk/debug/app-debug.apk`。
 
 ---
 
-## ⚠️ 常见说明 / Notes & FAQ
+## 常见说明 / Notes & FAQ
 
 - **为什么必须需要 Root 权限？**
   - Android 具备严格的 SELinux 机制，第三方应用无权直接访问 `/dev/block/*` 原始块设备，必须通过 Root 提权才能读取加密扇区数据并挂载 FUSE 驱动。
@@ -165,7 +171,7 @@ chmod +x gradlew
 
 ---
 
-## 📄 开源协议与致谢 / License & Acknowledgments
+## 开源协议与致谢 / License & Acknowledgments
 
 - **核心解密与算法移植**：参考自开源项目 [dislocker](https://github.com/Aorimn/dislocker) (GPL-2.0)。
 - **加密原语组件**：内置 [mbedtls](https://github.com/Mbed-TLS/mbedtls) (Apache-2.0 / GPL-2.0)。
