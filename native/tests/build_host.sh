@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
-cd /root/BitLockerDroid/native
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
 MB=third_party/mbedtls
 DL=dislocker
 gcc -O2 -o /tmp/verify_disk tests/verify_disk.c tests/host_read.c \
