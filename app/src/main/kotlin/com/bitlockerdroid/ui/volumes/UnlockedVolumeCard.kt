@@ -41,6 +41,8 @@ import kotlinx.coroutines.withContext
 @Composable
 fun UnlockedVolumeCard(
     volume: UnlockedVolume,
+    mountReadOnly: Boolean,
+    onMountReadOnlyChange: (Boolean) -> Unit,
     onOpen: () -> Unit,
     onLock: () -> Unit
 ) {
@@ -496,7 +498,71 @@ fun UnlockedVolumeCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Read-Only Access Mode Control (主页盘符控制处)
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = if (mountReadOnly) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (mountReadOnly) MaterialTheme.colorScheme.error.copy(alpha = 0.4f)
+                    else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "只读保护模式",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (mountReadOnly) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = if (mountReadOnly) MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
+                                        else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                            ) {
+                                Text(
+                                    text = if (mountReadOnly) "已开启 (只读)" else "正常读写",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = if (mountReadOnly) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = if (mountReadOnly) "已启用只读硬保护，严格禁止新建、覆盖、修改或删除文件"
+                                   else "允许对该加密盘进行新建、重命名、编辑与删除文件",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Switch(
+                        checked = mountReadOnly,
+                        onCheckedChange = { enabled ->
+                            onMountReadOnlyChange(enabled)
+                        }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
 
             // Action Buttons
             Row(

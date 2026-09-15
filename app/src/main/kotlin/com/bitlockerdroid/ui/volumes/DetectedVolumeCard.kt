@@ -29,6 +29,8 @@ import com.bitlockerdroid.util.DeviceIdentity
 @Composable
 fun DetectedVolumeCard(
     volume: DetectedVolume,
+    mountReadOnly: Boolean,
+    onMountReadOnlyChange: (Boolean) -> Unit,
     onUnlock: () -> Unit
 ) {
     val context = LocalContext.current
@@ -206,6 +208,42 @@ fun DetectedVolumeCard(
                             )
                         }
                     }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Read-Only Mount Mode Control
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = WarningAmber.copy(alpha = 0.12f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "只读模式解锁挂载",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = if (mountReadOnly) "解锁后仅可浏览读取，禁止写入修改" else "解锁后允许正常修改与读写",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Switch(
+                        checked = mountReadOnly,
+                        onCheckedChange = onMountReadOnlyChange
+                    )
                 }
             }
 

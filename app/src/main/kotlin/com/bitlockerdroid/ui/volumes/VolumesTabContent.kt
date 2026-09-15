@@ -20,6 +20,8 @@ fun VolumesTabContent(
     unlockedVolumes: List<UnlockedVolume>,
     detectedVolumes: List<DetectedVolume>,
     isRefreshing: Boolean,
+    mountReadOnly: Boolean,
+    onMountReadOnlyChange: (Boolean) -> Unit,
     onRefreshAndScan: () -> Unit,
     onOpenVolume: (String) -> Unit,
     onLockVolume: (String) -> Unit,
@@ -65,6 +67,8 @@ fun VolumesTabContent(
                         items(detectedVolumes) { detected ->
                             DetectedVolumeCard(
                                 volume = detected,
+                                mountReadOnly = mountReadOnly,
+                                onMountReadOnlyChange = onMountReadOnlyChange,
                                 onUnlock = { onUnlockDetected(detected.devicePath) }
                             )
                         }
@@ -82,6 +86,8 @@ fun VolumesTabContent(
                         items(unlockedVolumes) { volume ->
                             UnlockedVolumeCard(
                                 volume = volume,
+                                mountReadOnly = mountReadOnly,
+                                onMountReadOnlyChange = onMountReadOnlyChange,
                                 onOpen = { onOpenVolume(volume.devicePath) },
                                 onLock = { onLockVolume(volume.devicePath) }
                             )

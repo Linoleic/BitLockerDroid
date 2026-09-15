@@ -445,6 +445,8 @@ fun MainAppScreen(
                     unlockedVolumes = unlockedVolumes,
                     detectedVolumes = detectedVolumes,
                     isRefreshing = isRefreshing,
+                    mountReadOnly = mountReadOnly,
+                    onMountReadOnlyChange = onMountReadOnlyChange,
                     onRefreshAndScan = onRefreshAndScan,
                     onOpenVolume = onOpenVolume,
                     onLockVolume = onLockVolume,
