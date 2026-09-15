@@ -64,15 +64,52 @@ ndk.dir=/opt/android-sdk/ndk/26.3.11579264
 
 ## 3. Building the Application
 
-### 3.1 Build Debug APK
+### 3.1 Build Release APK (Recommended for distribution)
 
-Run the Gradle wrapper from the root of the project:
+Run the Gradle wrapper to build the signed release APK:
+
+```bash
+./gradlew :app:assembleRelease
+```
+
+Upon success, the signed APK is generated at:
+```
+app/build/outputs/apk/release/app-release.apk
+```
+
+By default, if no custom release keystore is provided, Gradle automatically falls back to the debug keystore, ensuring the build succeeds and generates an installable APK for local testing.
+
+To sign with your official release key:
+
+1. Copy the example configuration template:
+   ```bash
+   cp keystore.properties.example keystore.properties
+   ```
+2. Edit `keystore.properties` with your keystore path and passwords:
+   ```properties
+   STORE_FILE=/path/to/your/release.jks
+   STORE_PASSWORD=your_store_password
+   KEY_ALIAS=your_key_alias
+   KEY_PASSWORD=your_key_password
+   ```
+   *(Note: `*.jks`, `*.keystore`, and `keystore.properties` are git-ignored and will never be committed).*
+
+Alternatively, you can supply credentials via environment variables (ideal for CI/CD like GitHub Actions):
+
+| Environment Variable | Description |
+|---|---|
+| `KEYSTORE_PATH` | Path to your `.jks` or `.keystore` file |
+| `KEYSTORE_PASSWORD` | Keystore password |
+| `KEY_ALIAS` | Key alias name |
+| `KEY_PASSWORD` | Key alias password |
+
+### 3.2 Build Debug APK
 
 ```bash
 ./gradlew :app:assembleDebug
 ```
 
-Upon success, the APK is generated at:
+Output:
 ```
 app/build/outputs/apk/debug/app-debug.apk
 ```
@@ -81,7 +118,7 @@ The APK contains native shared libraries (`libdislocker.so`) compiled for:
 - `arm64-v8a` (16 KB page-aligned for Android 15+ compatibility)
 - `armeabi-v7a`
 
-### 3.2 Clean Build Cache
+### 3.3 Clean Build Cache
 
 ```bash
 ./gradlew clean

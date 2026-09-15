@@ -1,3 +1,6 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -32,9 +35,56 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            // Check for keystore.properties in root project or app directory
+            val rootProps = rootProject.file("keystore.properties")
+            val appProps = file("keystore.properties")
+            val propFile = when {
+                rootProps.exists() -> rootProps
+                appProps.exists() -> appProps
+                else -> null
+            }
+
+            val keystoreProps = Properties()
+            if (propFile != null && propFile.canRead()) {
+                FileInputStream(propFile).use { keystoreProps.load(it) }
+            }
+
+            val storeFilePath = System.getenv("KEYSTORE_PATH")
+                ?: keystoreProps.getProperty("STORE_FILE")
+                ?: project.findProperty("RELEASE_STORE_FILE") as? String
+
+            val candidateFile = storeFilePath?.let { path ->
+                val f = file(path)
+                if (f.exists()) f else rootProject.file(path)
+            }
+
+            if (candidateFile != null && candidateFile.exists()) {
+                storeFile = candidateFile
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                    ?: keystoreProps.getProperty("STORE_PASSWORD")
+                    ?: project.findProperty("RELEASE_STORE_PASSWORD") as? String
+                    ?: ""
+                keyAlias = System.getenv("KEY_ALIAS")
+                    ?: keystoreProps.getProperty("KEY_ALIAS")
+                    ?: project.findProperty("RELEASE_KEY_ALIAS") as? String
+                    ?: ""
+                keyPassword = System.getenv("KEY_PASSWORD")
+                    ?: keystoreProps.getProperty("KEY_PASSWORD")
+                    ?: project.findProperty("RELEASE_KEY_PASSWORD") as? String
+                    ?: ""
+            } else {
+                // Dynamic fallback: if release keystore is absent, fall back to debug signing config
+                initWith(getByName("debug"))
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
