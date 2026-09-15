@@ -103,6 +103,14 @@ Alternatively, you can supply credentials via environment variables (ideal for C
 | `KEY_ALIAS` | Key alias name |
 | `KEY_PASSWORD` | Key alias password |
 
+For GitHub Actions CI (`.github/workflows/build.yml`), you can optionally add the following Repository Secrets:
+- `RELEASE_KEYSTORE_BASE64`: Base64 encoded `.jks` or `.keystore` file (`base64 -w 0 your_release.jks`)
+- `KEYSTORE_PASSWORD`: Keystore password
+- `KEY_ALIAS`: Key alias name
+- `KEY_PASSWORD`: Key alias password
+
+If these secrets are not configured, the CI workflow automatically falls back to debug signing, ensuring builds always pass cleanly.
+
 ### 3.2 Build Debug APK
 
 ```bash
