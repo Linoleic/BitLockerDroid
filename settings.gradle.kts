@@ -18,5 +18,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "BitUnlocker"
+rootProject.name = "BitLockerDroid"
 include(":app")

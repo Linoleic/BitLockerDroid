@@ -1,6 +1,6 @@
-# Contributing to BitUnlocker
+# Contributing to BitLockerDroid
 
-Thank you for your interest in contributing to BitUnlocker! This project aims to bring native, secure, and performant BitLocker drive support to Android devices.
+Thank you for your interest in contributing to BitLockerDroid (BitUnlocker)! This project aims to bring native, secure, and performant BitLocker drive support to Android devices.
 
 ---
 

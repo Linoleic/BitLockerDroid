@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Suggest an idea or enhancement for BitUnlocker
+about: Suggest an idea or enhancement for BitLockerDroid
 title: '[FEAT] '
 labels: enhancement
 assignees: ''

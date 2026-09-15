@@ -1,12 +1,12 @@
-# BitUnlocker Build Guide
+# BitLockerDroid Build Guide
 
-This document describes how to set up the build environment and compile the BitUnlocker Android application and its native components.
+This document describes how to set up the build environment and compile the BitLockerDroid (BitUnlocker) Android application and its native components.
 
 ---
 
 ## 1. Prerequisites
 
-To build BitUnlocker, you need the following tools installed:
+To build BitLockerDroid, you need the following tools installed:
 
 | Component | Minimum / Recommended Version | Note |
 |---|---|---|
