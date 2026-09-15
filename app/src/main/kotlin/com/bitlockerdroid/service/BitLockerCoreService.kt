@@ -145,19 +145,27 @@ class BitLockerCoreService : Service() {
             return
         }
 
-        val label = volumes.first().label.ifBlank { volumes.first().deviceName.ifBlank { "BitLocker 加密卷" } }
-        val title = getString(com.bitlockerdroid.R.string.app_name)
-        val text = if (volumes.size == 1) {
-            "$label 已挂载 (可安全访问)"
-        } else {
-            "$label 等 ${volumes.size} 个活动卷已挂载"
-        }
+        val firstVol = volumes.first()
+        val firstLabel = firstVol.label.ifBlank { firstVol.deviceName.ifBlank { "BitLocker 驱动器" } }
+        val title = if (volumes.size == 1) firstLabel else getString(com.bitlockerdroid.R.string.app_name)
+        val text = if (volumes.size == 1) "已就绪，点按浏览文件" else "${volumes.size} 个加密驱动器已就绪"
 
-        val openIntent = Intent(this, com.bitlockerdroid.ui.BitLockerSettingsActivity::class.java).apply {
+        // File manager intent for the first volume
+        val filesIntent = com.bitlockerdroid.provider.BitLockerDocumentsProvider.createOpenVolumeIntent(
+            this, firstVol.devicePath, firstVol.volumeSerial
+        )
+        val filesPendingIntent = android.app.PendingIntent.getActivity(
+            this,
+            (firstVol.devicePath.hashCode() and 0x7FFFFFFF),
+            filesIntent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val appSettingsIntent = Intent(this, com.bitlockerdroid.ui.BitLockerSettingsActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
-        val pendingIntent = android.app.PendingIntent.getActivity(
-            this, 0, openIntent,
+        val appSettingsPendingIntent = android.app.PendingIntent.getActivity(
+            this, 0, appSettingsIntent,
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -165,24 +173,29 @@ class BitLockerCoreService : Service() {
         val ejectIntent = Intent(this, BitLockerCoreService::class.java).apply {
             action = ACTION_SAFE_EJECT
             if (volumes.size == 1) {
-                putExtra(EXTRA_DEVICE_PATH, volumes.first().devicePath)
+                putExtra(EXTRA_DEVICE_PATH, firstVol.devicePath)
             }
         }
         val ejectPendingIntent = android.app.PendingIntent.getService(
             this, 101, ejectIntent,
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
         )
-        val ejectTitle = if (volumes.size == 1) "安全弹出" else "全部安全弹出"
+        val ejectTitle = if (volumes.size == 1) "安全弹出" else "全部弹出"
 
         val notification = androidx.core.app.NotificationCompat.Builder(this, UnlockManager.CHANNEL_ID)
             .setSmallIcon(com.bitlockerdroid.R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(text)
-            .setContentIntent(pendingIntent)
+            .setContentIntent(if (volumes.size == 1) filesPendingIntent else appSettingsPendingIntent)
             .setOngoing(true)
             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
             .addAction(
                 com.bitlockerdroid.R.drawable.ic_drive_bitlocker,
+                "浏览文件",
+                filesPendingIntent
+            )
+            .addAction(
+                com.bitlockerdroid.R.drawable.ic_eject,
                 ejectTitle,
                 ejectPendingIntent
             )

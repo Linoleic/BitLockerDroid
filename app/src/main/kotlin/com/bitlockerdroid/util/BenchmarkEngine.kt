@@ -12,7 +12,7 @@ data class BenchmarkResult(
     val random4kIops: Double,
     val usbLinkSpeedMbps: Int?,
     val usbSpeedDesc: String,
-    val assessment: String
+    val assessment: String = ""
 )
 
 object BenchmarkEngine {
@@ -126,8 +126,8 @@ object BenchmarkEngine {
         val avgLatencyMs = if (successfulRandomReads > 0) totalRandomTimeMs / successfulRandomReads else 0.0
         val iops = if (avgLatencyMs > 0) 1000.0 / avgLatencyMs else 0.0
 
-        // Phase 3: Hardware Link & Diagnosis
-        onProgress("分析硬件链路与瓶颈评估...", 0.98f)
+        // Phase 3: Hardware Link Speed
+        onProgress("检测硬件链路速率...", 0.98f)
         val usbSpeed = detectUsbSpeed(core.devicePath)
         val usbDesc = when {
             usbSpeed == null -> "未知 USB 协议"
@@ -138,22 +138,6 @@ object BenchmarkEngine {
             else -> "USB ($usbSpeed Mbps)"
         }
 
-        val assessment = when {
-            usbSpeed == 480 -> {
-                if (seqMbPerSec >= 26.0) {
-                    "当前运行于 USB 2.0 链路模式，已基本跑满 OTG 接口物理带宽极限（约 30~35 MB/s）。如需更高传输速度，建议更换支持 USB 3.0 的 OTG 转接线或拓展坞。"
-                } else {
-                    "当前运行于 USB 2.0 链路模式。传输速率主要受限于当前 OTG 转接链路带宽与 U 盘主控读取表现。"
-                }
-            }
-            usbSpeed != null && usbSpeed >= 5000 -> {
-                "当前运行于 USB 3.0+ 高速通道，物理带宽充足无链路瓶颈。当前速率直接反映了该存储介质闪存颗粒与 CPU AES 解密的综合实际表现。"
-            }
-            else -> {
-                "基准读写测试完成。底层解密与数据流传输状态良好。"
-            }
-        }
-
         onProgress("测速完成", 1.0f)
 
         BenchmarkResult(
@@ -162,7 +146,7 @@ object BenchmarkEngine {
             random4kIops = iops,
             usbLinkSpeedMbps = usbSpeed,
             usbSpeedDesc = usbDesc,
-            assessment = assessment
+            assessment = ""
         )
     }
 }

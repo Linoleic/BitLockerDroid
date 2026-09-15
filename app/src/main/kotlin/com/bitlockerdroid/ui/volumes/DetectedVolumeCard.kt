@@ -228,13 +228,13 @@ fun DetectedVolumeCard(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "只读模式解锁挂载",
+                            text = "以只读模式解锁",
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = if (mountReadOnly) "解锁后仅可浏览读取，禁止写入修改" else "解锁后允许正常修改与读写",
+                            text = if (mountReadOnly) "只读保护，禁止写入修改" else "完整读写访问",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

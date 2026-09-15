@@ -415,14 +415,14 @@ fun UnlockedVolumeCard(
                         )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "卷未安全移除警告（Dirty Bit 置位）",
+                                text = "卷未安全移除警告",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = WarningAmber
                             )
                             Spacer(modifier = Modifier.height(3.dp))
                             Text(
-                                text = "检测到该分区上次在电脑上使用后未正常安全弹出。为防止文件系统损坏，建议开启「只读保护模式」，或在 Windows 上运行 chkdsk 修复。",
+                                text = "该分区上次未安全弹出。为防止数据损坏，建议开启只读保护或在电脑上修复。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -630,7 +630,7 @@ fun UnlockedVolumeCard(
                     enabled = !isEjecting,
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text(text = "测速诊断")
+                    Text(text = "基准测速")
                 }
 
                 OutlinedButton(

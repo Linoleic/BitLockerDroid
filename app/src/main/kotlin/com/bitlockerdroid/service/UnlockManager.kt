@@ -662,9 +662,6 @@ object UnlockManager {
                             notifyVolumeLocked(context, devicePath, offset, volumeId, rkId)
                         } else {
                             LogFile.write("app", "auto-unlock succeeded for $devicePath (guid=$volumeId)")
-                            r.getOrNull()?.let { core ->
-                                notifyVolumeReady(context, devicePath, core)
-                            }
                         }
                     } finally {
                         inProgressUnlocks.remove(devicePath)
@@ -683,49 +680,7 @@ object UnlockManager {
     }
 
     fun notifyVolumeReady(context: Context, devicePath: String, core: DislockerCore) {
-        if (!PreferenceHelper.isNotificationsEnabled(context)) return
-        val nm = context.getSystemService(NotificationManager::class.java) ?: return
-        ensureChannels(context)
-
-        val devInfo = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath)
-        val label = core.volumeLabel.ifBlank { devInfo.friendlyName.ifBlank { "BitLocker 加密卷" } }
-        val serial = try { core.reader.volumeSerial() } catch (_: Exception) { 0L }
-
-        val openIntent = com.bitlockerdroid.provider.BitLockerDocumentsProvider.createOpenVolumeIntent(context, devicePath, serial)
-        val openPendingIntent = PendingIntent.getActivity(
-            context,
-            devicePath.hashCode() and 0x7FFFFFFF,
-            openIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val ejectIntent = Intent(context, BitLockerCoreService::class.java).apply {
-            action = BitLockerCoreService.ACTION_SAFE_EJECT
-            putExtra(BitLockerCoreService.EXTRA_DEVICE_PATH, devicePath)
-        }
-        val ejectPendingIntent = PendingIntent.getService(
-            context,
-            (devicePath.hashCode() + 1) and 0x7FFFFFFF,
-            ejectIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notif = NotificationCompat.Builder(context, CHANNEL_ID_ALERTS)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("【$label】已就绪")
-            .setContentText("已自动解锁，点按即可直接打开文件")
-            .setContentIntent(openPendingIntent)
-            .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setDefaults(NotificationCompat.DEFAULT_ALL)
-            .addAction(
-                R.drawable.ic_drive_bitlocker,
-                "安全弹出",
-                ejectPendingIntent
-            )
-            .build()
-
-        nm.notify("bitlocker_ready:$devicePath", 1, notif)
+        // Handled via BitLockerCoreService ongoing foreground notification with file manager & safe eject actions.
     }
 
     fun notifyVolumeLocked(context: Context, devicePath: String, offset: Long, guid: String? = null, recoveryKeyId: String? = null) {

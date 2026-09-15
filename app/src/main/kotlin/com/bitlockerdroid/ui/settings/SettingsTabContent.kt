@@ -62,10 +62,10 @@ fun SettingsTabContent(
             val totalCount = rememberedCredentials.size
             val autoUnlockCount = rememberedCredentials.count { it.autoUnlock }
             val subtitleText = when {
-                totalCount == 0 -> "暂无已记住密码的设备，解锁时勾选“记住密码”即可配置"
-                autoUnlockCount == 0 -> "已保存 $totalCount 个设备凭据 · 均未开启自动解锁"
-                autoUnlockCount == totalCount -> "已保存 $totalCount 个设备凭据 · 全部已开启自动解锁"
-                else -> "已保存 $totalCount 个设备凭据 · $autoUnlockCount 个已开启自动解锁"
+                totalCount == 0 -> "暂无已记住密码的设备"
+                autoUnlockCount == 0 -> "已保存 $totalCount 个设备凭据 · 未开启自动解锁"
+                autoUnlockCount == totalCount -> "已保存 $totalCount 个设备凭据 · 全部开启自动解锁"
+                else -> "已保存 $totalCount 个设备凭据 · $autoUnlockCount 个开启自动解锁"
             }
             SettingsClickableItem(
                 title = "已记住的驱动器凭据",
@@ -91,7 +91,7 @@ fun SettingsTabContent(
             var virtualMount by remember { mutableStateOf(PreferenceHelper.virtualMountEnabled) }
             SettingsSwitchItem(
                 title = "全局 POSIX 虚拟挂载",
-                description = "解锁后自动挂载至 /storage，应用可直接通过绝对路径访问",
+                description = "挂载至 /storage，应用可直接通过绝对路径访问",
                 checked = virtualMount,
                 onCheckedChange = {
                     virtualMount = it
@@ -106,7 +106,7 @@ fun SettingsTabContent(
             val context = LocalContext.current
             SettingsSwitchItem(
                 title = "显示挂载常驻通知",
-                description = "在通知栏展示挂载状态，并提供一键「安全弹出」快捷操作",
+                description = "在通知栏展示挂载状态及快捷操作",
                 checked = notificationsEnabled,
                 onCheckedChange = {
                     notificationsEnabled = it
