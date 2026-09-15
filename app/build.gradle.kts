@@ -76,7 +76,32 @@ android {
                     ?: ""
             } else {
                 // Dynamic fallback: if release keystore is absent, fall back to debug signing config
-                initWith(getByName("debug"))
+                val debugConfig = getByName("debug")
+                initWith(debugConfig)
+
+                // AGP does not auto-create debug.keystore when validating release signing configs.
+                // If debug.keystore does not exist on disk (e.g. fresh CI machine), create it on the fly.
+                val dFile = debugConfig.storeFile
+                if (dFile != null && !dFile.exists()) {
+                    dFile.parentFile?.mkdirs()
+                    try {
+                        val keytool = org.gradle.internal.jvm.Jvm.current().javaHome.resolve("bin/keytool").absolutePath
+                        val pb = ProcessBuilder(
+                            keytool, "-genkeypair", "-v",
+                            "-keystore", dFile.absolutePath,
+                            "-storepass", "android",
+                            "-alias", "androiddebugkey",
+                            "-keypass", "android",
+                            "-keyalg", "RSA",
+                            "-keysize", "2048",
+                            "-validity", "10000",
+                            "-dname", "CN=Android Debug,O=Android,C=US"
+                        )
+                        pb.redirectErrorStream(true)
+                        val p = pb.start()
+                        p.waitFor()
+                    } catch (_: Exception) {}
+                }
             }
         }
     }
