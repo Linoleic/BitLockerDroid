@@ -18,8 +18,38 @@ data class BenchmarkResult(
 object BenchmarkEngine {
 
     fun detectUsbSpeed(devicePath: String): Int? {
+        // Priority 1: Trace USB sysfs device tree from the specific block device via Root
+        if (RootAccess.hasSu() && DevicePathSecurity.isValid(devicePath)) {
+            try {
+                val fileName = File(devicePath).name
+                val majMin = when {
+                    fileName.startsWith("public:") -> fileName.removePrefix("public:").replace(',', ':')
+                    fileName.startsWith("disk:") -> fileName.removePrefix("disk:").replace(',', ':')
+                    else -> {
+                        val lsOut = RootAccess.exec("ls -l '$devicePath' 2>/dev/null")?.second
+                        val match = Regex("""(\d+),\s*(\d+)""").find(lsOut ?: "")
+                        if (match != null) "${match.groupValues[1]}:${match.groupValues[2]}" else null
+                    }
+                }
+                if (majMin != null) {
+                    val cmd = "p=\$(realpath /sys/dev/block/$majMin 2>/dev/null); while [ \"\$p\" != \"/\" -a -n \"\$p\" ]; do if [ -f \"\$p/speed\" ]; then cat \"\$p/speed\"; break; fi; p=\$(dirname \"\$p\"); done"
+                    val out = RootAccess.exec(cmd)?.second?.trim()
+                    val s = out?.toIntOrNull()
+                    if (s != null && s > 0) {
+                        return s
+                    }
+                }
+                // Fallback: scan all active non-roothub USB device speeds via Root
+                val allSpeeds = RootAccess.exec("for s in /sys/bus/usb/devices/*/speed; do [ -f \"\$s\" ] && cat \"\$s\"; done 2>/dev/null")?.second
+                val list = allSpeeds?.lines()?.mapNotNull { it.trim().toIntOrNull() }?.filter { it > 0 }
+                if (!list.isNullOrEmpty()) {
+                    return list.maxOrNull()
+                }
+            } catch (_: Exception) {}
+        }
+
+        // Priority 2: Direct unprivileged sysfs read (if permitted by SELinux)
         try {
-            // Find USB device speed by traversing sysfs USB bus devices
             val usbDir = File("/sys/bus/usb/devices")
             if (usbDir.exists() && usbDir.isDirectory) {
                 val speeds = mutableListOf<Int>()
