@@ -326,6 +326,10 @@ class DislockerCore private constructor(
         try { NativeBridge.nativeGetRecoveryKeyId(handle) } catch (e: Exception) { null }
     }
 
+    val isDirty: Boolean by lazy {
+        try { reader.isDirty } catch (e: Exception) { false }
+    }
+
     /** Returns Pair(totalBytes, freeBytes) queried from native filesystem, or null if unavailable. */
     fun getSpaceInfo(): Pair<Long, Long>? {
         try {

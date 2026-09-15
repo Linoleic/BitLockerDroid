@@ -76,6 +76,15 @@ class NtfsFileRecord(
         return null
     }
 
+    /** Attribute list entries ($ATTRIBUTE_LIST, 0x20), if present. */
+    val attributeList: List<AttributeListEntry>?
+        get() {
+            for (a in attributes) {
+                if (a is AttributeListAttribute) return a.entries
+            }
+            return null
+        }
+
     companion object {
         const val TYPE_STANDARD_INFO = 0x10
         const val TYPE_ATTRIBUTE_LIST = 0x20
@@ -88,6 +97,22 @@ class NtfsFileRecord(
         const val FILE_RECORD_MAGIC = 0x454c4946L // "FILE"
     }
 }
+
+/** An entry in $ATTRIBUTE_LIST (0x20). */
+class AttributeListEntry(
+    val type: Int,
+    val length: Int,
+    val lowestVcn: Long,
+    val mftReference: Long,
+    val instance: Int,
+    val name: String
+)
+
+/** Attribute list attribute ($ATTRIBUTE_LIST, 0x20). */
+class AttributeListAttribute(
+    type: Int,
+    val entries: List<AttributeListEntry>
+) : NtfsAttribute(type)
 
 /** Standard information attribute ($STANDARD_INFORMATION). */
 class StandardInfoAttribute(
@@ -228,6 +253,15 @@ object NtfsFileRecordParser {
                         attrs.add(StandardInfoAttribute(type.toInt(), cTime, mTime))
                     }
                 }
+                NtfsFileRecord.TYPE_ATTRIBUTE_LIST -> {
+                    if (nonResident == 0) {
+                        val valuePos = attrOff.toInt() + valueOff.toInt()
+                        if (valuePos >= 0 && valuePos + valueLen <= rec.size) {
+                            val entries = parseAttributeList(rec, valuePos, valueLen)
+                            attrs.add(AttributeListAttribute(type.toInt(), entries))
+                        }
+                    }
+                }
                 NtfsFileRecord.TYPE_FILE_NAME -> {
                     val valuePos = attrOff.toInt() + valueOff.toInt()
                     if (valuePos >= 0 && valuePos + valueLen.toInt() <= rec.size) {
@@ -274,6 +308,38 @@ object NtfsFileRecordParser {
         }
 
         return NtfsFileRecord(recordNumber, attrs)
+    }
+
+    private fun parseAttributeList(rec: ByteArray, start: Int, length: Int): List<AttributeListEntry> {
+        val entries = ArrayList<AttributeListEntry>()
+        var pos = start
+        val end = start + length
+        while (pos + 26 <= end) {
+            val entryType = le32(rec, pos).toInt()
+            val entryLen = le16(rec, pos + 4)
+            if (entryLen < 26 || pos + entryLen > end) break
+            val nameLen = rec[pos + 6].toInt() and 0xff
+            val nameOff = rec[pos + 7].toInt() and 0xff
+            val lowestVcn = le64(rec, pos + 8)
+            val mftRef = le64(rec, pos + 16)
+            val instance = le16(rec, pos + 24)
+            val name = if (nameLen > 0 && pos + nameOff + nameLen * 2 <= pos + entryLen) {
+                String(rec, pos + nameOff, nameLen * 2, Charsets.UTF_16LE)
+            } else ""
+
+            entries.add(
+                AttributeListEntry(
+                    type = entryType,
+                    length = entryLen,
+                    lowestVcn = lowestVcn,
+                    mftReference = mftRef,
+                    instance = instance,
+                    name = name
+                )
+            )
+            pos += entryLen
+        }
+        return entries
     }
 
     private fun parseFileName(rec: ByteArray, valuePos: Int, valueLen: Int): String? {

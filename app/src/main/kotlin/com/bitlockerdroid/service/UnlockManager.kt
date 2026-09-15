@@ -125,7 +125,8 @@ object UnlockManager {
                     usedBytes = usedBytes,
                     sectorSize = core.info.sectorSize,
                     volumeSerial = serial,
-                    isRecovery = core.isRecovery
+                    isRecovery = core.isRecovery,
+                    isDirty = core.isDirty
                 )
             }
         }
@@ -796,7 +797,8 @@ data class UnlockedVolume(
     val usedBytes: Long = 0L,
     val sectorSize: Int = 512,
     val volumeSerial: Long = 0L,
-    val isRecovery: Boolean = false
+    val isRecovery: Boolean = false,
+    val isDirty: Boolean = false
 )
 
 /** A BitLocker volume detected on the bus but not yet unlocked. */

@@ -59,10 +59,29 @@ class Fat32Reader(
         return name.toString().ifEmpty { null }
     }
 
+    private var cachedDirty: Boolean? = null
+
+    override val isDirty: Boolean
+        get() {
+            cachedDirty?.let { return it }
+            // In FAT32, cluster 1 in the FAT table (offset fatStartByte + 4)
+            // holds volume integrity flags in its high 2 bits:
+            //   Bit 31 (0x80000000): Clean shut down bit (1 = clean, 0 = dirty)
+            //   Bit 30 (0x40000000): Hard error bit (1 = clean, 0 = disk error)
+            val sector = ByteArray(512)
+            val dirty = if (source.read(boot.fatStartByte, sector, 0, 512) >= 8) {
+                val fat1 = le32(sector, 4)
+                (fat1 and 0x80000000L) == 0L || (fat1 and 0x40000000L) == 0L
+            } else false
+            cachedDirty = dirty
+            return dirty
+        }
+
     /** first cluster -> entry metadata, filled by [listDirectory]. */
     private val entryCache = ConcurrentHashMap<Long, VolumeEntry>()
 
     override fun invalidateCache() {
+        cachedDirty = null
         entryCache.clear()
     }
 

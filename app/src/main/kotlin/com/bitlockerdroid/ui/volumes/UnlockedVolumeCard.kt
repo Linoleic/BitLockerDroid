@@ -50,6 +50,7 @@ fun UnlockedVolumeCard(
     val activeMounts by VirtualStorageMountManager.activeMountsFlow.collectAsState()
     val vMount = activeMounts[volume.devicePath]
     var detailsExpanded by remember { mutableStateOf(false) }
+    var showBenchmarkDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(volume.devicePath, vMount) {
         if (vMount == null &&
@@ -382,6 +383,49 @@ fun UnlockedVolumeCard(
                     text = if (volume.canWrite) stringResource(R.string.writable) else stringResource(R.string.read_only),
                     color = if (volume.canWrite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                 )
+                if (volume.isDirty) {
+                    MetaChip(
+                        text = "⚠️ 脏卷 (未安全弹出)",
+                        color = WarningAmber
+                    )
+                }
+            }
+
+            if (volume.isDirty) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = WarningAmber.copy(alpha = 0.12f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, WarningAmber.copy(alpha = 0.45f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text(
+                            text = "⚠️",
+                            fontSize = 18.sp,
+                            modifier = Modifier.padding(end = 10.dp, top = 1.dp)
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "卷未安全移除警告（Dirty Bit 置位）",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = WarningAmber
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = "检测到该分区上次在电脑上使用后未正常安全弹出。为防止文件系统损坏，建议开启「只读保护模式」，或在 Windows 上运行 chkdsk 修复。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
@@ -493,6 +537,14 @@ fun UnlockedVolumeCard(
                                 value = permissionDesc,
                                 isMonospace = false
                             )
+
+                            // 6. 文件系统健康度
+                            val healthDesc = if (volume.isDirty) "异常 (Dirty Bit 置位，未安全弹出)" else "健康 (Clean，正常卸载)"
+                            VolumeDetailRow(
+                                label = "卷健康状态",
+                                value = healthDesc,
+                                isMonospace = false
+                            )
                         }
                     }
                 }
@@ -567,8 +619,16 @@ fun UnlockedVolumeCard(
             // Action Buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                OutlinedButton(
+                    onClick = { showBenchmarkDialog = true },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(text = "测速诊断")
+                }
+
                 OutlinedButton(
                     onClick = onLock,
                     shape = RoundedCornerShape(12.dp)
@@ -584,6 +644,13 @@ fun UnlockedVolumeCard(
                 }
             }
         }
+    }
+
+    if (showBenchmarkDialog) {
+        com.bitlockerdroid.ui.dialogs.BenchmarkDialog(
+            devicePath = volume.devicePath,
+            onDismiss = { showBenchmarkDialog = false }
+        )
     }
 }
 

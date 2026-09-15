@@ -37,6 +37,9 @@ interface VolumeReader {
      *  vold node path) yields fresh document IDs and the file manager reloads. */
     fun volumeSerial(): Long
 
+    /** Returns true if the volume has a dirty bit set (e.g. unmounted uncleanly from Windows). */
+    val isDirty: Boolean get() = false
+
     /** Invalidates any in-memory cached directory or entry structures. */
     fun invalidateCache() {}
 }

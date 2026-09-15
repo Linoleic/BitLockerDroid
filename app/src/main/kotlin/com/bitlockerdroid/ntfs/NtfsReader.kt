@@ -29,17 +29,29 @@ class NtfsReader(
         return boot.serial
     }
 
-    override fun volumeLabel(): String? {
-        // $Volume MFT record (3) holds $VOLUME_NAME (0x60), a resident
-        // UTF-16LE string (NUL-terminated).
-        return readVolumeName(3L)
-    }
+    private var cachedVolumeInfo: Pair<String?, Boolean>? = null
 
-    private fun readVolumeName(recordNumber: Long): String? {
-        val bytePos = boot.mftStartByte + recordNumber * MFT_RECORD_SIZE
+    override fun volumeLabel(): String? = readVolumeInformation().first
+
+    override val isDirty: Boolean get() = readVolumeInformation().second
+
+    private fun readVolumeInformation(): Pair<String?, Boolean> {
+        cachedVolumeInfo?.let { return it }
+        val bytePos = boot.mftStartByte + 3L * MFT_RECORD_SIZE
         val rec = ByteArray(MFT_RECORD_SIZE)
-        if (source.read(bytePos, rec, 0, MFT_RECORD_SIZE) < 56) return null
-        if (!NtfsFileRecordParser.applyUpdateSequenceArray(rec, 0x04, boot.bytesPerSector)) return null
+        if (source.read(bytePos, rec, 0, MFT_RECORD_SIZE) < 56) {
+            val res = Pair<String?, Boolean>(null, false)
+            cachedVolumeInfo = res
+            return res
+        }
+        if (!NtfsFileRecordParser.applyUpdateSequenceArray(rec, 0x04, boot.bytesPerSector)) {
+            val res = Pair<String?, Boolean>(null, false)
+            cachedVolumeInfo = res
+            return res
+        }
+
+        var label: String? = null
+        var isDirty = false
 
         var attrOff = le16(rec, 20).toLong()
         while (attrOff > 0 && attrOff < rec.size - 16) {
@@ -47,24 +59,34 @@ class NtfsReader(
             if (type == 0xffffffffL) break
             val length = le32(rec, attrOff.toInt() + 4).toInt()
             if (length < 16 || attrOff + length > rec.size) break
-            if (type == 0x60L) {
-                val nonResident = rec[attrOff.toInt() + 8].toInt() and 0xff
-                if (nonResident == 0) {
-                    val valueLen = le32(rec, attrOff.toInt() + 16).toInt()
-                    val valueOff = le16(rec, attrOff.toInt() + 20)
-                    val start = attrOff.toInt() + valueOff
+            val nonResident = rec[attrOff.toInt() + 8].toInt() and 0xff
+            if (nonResident == 0) {
+                val valueLen = le32(rec, attrOff.toInt() + 16).toInt()
+                val valueOff = le16(rec, attrOff.toInt() + 20)
+                val start = attrOff.toInt() + valueOff
+
+                if (type == 0x60L) { // $VOLUME_NAME
                     if (start + valueLen <= rec.size && valueLen >= 2) {
-                        // UTF-16LE, possibly NUL-terminated.
                         var end = start + valueLen
                         if (rec[end - 2].toInt() == 0 && rec[end - 1].toInt() == 0) end -= 2
-                        return String(rec, start, end - start, Charsets.UTF_16LE)
+                        label = String(rec, start, end - start, Charsets.UTF_16LE)
+                    }
+                } else if (type == 0x70L) { // $VOLUME_INFORMATION
+                    // Offset 8: major_ver (u8), 9: minor_ver (u8), 10: flags (u16 LE)
+                    // Flags: 0x0001 = VOLUME_IS_DIRTY, 0x4000 = VOLUME_CHKDSK_UNDERWAY
+                    if (start + 12 <= rec.size) {
+                        val flags = le16(rec, start + 10)
+                        if ((flags and 0x0001) != 0 || (flags and 0x4000) != 0) {
+                            isDirty = true
+                        }
                     }
                 }
-                return null
             }
             attrOff += length
         }
-        return null
+        val res = Pair(label, isDirty)
+        cachedVolumeInfo = res
+        return res
     }
 
     override fun readEntry(ref: Long): VolumeEntry? {
@@ -73,14 +95,63 @@ class NtfsReader(
             ref = ref,
             isDirectory = rec.isDirectory,
             fileName = rec.fileName,
-            fileSize = rec.fileSize,
+            fileSize = resolveFileSize(rec),
             lastModified = rec.lastModified
         )
+    }
+
+    /** Resolves all data runs for a file record, following $ATTRIBUTE_LIST if present. */
+    private fun resolveDataRuns(record: NtfsFileRecord): List<DataRun>? {
+        val directRuns = record.dataRuns()
+        val attrList = record.attributeList
+        if (attrList.isNullOrEmpty()) {
+            return directRuns
+        }
+
+        val allRuns = ArrayList<DataRun>()
+        if (directRuns != null) {
+            allRuns.addAll(directRuns)
+        }
+
+        for (entry in attrList) {
+            if (entry.type == NtfsFileRecord.TYPE_DATA && entry.name.isEmpty()) {
+                val childRecNum = entry.mftReference and 0x0000FFFFFFFFFFFFL
+                if (childRecNum != record.recordNumber) {
+                    val childRec = readRecord(childRecNum)
+                    childRec?.dataRuns()?.let { childRuns ->
+                        allRuns.addAll(childRuns)
+                    }
+                }
+            }
+        }
+
+        return if (allRuns.isNotEmpty()) allRuns else directRuns
+    }
+
+    /** Resolves the effective file size, following $ATTRIBUTE_LIST if primary size is 0. */
+    private fun resolveFileSize(record: NtfsFileRecord): Long {
+        val directSize = record.fileSize
+        if (directSize > 0L) return directSize
+        val attrList = record.attributeList ?: return directSize
+        var maxSize = directSize
+        for (entry in attrList) {
+            if (entry.type == NtfsFileRecord.TYPE_DATA && entry.name.isEmpty()) {
+                val childRecNum = entry.mftReference and 0x0000FFFFFFFFFFFFL
+                if (childRecNum != record.recordNumber) {
+                    val childRec = readRecord(childRecNum)
+                    if (childRec != null && childRec.fileSize > maxSize) {
+                        maxSize = childRec.fileSize
+                    }
+                }
+            }
+        }
+        return maxSize
     }
 
     private val cache = HashMap<Long, NtfsFileRecord?>()
 
     override fun invalidateCache() {
+        cachedVolumeInfo = null
         synchronized(cache) {
             cache.clear()
         }
@@ -277,7 +348,8 @@ class NtfsReader(
                                     val idxTime = if (keyStart + 24 <= end) VolumeTimestampUtil.filetimeToMillis(le64(buf, keyStart + 16)) else 0L
                                     val childTime = child?.lastModified ?: 0L
                                     val modTime = if (childTime > 0L) childTime else idxTime
-                                    out[dedupeKey] = VolumeDirEntry(name, recNum, isDir, child?.fileSize ?: 0L, modTime)
+                                    val effectiveSize = child?.let { resolveFileSize(it) } ?: 0L
+                                    out[dedupeKey] = VolumeDirEntry(name, recNum, isDir, effectiveSize, modTime)
                                 }
                             }
                         }
@@ -305,9 +377,8 @@ class NtfsReader(
             return n
         }
 
-        // Non-resident: walk data runs. Each run covers [runFileStart, runFileEnd)
-        // bytes of the logical file, backed by clusters at run.clusterOffset.
-        val runs = record.dataRuns() ?: return 0
+        // Non-resident: walk data runs. Supports fragmented data runs distributed across $ATTRIBUTE_LIST.
+        val runs = resolveDataRuns(record) ?: return 0
         var filePos = offset
         var remaining = len.toLong()
         var runFileStart = 0L

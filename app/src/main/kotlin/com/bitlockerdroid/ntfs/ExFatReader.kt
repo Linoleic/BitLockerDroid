@@ -51,6 +51,17 @@ class ExFatReader(
         return 0L
     }
 
+    override val isDirty: Boolean
+        get() {
+            // exFAT VolumeFlags is a u16 at boot offset 0x6A (106).
+            // Bit 1 (0x0002) = VolumeDirty, Bit 2 (0x0004) = MediaFailure.
+            if (bootBytes.size >= 0x6C) {
+                val flags = le16(bootBytes, 0x6A)
+                return (flags and 0x0002) != 0 || (flags and 0x0004) != 0
+            }
+            return false
+        }
+
     /** Cache of entries by ref. */
     private val entryCache = ConcurrentHashMap<Long, VolumeEntry>()
     private val noFatChainMap = ConcurrentHashMap<Long, Boolean>()
