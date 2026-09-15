@@ -88,15 +88,17 @@ jobs:
           path: build.log
 
       - name: Prepare Artifacts & Checksums
+        id: prepare_artifacts
         run: |
           mkdir -p dist
           SHORT_SHA="${GITHUB_SHA::7}"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
-          cp app/build/outputs/apk/release/app-release.apk "dist/BitLockerDroid-release-${SHORT_SHA}.apk"
-          cp app/build/outputs/apk/debug/app-debug.apk "dist/BitLockerDroid-debug-${SHORT_SHA}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "dist/release_${SHORT_SHA}.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/debug_${SHORT_SHA}.apk"
 
           cd dist
-          sha256sum BitLockerDroid-*.apk > checksums.txt
+          sha256sum *.apk > checksums.txt
           cd ..
 
           echo "Artifacts generated in dist/:"
@@ -107,6 +109,6 @@ jobs:
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: BitLockerDroid-APKs-${{ github.sha }}
+          name: artifact_${{ steps.prepare_artifacts.outputs.short_sha }}
           path: dist/*
           retention-days: 30
