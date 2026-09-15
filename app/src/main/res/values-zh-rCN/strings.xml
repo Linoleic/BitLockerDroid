@@ -51,7 +51,7 @@
     <string name="settings_credentials_clear">清空所有凭据</string>
     <string name="settings_credentials_cleared">已清空所有记住的密码凭据</string>
     <string name="settings_credentials_empty">当前未保存任何设备的解锁凭据</string>
-    <string name="settings_header_mount">挂载与文件访问控制</string>
+    <string name="settings_header_mount">常规</string>
     <string name="settings_mount_readonly">默认只读模式挂载</string>
     <string name="settings_mount_readonly_desc">保护驱动器数据，禁止修改或删除文件</string>
     <string name="settings_conflict_suffix">同名冲突自动避让</string>

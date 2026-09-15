@@ -51,7 +51,7 @@
     <string name="settings_credentials_clear">Clear Credentials</string>
     <string name="settings_credentials_cleared">All remembered passwords cleared</string>
     <string name="settings_credentials_empty">No remembered credentials saved</string>
-    <string name="settings_header_mount">Mount &amp; File Access</string>
+    <string name="settings_header_mount">General</string>
     <string name="settings_mount_readonly">Mount Read-Only by Default</string>
     <string name="settings_mount_readonly_desc">Protect drive data by disallowing file modification or deletion</string>
     <string name="settings_conflict_suffix">Auto Conflict Suffix</string>

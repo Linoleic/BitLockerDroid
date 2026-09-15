@@ -88,33 +88,63 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         fun createOpenVolumeIntent(context: Context, devicePath: String, serial: Long): Intent {
             val rootId = rootIdFor(devicePath, serial)
             val rootUri = DocumentsContract.buildRootUri(AUTHORITY, rootId)
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                addCategory(Intent.CATEGORY_DEFAULT)
-                setDataAndType(rootUri, DocumentsContract.Document.MIME_TYPE_DIR)
-                addFlags(
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-                    Intent.FLAG_ACTIVITY_NEW_TASK
-                )
-            }
             val pm = context.packageManager
-            if (intent.resolveActivity(pm) != null) {
-                return intent
+
+            // Preferred DocumentsUI packages in order
+            val knownPackages = listOf("com.google.android.documentsui", "com.android.documentsui")
+            for (pkg in knownPackages) {
+                val candidateIntent = Intent(Intent.ACTION_VIEW).apply {
+                    setPackage(pkg)
+                    setDataAndType(rootUri, DocumentsContract.Document.MIME_TYPE_DIR)
+                    addCategory(Intent.CATEGORY_DEFAULT)
+                    addFlags(
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                        Intent.FLAG_ACTIVITY_NEW_TASK
+                    )
+                }
+                if (candidateIntent.resolveActivity(pm) != null) {
+                    return candidateIntent
+                }
             }
-            val docUiIntent = Intent(Intent.ACTION_VIEW).apply {
-                setPackage("com.google.android.documentsui")
+
+            // Fallback 1: Implicit intent with MIME_TYPE_DIR
+            val implicitDirIntent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(rootUri, DocumentsContract.Document.MIME_TYPE_DIR)
+                addCategory(Intent.CATEGORY_DEFAULT)
                 addFlags(
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or
                     Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
                     Intent.FLAG_ACTIVITY_NEW_TASK
                 )
             }
-            if (docUiIntent.resolveActivity(pm) != null) {
-                return docUiIntent
+            if (implicitDirIntent.resolveActivity(pm) != null) {
+                return implicitDirIntent
             }
-            docUiIntent.setPackage("com.android.documentsui")
-            return docUiIntent
+
+            // Fallback 2: Implicit intent with root URI
+            val implicitRootIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(rootUri, DocumentsContract.Root.MIME_TYPE_ITEM)
+                addCategory(Intent.CATEGORY_DEFAULT)
+                addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_ACTIVITY_NEW_TASK
+                )
+            }
+            if (implicitRootIntent.resolveActivity(pm) != null) {
+                return implicitRootIntent
+            }
+
+            // Fallback 3: Generic implicit view intent
+            return Intent(Intent.ACTION_VIEW, rootUri).apply {
+                addCategory(Intent.CATEGORY_DEFAULT)
+                addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_ACTIVITY_NEW_TASK
+                )
+            }
         }
 
         /** Encode the device path + volume serial into the docId so the
