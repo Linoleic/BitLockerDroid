@@ -272,6 +272,37 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             out.putString("document_id", newDocId)
             return out
         }
+        if (method == "search_documents") {
+            if (UnlockManager.unlockedVolumes.isEmpty()) {
+                UnlockManager.restoreRemembered(appContext)
+            }
+            val rootId = extras?.getString("root_id")
+                ?: UnlockManager.unlockedVolumes.firstOrNull()?.let {
+                    val core = UnlockManager.get(it.devicePath)
+                    val serial = try { core?.reader?.volumeSerial() ?: 0L } catch (_: Exception) { 0L }
+                    rootIdFor(it.devicePath, serial)
+                } ?: return null
+            val query = arg ?: extras?.getString("query") ?: ""
+            val cursor = querySearchDocuments(rootId, query, null)
+            val names = ArrayList<String>()
+            val paths = ArrayList<String>()
+            val docIds = ArrayList<String>()
+            val nameIdx = cursor.getColumnIndex(Document.COLUMN_DISPLAY_NAME)
+            val summaryIdx = cursor.getColumnIndex(Document.COLUMN_SUMMARY)
+            val idIdx = cursor.getColumnIndex(Document.COLUMN_DOCUMENT_ID)
+            while (cursor.moveToNext()) {
+                if (nameIdx >= 0) names.add(cursor.getString(nameIdx))
+                if (summaryIdx >= 0) paths.add(cursor.getString(summaryIdx) ?: "")
+                if (idIdx >= 0) docIds.add(cursor.getString(idIdx))
+            }
+            cursor.close()
+            val out = Bundle()
+            out.putStringArrayList("names", names)
+            out.putStringArrayList("paths", paths)
+            out.putStringArrayList("doc_ids", docIds)
+            out.putInt("count", names.size)
+            return out
+        }
         try {
             val res = super.call(method, arg, extras)
             LogFile.write("provider", "call SUCCESS method=$method arg=$arg")
@@ -309,7 +340,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                 row.add(Root.COLUMN_CAPACITY_BYTES, v.size)
             }
             val canWrite = (core?.writer?.isMounted == true) && !com.bitlockerdroid.util.PreferenceHelper.mountReadOnly
-            var rootFlags = Root.FLAG_LOCAL_ONLY or Root.FLAG_SUPPORTS_IS_CHILD
+            var rootFlags = Root.FLAG_LOCAL_ONLY or Root.FLAG_SUPPORTS_IS_CHILD or Root.FLAG_SUPPORTS_SEARCH
             if (canWrite) {
                 rootFlags = rootFlags or Root.FLAG_SUPPORTS_CREATE
             }
@@ -383,6 +414,141 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             LogFile.write("provider", "queryChildDocuments EXCEPTION parent=$parentDocumentId: ${Log.getStackTraceString(t)}")
             throw t
         }
+    }
+
+    override fun querySearchDocuments(
+        rootId: String,
+        projection: Array<out String>?,
+        queryArgs: Bundle
+    ): Cursor {
+        val q = queryArgs.getString(DocumentsContract.QUERY_ARG_DISPLAY_NAME)
+            ?: queryArgs.getString("android:query-arg-display-name")
+            ?: queryArgs.getString("query")
+            ?: queryArgs.getString(Intent.EXTRA_CONTENT_QUERY)
+            ?: ""
+        LogFile.write("provider", "querySearchDocuments (queryArgs): rootId=$rootId query='$q'")
+        return querySearchDocuments(rootId, q, projection)
+    }
+
+    override fun querySearchDocuments(
+        rootId: String,
+        query: String,
+        projection: Array<out String>?
+    ): Cursor {
+        LogFile.write("provider", "querySearchDocuments: rootId=$rootId query='$query'")
+        val result = MatrixCursor(resolveDocumentProjection(projection))
+        val trimmedQuery = query.trim()
+        if (trimmedQuery.isEmpty()) {
+            return result
+        }
+
+        val core = coreFor(rootId)
+            ?: (if (UnlockManager.activeSessions.size == 1) UnlockManager.activeSessions.first() else null)
+            ?: run {
+                LogFile.write("provider", "querySearchDocuments: core not found for $rootId")
+                return result
+            }
+
+        val rootRef = core.reader.rootRef
+        val serial = try { core.reader.volumeSerial() } catch (_: Exception) { 0L }
+        val hideSvi = try { PreferenceHelper.hideSviFolder } catch (_: Throwable) { true }
+
+        val maxResults = 500
+        val maxDirs = 2000
+        val timeLimitMs = 4000L
+        val startTime = System.currentTimeMillis()
+
+        val queue = ArrayDeque<Pair<Long, String>>() // (dirRecord, dirPath)
+        val visited = HashSet<Long>()
+        queue.add(Pair(rootRef, "/"))
+        visited.add(rootRef)
+        var dirsScanned = 0
+
+        try {
+            while (queue.isNotEmpty() && result.count < maxResults) {
+                if (System.currentTimeMillis() - startTime > timeLimitMs) {
+                    LogFile.write("provider", "querySearchDocuments: search reached time limit of ${timeLimitMs}ms")
+                    break
+                }
+                if (dirsScanned++ >= maxDirs) {
+                    LogFile.write("provider", "querySearchDocuments: search reached dir limit of $maxDirs")
+                    break
+                }
+
+                val (parentRecord, parentPath) = queue.removeFirst()
+                val entries = try {
+                    core.reader.listDirectory(parentRecord)
+                } catch (e: Exception) {
+                    LogFile.write("provider", "querySearchDocuments: listDirectory failed for $parentPath: ${e.message}")
+                    emptyList()
+                }
+
+                for (e in entries) {
+                    if (hideSvi && e.name.equals("System Volume Information", ignoreCase = true)) {
+                        continue
+                    }
+                    val childPath = if (parentPath == "/") "/${e.name}" else "$parentPath/${e.name}"
+                    core.registerPath(e.ref, childPath, parentRecord)
+
+                    if (matchesSearchQuery(e.name, trimmedQuery)) {
+                        val docId = docIdFor(core.devicePath, serial, e.ref)
+                        val parentDisplay = if (parentPath == "/") "/" else parentPath
+                        addDocumentRow(result, docId, e, summary = parentDisplay)
+                        if (result.count >= maxResults) break
+                    }
+
+                    if (e.isDirectory && visited.add(e.ref)) {
+                        queue.add(Pair(e.ref, childPath))
+                    }
+                }
+            }
+            LogFile.write("provider", "querySearchDocuments: found ${result.count} matches in $dirsScanned dirs (${System.currentTimeMillis() - startTime}ms)")
+            result.setNotificationUri(
+                appContext.contentResolver,
+                DocumentsContract.buildSearchDocumentsUri(AUTHORITY, rootId, query)
+            )
+            return result
+        } catch (t: Throwable) {
+            LogFile.write("provider", "querySearchDocuments EXCEPTION rootId=$rootId query='$query': ${Log.getStackTraceString(t)}")
+            throw t
+        }
+    }
+
+    private fun matchesSearchQuery(fileName: String, query: String): Boolean {
+        val q = query.trim()
+        if (q.isEmpty()) return false
+
+        // Exact or substring match (case-insensitive)
+        if (fileName.contains(q, ignoreCase = true)) return true
+
+        // Wildcard pattern match (e.g. *.txt, report*2026, test?.doc)
+        if (q.contains('*') || q.contains('?')) {
+            try {
+                val sb = java.lang.StringBuilder("^")
+                for (ch in q) {
+                    when (ch) {
+                        '*' -> sb.append(".*")
+                        '?' -> sb.append(".")
+                        '$', '^', '[', ']', '(', ')', '{', '}', '|', '\\', '.', '+', '-' -> {
+                            sb.append('\\').append(ch)
+                        }
+                        else -> sb.append(ch)
+                    }
+                }
+                sb.append("$")
+                if (Regex(sb.toString(), RegexOption.IGNORE_CASE).containsMatchIn(fileName)) {
+                    return true
+                }
+            } catch (_: Exception) {}
+        }
+
+        // Multi-keyword match (all keywords present)
+        val tokens = q.split("\\s+".toRegex()).filter { it.isNotEmpty() }
+        if (tokens.size > 1) {
+            return tokens.all { fileName.contains(it, ignoreCase = true) }
+        }
+
+        return false
     }
 
     override fun isChildDocument(parentDocumentId: String, documentId: String): Boolean {
@@ -1159,7 +1325,12 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         row.add(Document.COLUMN_FLAGS, flags)
     }
 
-    private fun addDocumentRow(result: MatrixCursor, documentId: String, entry: VolumeDirEntry) {
+    private fun addDocumentRow(
+        result: MatrixCursor,
+        documentId: String,
+        entry: VolumeDirEntry,
+        summary: String? = null
+    ) {
         val core = coreFor(documentId)
         val record = recordFrom(documentId)
         val isRoot = (record == core?.reader?.rootRef)
@@ -1204,6 +1375,9 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         val lastModified = if (entry.lastModified > 0L) entry.lastModified else null
         row.add(Document.COLUMN_LAST_MODIFIED, lastModified)
         row.add(Document.COLUMN_FLAGS, flags)
+        if (summary != null) {
+            row.add(Document.COLUMN_SUMMARY, summary)
+        }
     }
 
     private fun notifyChange(documentId: String) {
@@ -1247,7 +1421,8 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             Document.COLUMN_MIME_TYPE,
             Document.COLUMN_SIZE,
             Document.COLUMN_LAST_MODIFIED,
-            Document.COLUMN_FLAGS
+            Document.COLUMN_FLAGS,
+            Document.COLUMN_SUMMARY
         )
         return projection.toList().toTypedArray()
     }
