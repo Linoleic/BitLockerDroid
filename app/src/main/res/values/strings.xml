@@ -76,7 +76,7 @@
     <string name="settings_view_log_desc">Inspect driver and file system activity</string>
     <string name="settings_clear_log_desc">Clear diagnostic log</string>
     <string name="settings_header_about">About &amp; Core Engines</string>
-    <string name="settings_about_desc">Native BitLocker volume manager for Android with SAF and FUSE virtual storage support</string>
+    <string name="settings_about_desc">Native BitLocker volume manager for Android, supporting NTFS, FAT32, and exFAT partitions with transparent file read and write access</string>
     <string name="about_title">About</string>
     <string name="notification_listener_label">BitUnlocker Drive Notification Filter</string>
     <string name="settings_suppress_corrupt_notification">Suppress System Format Prompts</string>
@@ -250,10 +250,8 @@
     <string name="notification_drive_detected_title">BitLocker Drive Detected</string>
     <string name="notification_drive_detected_desc">【%1$s】is locked, tap to unlock</string>
 
-    <!-- About Card Tech Badges -->
-    <string name="about_tech_saf">SAF Framework</string>
-    <string name="about_tech_fuse">FUSE Virtual Mount</string>
-    <string name="about_tech_align">16KB Aligned</string>
+    <!-- About Card Links -->
+    <string name="about_view_github">GitHub Repository</string>
 
     <!-- Mount Error Messages -->
     <string name="mount_err_cannot_get_guid">Cannot obtain volume GUID</string>

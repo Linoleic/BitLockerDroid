@@ -1,5 +1,7 @@
 package com.bitlockerdroid.ui.settings
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -8,19 +10,27 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.bitlockerdroid.R
 
+private const val REPO_URL = "https://github.com/Linoleic/BitLockerDroid"
+
 /** Modern Material 3 About Card for Settings Tab */
 @Composable
 fun AboutSettingsCard() {
+    val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(18.dp),
+            .padding(horizontal = 18.dp, vertical = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Surface(
@@ -60,30 +70,37 @@ fun AboutSettingsCard() {
             text = stringResource(R.string.settings_about_desc),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 8.dp)
         )
-        Spacer(modifier = Modifier.height(10.dp))
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            listOf(
-                stringResource(R.string.about_tech_saf),
-                stringResource(R.string.about_tech_fuse),
-                stringResource(R.string.about_tech_align)
-            ).forEach { tag ->
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                ) {
-                    Text(
-                        text = tag,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
+        Spacer(modifier = Modifier.height(16.dp))
+        FilledTonalButton(
+            onClick = {
+                try {
+                    uriHandler.openUri(REPO_URL)
+                } catch (_: Exception) {
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(REPO_URL)).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                    } catch (_: Exception) {
+                    }
                 }
-            }
+            },
+            shape = RoundedCornerShape(10.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_github),
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = stringResource(R.string.about_view_github),
+                style = MaterialTheme.typography.labelMedium
+            )
         }
     }
 }

@@ -76,7 +76,7 @@
     <string name="settings_view_log_desc">查看底层驱动与文件系统运行记录</string>
     <string name="settings_clear_log_desc">清空应用运行诊断日志</string>
     <string name="settings_header_about">关于与核心引擎</string>
-    <string name="settings_about_desc">基于 Android SAF 与 FUSE 架构的原生 BitLocker 卷管理工具，支持全功能透明读写与系统存储框架无缝集成。</string>
+    <string name="settings_about_desc">Android 原生 BitLocker 卷管理工具，支持 NTFS、FAT32 与 exFAT 分区解锁与文件透明读写访问。</string>
     <string name="about_title">关于</string>
     <string name="notification_listener_label">BitUnlocker 驱动器通知过滤服务</string>
     <string name="settings_suppress_corrupt_notification">屏蔽系统格式化提示</string>
@@ -250,10 +250,8 @@
     <string name="notification_drive_detected_title">检测到 BitLocker 加密盘</string>
     <string name="notification_drive_detected_desc">【%1$s】已锁定，点按立即解锁</string>
 
-    <!-- 关于卡片技术标签 -->
-    <string name="about_tech_saf">SAF 框架</string>
-    <string name="about_tech_fuse">FUSE 虚拟挂载</string>
-    <string name="about_tech_align">16KB 对齐</string>
+    <!-- 关于卡片链接 -->
+    <string name="about_view_github">GitHub 源码仓库</string>
 
     <!-- 挂载错误提示 -->
     <string name="mount_err_cannot_get_guid">无法获取卷 GUID</string>
