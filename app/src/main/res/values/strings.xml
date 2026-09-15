@@ -43,7 +43,7 @@
     <string name="scan_and_refresh">Scan &amp; Refresh</string>
     <string name="scanning_and_refreshing">Scanning and refreshing devices…</string>
     <string name="scan_and_refresh_done">Refreshed, %1$d BitLocker volumes found</string>
-    <string name="settings_header_unlock">Auto-Unlock &amp; Credentials</string>
+    <string name="settings_header_unlock">Devices &amp; Credentials</string>
     <string name="settings_auto_unlock">Auto-unlock on insertion</string>
     <string name="settings_auto_unlock_desc">Automatically decrypt drives with saved credentials on insertion</string>
     <string name="settings_credentials">Remembered Credentials</string>
@@ -56,6 +56,17 @@
     <string name="settings_mount_readonly_desc">Protect drive data by disallowing file modification or deletion</string>
     <string name="settings_conflict_suffix">Auto Conflict Suffix</string>
     <string name="settings_conflict_suffix_desc">Append \'(1)\' suffix when a duplicate file name exists</string>
+    <string name="settings_header_appearance">Personalization</string>
+    <string name="settings_theme">Theme</string>
+    <string name="settings_theme_desc">Choose display theme</string>
+    <string name="settings_theme_system">Follow System</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_language_desc">Choose display language</string>
+    <string name="settings_lang_system">Follow System</string>
+    <string name="settings_lang_zh">简体中文</string>
+    <string name="settings_lang_en">English</string>
     <string name="settings_header_diag">System &amp; Diagnostics</string>
     <string name="settings_root_status">Root Privilege</string>
     <string name="settings_root_ok">Granted (KernelSU / Magisk / APatch)</string>

@@ -40,7 +40,9 @@ import com.bitlockerdroid.service.DislockerCore
 import com.bitlockerdroid.service.KeyGuardService
 import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.ui.theme.BitLockerTheme
+import com.bitlockerdroid.ui.theme.ThemeMode
 import com.bitlockerdroid.util.DevicePathSecurity
+import com.bitlockerdroid.util.LocaleHelper
 import com.bitlockerdroid.util.LogFile
 import com.bitlockerdroid.util.PreferenceHelper
 import kotlinx.coroutines.Dispatchers
@@ -93,6 +95,10 @@ class UnlockDialogActivity : ComponentActivity() {
         applyIntent(intent)
     }
 
+    override fun attachBaseContext(newBase: android.content.Context) {
+        super.attachBaseContext(LocaleHelper.wrapContext(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -105,7 +111,8 @@ class UnlockDialogActivity : ComponentActivity() {
         applyIntent(intent)
 
         setContent {
-            BitLockerTheme {
+            val themeMode = ThemeMode.fromString(PreferenceHelper.themeMode)
+            BitLockerTheme(themeMode = themeMode) {
                 UnlockDialogScreen(
                     devicePath = devicePath,
                     initialGuid = initialGuid,

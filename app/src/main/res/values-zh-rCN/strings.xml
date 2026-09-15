@@ -43,7 +43,7 @@
     <string name="scan_and_refresh">扫描与刷新</string>
     <string name="scanning_and_refreshing">正在扫描与刷新设备…</string>
     <string name="scan_and_refresh_done">已刷新，发现 %1$d 个 BitLocker 卷</string>
-    <string name="settings_header_unlock">自动解锁与凭据管理</string>
+    <string name="settings_header_unlock">设备与凭据</string>
     <string name="settings_auto_unlock">插盘自动解锁</string>
     <string name="settings_auto_unlock_desc">插入已记住密码的设备时自动解密挂载</string>
     <string name="settings_credentials">已记住的磁盘密码</string>
@@ -56,6 +56,17 @@
     <string name="settings_mount_readonly_desc">保护驱动器数据，禁止修改或删除文件</string>
     <string name="settings_conflict_suffix">同名冲突自动避让</string>
     <string name="settings_conflict_suffix_desc">遇到重名文件时自动追加 \'(1)\' 编号避免意外覆盖原有文件</string>
+    <string name="settings_header_appearance">个性化</string>
+    <string name="settings_theme">主题设置</string>
+    <string name="settings_theme_desc">选择应用界面显示风格</string>
+    <string name="settings_theme_system">跟随系统</string>
+    <string name="settings_theme_light">浅色模式</string>
+    <string name="settings_theme_dark">深色模式</string>
+    <string name="settings_language">语言设置</string>
+    <string name="settings_language_desc">选择应用界面显示语言</string>
+    <string name="settings_lang_system">跟随系统</string>
+    <string name="settings_lang_zh">简体中文</string>
+    <string name="settings_lang_en">English</string>
     <string name="settings_header_diag">系统环境与诊断</string>
     <string name="settings_root_status">Root 提权环境</string>
     <string name="settings_root_ok">正常授权 (KernelSU / Magisk / APatch)</string>

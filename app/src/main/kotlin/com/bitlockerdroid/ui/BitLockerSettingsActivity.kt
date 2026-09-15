@@ -1,5 +1,6 @@
 package com.bitlockerdroid.ui
 
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -32,6 +33,7 @@ import com.bitlockerdroid.ui.dialogs.LogViewerDialog
 import com.bitlockerdroid.ui.dialogs.ShowPasswordDialog
 import com.bitlockerdroid.ui.settings.SettingsTabContent
 import com.bitlockerdroid.ui.theme.BitLockerTheme
+import com.bitlockerdroid.ui.theme.ThemeMode
 import com.bitlockerdroid.ui.volumes.VolumesTabContent
 import com.bitlockerdroid.util.LogFile
 import com.bitlockerdroid.util.PreferenceHelper
@@ -58,6 +60,12 @@ class BitLockerSettingsActivity : ComponentActivity() {
 
     private var mountReadOnlyState = mutableStateOf(false)
     private var lastScanTimestamp = 0L
+    private var themeModeState = mutableStateOf(com.bitlockerdroid.ui.theme.ThemeMode.fromString(PreferenceHelper.themeMode))
+    private var currentLanguageState = mutableStateOf(PreferenceHelper.appLanguage)
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(com.bitlockerdroid.util.LocaleHelper.wrapContext(newBase))
+    }
 
     private val stateChangeListener = object : UnlockManager.StateChangeListener {
         override fun onUnlockManagerStateChanged() {
@@ -95,7 +103,9 @@ class BitLockerSettingsActivity : ComponentActivity() {
         syncPreferences()
 
         setContent {
-            BitLockerTheme {
+            val currentTheme by themeModeState
+            val currentLang by currentLanguageState
+            BitLockerTheme(themeMode = currentTheme) {
                 MainAppScreen(
                     initialTab = intent?.getIntExtra("tab", 0) ?: 0,
                     unlockedVolumes = unlockedVolumesState,
@@ -105,6 +115,17 @@ class BitLockerSettingsActivity : ComponentActivity() {
                     logContent = logContentState.value,
                     rememberedCredentials = rememberedCredentialsState,
                     mountReadOnly = mountReadOnlyState.value,
+                    themeMode = currentTheme,
+                    currentLanguage = currentLang,
+                    onThemeModeChange = { newMode ->
+                        themeModeState.value = newMode
+                        PreferenceHelper.themeMode = newMode.name.lowercase()
+                    },
+                    onLanguageChange = { newLang ->
+                        currentLanguageState.value = newLang
+                        com.bitlockerdroid.util.LocaleHelper.applyLanguage(newLang)
+                        recreate()
+                    },
                     onToggleAutoUnlock = { id, enabled ->
                         PreferenceHelper.setAutoUnlockEnabled(this, id, enabled)
                         refreshRememberedCredentials()
@@ -354,6 +375,10 @@ fun MainAppScreen(
     logContent: String,
     rememberedCredentials: List<PreferenceHelper.SavedCredential>,
     mountReadOnly: Boolean,
+    themeMode: ThemeMode = ThemeMode.SYSTEM,
+    currentLanguage: String = PreferenceHelper.LANG_SYSTEM,
+    onThemeModeChange: (ThemeMode) -> Unit = {},
+    onLanguageChange: (String) -> Unit = {},
     onToggleAutoUnlock: (String, Boolean) -> Unit,
     onMountReadOnlyChange: (Boolean) -> Unit,
     onRefreshAndScan: () -> Unit,
@@ -483,6 +508,10 @@ fun MainAppScreen(
                 SettingsTabContent(
                     rememberedCredentials = rememberedCredentials,
                     mountReadOnly = mountReadOnly,
+                    themeMode = themeMode,
+                    currentLanguage = currentLanguage,
+                    onThemeModeChange = onThemeModeChange,
+                    onLanguageChange = onLanguageChange,
                     onOpenCredentialsManager = { showCredentialsDialog = true },
                     onMountReadOnlyChange = onMountReadOnlyChange,
                     onOpenLog = onOpenLog

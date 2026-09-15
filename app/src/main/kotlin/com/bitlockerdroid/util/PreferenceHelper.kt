@@ -269,6 +269,32 @@ object PreferenceHelper {
     var hideSviFolder: Boolean
         get() = try { prefs(ContextProvider.app).getBoolean("hide_svi_folder", true) } catch (_: Exception) { true }
         set(v) = try { prefs(ContextProvider.app).edit().putBoolean("hide_svi_folder", v).apply() } catch (_: Exception) {}
+
+    // ------- theme & personalization -------
+
+    const val THEME_SYSTEM = "system"
+    const val THEME_LIGHT = "light"
+    const val THEME_DARK = "dark"
+
+    var themeMode: String
+        get() = try { prefs(ContextProvider.app).getString("theme_mode", THEME_SYSTEM) ?: THEME_SYSTEM } catch (_: Exception) { THEME_SYSTEM }
+        set(v) = try { prefs(ContextProvider.app).edit().putString("theme_mode", v).apply() } catch (_: Exception) {}
+
+    fun getThemeMode(context: Context): String =
+        prefs(context).getString("theme_mode", THEME_SYSTEM) ?: THEME_SYSTEM
+
+    // ------- language -------
+
+    const val LANG_SYSTEM = "system"
+    const val LANG_ZH = "zh-CN"
+    const val LANG_EN = "en"
+
+    var appLanguage: String
+        get() = try { prefs(ContextProvider.app).getString("app_language", LANG_SYSTEM) ?: LANG_SYSTEM } catch (_: Exception) { LANG_SYSTEM }
+        set(v) = try { prefs(ContextProvider.app).edit().putString("app_language", v).apply() } catch (_: Exception) {}
+
+    fun getAppLanguage(context: Context): String =
+        prefs(context).getString("app_language", LANG_SYSTEM) ?: LANG_SYSTEM
 }
 
 /** Holds an application context once the app/service is running. */

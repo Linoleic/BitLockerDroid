@@ -18,7 +18,9 @@ import androidx.compose.ui.unit.dp
 import com.bitlockerdroid.R
 import com.bitlockerdroid.service.BitLockerCoreService
 import com.bitlockerdroid.service.UnlockManager
+import com.bitlockerdroid.ui.dialogs.SingleChoiceDialog
 import com.bitlockerdroid.ui.theme.SuccessGreen
+import com.bitlockerdroid.ui.theme.ThemeMode
 import com.bitlockerdroid.util.PreferenceHelper
 import com.bitlockerdroid.util.RootAccess
 import kotlinx.coroutines.Dispatchers
@@ -29,8 +31,12 @@ import kotlinx.coroutines.withContext
 fun SettingsTabContent(
     rememberedCredentials: List<PreferenceHelper.SavedCredential>,
     mountReadOnly: Boolean,
+    themeMode: ThemeMode,
+    currentLanguage: String,
     onOpenCredentialsManager: () -> Unit,
     onMountReadOnlyChange: (Boolean) -> Unit,
+    onThemeModeChange: (ThemeMode) -> Unit,
+    onLanguageChange: (String) -> Unit,
     onOpenLog: () -> Unit
 ) {
     val rootSolution by produceState(
@@ -58,7 +64,7 @@ fun SettingsTabContent(
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
         // Group 1: Device Credentials & Auto-Unlock Summary Entry
-        SettingsGroup(title = "设备与凭据") {
+        SettingsGroup(title = stringResource(R.string.settings_header_unlock)) {
             val totalCount = rememberedCredentials.size
             val autoUnlockCount = rememberedCredentials.count { it.autoUnlock }
             val subtitleText = when {
@@ -156,7 +162,72 @@ fun SettingsTabContent(
             )
         }
 
-        // Group 3: System Environment & Diagnostics with Real Root Solution Info
+        // Group 3: Personalization (Theme & Language)
+        SettingsGroup(title = stringResource(R.string.settings_header_appearance)) {
+            var showThemeDialog by remember { mutableStateOf(false) }
+            var showLanguageDialog by remember { mutableStateOf(false) }
+
+            val themeBadge = when (themeMode) {
+                ThemeMode.SYSTEM -> stringResource(R.string.settings_theme_system)
+                ThemeMode.LIGHT -> stringResource(R.string.settings_theme_light)
+                ThemeMode.DARK -> stringResource(R.string.settings_theme_dark)
+            }
+            SettingsClickableItem(
+                title = stringResource(R.string.settings_theme),
+                description = stringResource(R.string.settings_theme_desc),
+                badgeText = themeBadge,
+                badgeColor = MaterialTheme.colorScheme.primary,
+                onClick = { showThemeDialog = true }
+            )
+
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+            )
+
+            val langBadge = when (currentLanguage) {
+                PreferenceHelper.LANG_ZH -> stringResource(R.string.settings_lang_zh)
+                PreferenceHelper.LANG_EN -> stringResource(R.string.settings_lang_en)
+                else -> stringResource(R.string.settings_lang_system)
+            }
+            SettingsClickableItem(
+                title = stringResource(R.string.settings_language),
+                description = stringResource(R.string.settings_language_desc),
+                badgeText = langBadge,
+                badgeColor = MaterialTheme.colorScheme.primary,
+                onClick = { showLanguageDialog = true }
+            )
+
+            if (showThemeDialog) {
+                SingleChoiceDialog(
+                    title = stringResource(R.string.settings_theme),
+                    options = listOf(
+                        ThemeMode.SYSTEM to stringResource(R.string.settings_theme_system),
+                        ThemeMode.LIGHT to stringResource(R.string.settings_theme_light),
+                        ThemeMode.DARK to stringResource(R.string.settings_theme_dark)
+                    ),
+                    selected = themeMode,
+                    onSelect = onThemeModeChange,
+                    onDismiss = { showThemeDialog = false }
+                )
+            }
+
+            if (showLanguageDialog) {
+                SingleChoiceDialog(
+                    title = stringResource(R.string.settings_language),
+                    options = listOf(
+                        PreferenceHelper.LANG_SYSTEM to stringResource(R.string.settings_lang_system),
+                        PreferenceHelper.LANG_ZH to stringResource(R.string.settings_lang_zh),
+                        PreferenceHelper.LANG_EN to stringResource(R.string.settings_lang_en)
+                    ),
+                    selected = currentLanguage,
+                    onSelect = onLanguageChange,
+                    onDismiss = { showLanguageDialog = false }
+                )
+            }
+        }
+
+        // Group 4: System Environment & Diagnostics with Real Root Solution Info
         SettingsGroup(title = stringResource(R.string.settings_header_diag)) {
             SettingsStatusItem(
                 title = stringResource(R.string.settings_root_status),
@@ -175,8 +246,8 @@ fun SettingsTabContent(
             )
         }
 
-        // Group 4: About Footer
-        SettingsGroup(title = "关于") {
+        // Group 5: About Footer
+        SettingsGroup(title = stringResource(R.string.about_title)) {
             AboutSettingsCard()
         }
 
