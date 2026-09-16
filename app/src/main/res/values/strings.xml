@@ -90,6 +90,19 @@
     <string name="safe_to_unplug_title">【%1$s】Safely Ejected</string>
     <string name="safe_to_unplug_desc">All data synced. It is now safe to unplug the device.</string>
 
+    <string name="settings_header_advanced">Advanced Options</string>
+    <string name="settings_advanced_title">Advanced Options</string>
+    <string name="settings_advanced_desc">Root privilege, exclusive features, and system diagnostics</string>
+    <string name="settings_use_root">Enable Root Access</string>
+    <string name="settings_use_root_desc">Allow escalating privileges via su for kernel block devices and POSIX mounts. Disabling forces Non-Root mode.</string>
+    <string name="settings_root_features_header">Root-Exclusive Features</string>
+    <string name="settings_root_disabled_badge">Root Disabled</string>
+    <string name="settings_non_root_mode">Non-Root Mode</string>
+    <string name="settings_root_active">Root Active</string>
+    <string name="settings_root_not_granted">Root Not Granted</string>
+    <string name="settings_root_required_hint">Requires Root privilege to be enabled and granted</string>
+    <string name="settings_selinux_status">SELinux Status</string>
+
     <!-- General UI & Headers -->
     <string name="app_subtitle">BitLocker Storage Manager</string>
     <string name="usb_storage_device">USB Storage Device</string>

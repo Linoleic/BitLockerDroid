@@ -90,6 +90,19 @@
     <string name="safe_to_unplug_title">【%1$s】已安全弹出</string>
     <string name="safe_to_unplug_desc">数据已全部同步，现在可以安全拔出设备</string>
 
+    <string name="settings_header_advanced">高级选项</string>
+    <string name="settings_advanced_title">高级选项</string>
+    <string name="settings_advanced_desc">Root 权限控制、特有功能与系统诊断</string>
+    <string name="settings_use_root">使用 Root 权限</string>
+    <string name="settings_use_root_desc">允许应用通过 su 提权访问内核块设备与高级挂载；关闭后将强制以免 Root 模式运行</string>
+    <string name="settings_root_features_header">Root 特有功能</string>
+    <string name="settings_root_disabled_badge">未启用 Root</string>
+    <string name="settings_non_root_mode">免 Root 模式</string>
+    <string name="settings_root_active">Root 已启用</string>
+    <string name="settings_root_not_granted">未获取 Root</string>
+    <string name="settings_root_required_hint">需要开启并授权 Root 权限方可使用</string>
+    <string name="settings_selinux_status">SELinux 运行状态</string>
+
     <!-- 通用 UI 与标头 -->
     <string name="app_subtitle">BitLocker 存储管理器</string>
     <string name="usb_storage_device">USB 存储设备</string>

@@ -275,6 +275,17 @@ object PreferenceHelper {
         get() = try { prefs(ContextProvider.app).getBoolean("hide_svi_folder", true) } catch (_: Exception) { true }
         set(v) = try { prefs(ContextProvider.app).edit().putBoolean("hide_svi_folder", v).apply() } catch (_: Exception) {}
 
+    fun isUseRootAccess(context: Context): Boolean =
+        prefs(context).getBoolean("use_root_access", true)
+
+    fun setUseRootAccess(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean("use_root_access", enabled).apply()
+    }
+
+    var useRootAccess: Boolean
+        get() = try { prefs(ContextProvider.app).getBoolean("use_root_access", true) } catch (_: Exception) { true }
+        set(v) = try { prefs(ContextProvider.app).edit().putBoolean("use_root_access", v).apply() } catch (_: Exception) {}
+
     // ------- theme & personalization -------
 
     const val THEME_SYSTEM = "system"

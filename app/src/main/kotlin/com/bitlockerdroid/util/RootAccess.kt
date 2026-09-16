@@ -21,6 +21,7 @@ object RootAccess {
 
     data class RootSolutionInfo(
         val hasRoot: Boolean,
+        val isDeviceRooted: Boolean = hasRoot,
         val solutionName: String,
         val version: String? = null,
         val summary: String
@@ -30,8 +31,14 @@ object RootAccess {
     var cachedRootSolution: RootSolutionInfo? = null
         private set
 
-    /** Whether `su` is available (does not require an active grant). Results are cached for 10s. */
-    fun hasSu(forceRefresh: Boolean = false): Boolean {
+    fun invalidateCache() {
+        cachedHasSu = null
+        cachedRootSolution = null
+        lastSuCheckTime = 0L
+    }
+
+    /** Whether `su` is available on the device (does not require an active grant). Results are cached for 10s. */
+    fun isDeviceRooted(forceRefresh: Boolean = false): Boolean {
         val now = System.currentTimeMillis()
         if (!forceRefresh && cachedHasSu != null && (now - lastSuCheckTime < 10000L)) {
             return cachedHasSu!!
@@ -50,6 +57,12 @@ object RootAccess {
         return result
     }
 
+    /** Whether Root is currently enabled by user preference AND available on device. */
+    fun hasSu(forceRefresh: Boolean = false): Boolean {
+        if (!PreferenceHelper.useRootAccess) return false
+        return isDeviceRooted(forceRefresh)
+    }
+
     /**
      * Inspects the environment to dynamically detect the root solution (KernelSU, Magisk, APatch, etc.)
      * and its version string.
@@ -64,10 +77,15 @@ object RootAccess {
         val unauth = ctx?.getString(R.string.root_status_unauthorized) ?: "Not granted"
         val unauthDesc = ctx?.getString(R.string.root_status_unauthorized_desc) ?: "Root access not granted"
         val authDesc = ctx?.getString(R.string.root_status_authorized_desc) ?: "Root access granted"
+        val disabledBadge = ctx?.getString(R.string.settings_root_disabled_badge) ?: "Root Disabled"
 
-        if (!hasSu(forceRefresh)) {
+        val deviceRooted = isDeviceRooted(forceRefresh)
+        val rootActive = PreferenceHelper.useRootAccess && deviceRooted
+
+        if (!deviceRooted) {
             val unauthInfo = RootSolutionInfo(
                 hasRoot = false,
+                isDeviceRooted = false,
                 solutionName = unauth,
                 version = null,
                 summary = unauthDesc
@@ -107,53 +125,98 @@ object RootAccess {
                     ksudVer
                 }
                 val cleanVer = ver.trim().takeIf { it.isNotBlank() }
+                val summ = if (!PreferenceHelper.useRootAccess) {
+                    if (cleanVer != null) "KernelSU ($cleanVer) · $disabledBadge" else "KernelSU · $disabledBadge"
+                } else {
+                    if (cleanVer != null) "$granted · KernelSU ($cleanVer)" else "$granted · KernelSU"
+                }
                 RootSolutionInfo(
-                    hasRoot = true,
+                    hasRoot = rootActive,
+                    isDeviceRooted = true,
                     solutionName = "KernelSU",
                     version = cleanVer,
-                    summary = if (cleanVer != null) "$granted · KernelSU ($cleanVer)" else "$granted · KernelSU"
+                    summary = summ
                 )
             }
             rawVersion.contains("MAGISK", ignoreCase = true) -> {
                 val ver = rawVersion.substringBefore(":")
                 val cleanVer = ver.trim().takeIf { it.isNotBlank() }
+                val summ = if (!PreferenceHelper.useRootAccess) {
+                    if (cleanVer != null) "Magisk ($cleanVer) · $disabledBadge" else "Magisk · $disabledBadge"
+                } else {
+                    if (cleanVer != null) "$granted · Magisk ($cleanVer)" else "$granted · Magisk"
+                }
                 RootSolutionInfo(
-                    hasRoot = true,
+                    hasRoot = rootActive,
+                    isDeviceRooted = true,
                     solutionName = "Magisk",
                     version = cleanVer,
-                    summary = if (cleanVer != null) "$granted · Magisk ($cleanVer)" else "$granted · Magisk"
+                    summary = summ
                 )
             }
             rawVersion.contains("APatch", ignoreCase = true) -> {
                 val ver = rawVersion.substringBefore(":")
                 val cleanVer = ver.trim().takeIf { it.isNotBlank() }
+                val summ = if (!PreferenceHelper.useRootAccess) {
+                    if (cleanVer != null) "APatch ($cleanVer) · $disabledBadge" else "APatch · $disabledBadge"
+                } else {
+                    if (cleanVer != null) "$granted · APatch ($cleanVer)" else "$granted · APatch"
+                }
                 RootSolutionInfo(
-                    hasRoot = true,
+                    hasRoot = rootActive,
+                    isDeviceRooted = true,
                     solutionName = "APatch",
                     version = cleanVer,
-                    summary = if (cleanVer != null) "$granted · APatch ($cleanVer)" else "$granted · APatch"
+                    summary = summ
                 )
             }
             rawVersion.isNotBlank() -> {
+                val summ = if (!PreferenceHelper.useRootAccess) {
+                    "$rawVersion · $disabledBadge"
+                } else {
+                    "$granted ($rawVersion)"
+                }
                 RootSolutionInfo(
-                    hasRoot = true,
+                    hasRoot = rootActive,
+                    isDeviceRooted = true,
                     solutionName = "SU",
                     version = rawVersion,
-                    summary = "$granted ($rawVersion)"
+                    summary = summ
                 )
             }
             else -> {
+                val summ = if (!PreferenceHelper.useRootAccess) {
+                    "$granted · $disabledBadge"
+                } else {
+                    authDesc
+                }
                 RootSolutionInfo(
-                    hasRoot = true,
+                    hasRoot = rootActive,
+                    isDeviceRooted = true,
                     solutionName = granted,
                     version = null,
-                    summary = authDesc
+                    summary = summ
                 )
             }
         }
 
         cachedRootSolution = info
         return info
+    }
+
+    /** Inspects SELinux status directly without root requirement. */
+    fun getSelinuxStatus(): String {
+        return try {
+            val f = java.io.File("/sys/fs/selinux/enforce")
+            if (f.exists()) {
+                val c = f.readText().trim()
+                if (c == "1") "Enforcing" else "Permissive"
+            } else {
+                "Enforcing"
+            }
+        } catch (_: Exception) {
+            "Enforcing"
+        }
     }
 
     /**

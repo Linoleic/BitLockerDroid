@@ -28,6 +28,7 @@ import com.bitlockerdroid.service.DetectedVolume
 import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.service.UnlockedVolume
 import com.bitlockerdroid.service.VirtualStorageMountManager
+import com.bitlockerdroid.ui.dialogs.AdvancedSettingsDialog
 import com.bitlockerdroid.ui.dialogs.CredentialsManagerDialog
 import com.bitlockerdroid.ui.dialogs.LogViewerDialog
 import com.bitlockerdroid.ui.dialogs.ShowPasswordDialog
@@ -37,6 +38,7 @@ import com.bitlockerdroid.ui.theme.ThemeMode
 import com.bitlockerdroid.ui.volumes.VolumesTabContent
 import com.bitlockerdroid.util.LogFile
 import com.bitlockerdroid.util.PreferenceHelper
+import com.bitlockerdroid.util.RootAccess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -59,6 +61,12 @@ class BitLockerSettingsActivity : ComponentActivity() {
     private var rememberedCredentialsState = mutableStateListOf<PreferenceHelper.SavedCredential>()
 
     private var mountReadOnlyState = mutableStateOf(false)
+    private var useRootAccessState = mutableStateOf(true)
+    private var virtualMountState = mutableStateOf(true)
+    private var suppressCorruptNotificationState = mutableStateOf(true)
+    private var rootSolutionState = mutableStateOf(RootAccess.RootSolutionInfo(hasRoot = false, isDeviceRooted = false, solutionName = "", version = null, summary = ""))
+    private var showAdvancedSettingsDialogState = mutableStateOf(false)
+
     private var lastScanTimestamp = 0L
     private var themeModeState = mutableStateOf(com.bitlockerdroid.ui.theme.ThemeMode.fromString(PreferenceHelper.themeMode))
     private var currentLanguageState = mutableStateOf(PreferenceHelper.appLanguage)
@@ -76,11 +84,14 @@ class BitLockerSettingsActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Saved passwords are shown here — block screenshots / screen recording.
-        window.setFlags(
-            android.view.WindowManager.LayoutParams.FLAG_SECURE,
-            android.view.WindowManager.LayoutParams.FLAG_SECURE
-        )
+        // Saved passwords are shown here — block screenshots / screen recording in release builds.
+        val isDebuggable = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        if (!isDebuggable) {
+            window.setFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                android.view.WindowManager.LayoutParams.FLAG_SECURE
+            )
+        }
         UnlockManager.addListener(stateChangeListener)
 
         // Request notification permission (Android 13+)
@@ -115,6 +126,11 @@ class BitLockerSettingsActivity : ComponentActivity() {
                     mountReadOnly = mountReadOnlyState.value,
                     themeMode = currentTheme,
                     currentLanguage = currentLang,
+                    useRootAccess = useRootAccessState.value,
+                    rootSolution = rootSolutionState.value,
+                    showAdvancedSettingsDialog = showAdvancedSettingsDialogState.value,
+                    virtualMountEnabled = virtualMountState.value,
+                    suppressCorruptNotification = suppressCorruptNotificationState.value,
                     onThemeModeChange = { newMode ->
                         themeModeState.value = newMode
                         PreferenceHelper.themeMode = newMode.name.lowercase()
@@ -134,6 +150,36 @@ class BitLockerSettingsActivity : ComponentActivity() {
                         refreshData()
                         BitLockerDocumentsProvider.notifyRootsChanged(this)
                     },
+                    onUseRootAccessChange = { enabled ->
+                        useRootAccessState.value = enabled
+                        PreferenceHelper.useRootAccess = enabled
+                        RootAccess.invalidateCache()
+                        if (!enabled) {
+                            lifecycleScope.launch(Dispatchers.IO) {
+                                try {
+                                    VirtualStorageMountManager.unmountAll()
+                                } catch (_: Throwable) {}
+                            }
+                        }
+                        refreshRootSolution(force = true)
+                    },
+                    onVirtualMountChange = { enabled ->
+                        virtualMountState.value = enabled
+                        PreferenceHelper.virtualMountEnabled = enabled
+                        if (!enabled) {
+                            lifecycleScope.launch(Dispatchers.IO) {
+                                try {
+                                    VirtualStorageMountManager.unmountAll()
+                                } catch (_: Throwable) {}
+                            }
+                        }
+                    },
+                    onSuppressCorruptNotificationChange = { enabled ->
+                        suppressCorruptNotificationState.value = enabled
+                        PreferenceHelper.suppressCorruptNotification = enabled
+                    },
+                    onOpenAdvancedSettings = { showAdvancedSettingsDialogState.value = true },
+                    onCloseAdvancedSettings = { showAdvancedSettingsDialogState.value = false },
                     onRefreshAndScan = { refreshAndScan(showToast = true) },
                     onOpenLog = { openLogViewer() },
                     onCloseLog = { showLogDialogState.value = false },
@@ -175,7 +221,20 @@ class BitLockerSettingsActivity : ComponentActivity() {
 
     private fun syncPreferences() {
         mountReadOnlyState.value = PreferenceHelper.mountReadOnly
+        useRootAccessState.value = PreferenceHelper.useRootAccess
+        virtualMountState.value = PreferenceHelper.virtualMountEnabled
+        suppressCorruptNotificationState.value = PreferenceHelper.suppressCorruptNotification
         refreshRememberedCredentials()
+        refreshRootSolution()
+    }
+
+    private fun refreshRootSolution(force: Boolean = false) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val sol = RootAccess.getRootSolution(force)
+            withContext(Dispatchers.Main) {
+                rootSolutionState.value = sol
+            }
+        }
     }
 
     private fun refreshRememberedCredentials() {
@@ -381,10 +440,20 @@ fun MainAppScreen(
     mountReadOnly: Boolean,
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     currentLanguage: String = PreferenceHelper.LANG_SYSTEM,
+    useRootAccess: Boolean = true,
+    rootSolution: RootAccess.RootSolutionInfo,
+    showAdvancedSettingsDialog: Boolean = false,
+    virtualMountEnabled: Boolean = true,
+    suppressCorruptNotification: Boolean = true,
     onThemeModeChange: (ThemeMode) -> Unit = {},
     onLanguageChange: (String) -> Unit = {},
     onToggleAutoUnlock: (String, Boolean) -> Unit,
     onMountReadOnlyChange: (Boolean) -> Unit,
+    onUseRootAccessChange: (Boolean) -> Unit = {},
+    onVirtualMountChange: (Boolean) -> Unit = {},
+    onSuppressCorruptNotificationChange: (Boolean) -> Unit = {},
+    onOpenAdvancedSettings: () -> Unit = {},
+    onCloseAdvancedSettings: () -> Unit = {},
     onRefreshAndScan: () -> Unit,
     onOpenLog: () -> Unit,
     onCloseLog: () -> Unit,
@@ -514,13 +583,30 @@ fun MainAppScreen(
                     mountReadOnly = mountReadOnly,
                     themeMode = themeMode,
                     currentLanguage = currentLanguage,
-                    onThemeModeChange = onThemeModeChange,
-                    onLanguageChange = onLanguageChange,
+                    useRootAccess = useRootAccess,
+                    rootSolution = rootSolution,
                     onOpenCredentialsManager = { showCredentialsDialog = true },
+                    onOpenAdvancedSettings = onOpenAdvancedSettings,
                     onMountReadOnlyChange = onMountReadOnlyChange,
-                    onOpenLog = onOpenLog
+                    onThemeModeChange = onThemeModeChange,
+                    onLanguageChange = onLanguageChange
                 )
             }
+        }
+
+        // Advanced Settings Dialog
+        if (showAdvancedSettingsDialog) {
+            AdvancedSettingsDialog(
+                rootSolution = rootSolution,
+                useRootAccess = useRootAccess,
+                onUseRootAccessChange = onUseRootAccessChange,
+                virtualMountEnabled = virtualMountEnabled,
+                onVirtualMountChange = onVirtualMountChange,
+                suppressCorruptNotification = suppressCorruptNotification,
+                onSuppressCorruptNotificationChange = onSuppressCorruptNotificationChange,
+                onOpenLog = onOpenLog,
+                onDismiss = onCloseAdvancedSettings
+            )
         }
 
         // Diagnostic Log Dialog
