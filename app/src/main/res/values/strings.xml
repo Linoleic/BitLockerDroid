@@ -5,7 +5,7 @@
     <string name="password_hint">BitLocker password</string>
     <string name="recovery_key_hint">48-digit recovery key (XXXXXX-XXXXXX-…-XXXXXX)</string>
     <string name="remember_password">Remember password on this device</string>
-    <string name="auto_unlock">Auto-unlock on scan</string>
+    <string name="auto_unlock">Auto-unlock</string>
     <string name="use_recovery_key">Use recovery key instead</string>
     <string name="unlock_prompt">This drive is BitLocker-encrypted.\n\nDevice: %1$s</string>
     <string name="unlock_action">Unlock</string>
@@ -44,8 +44,8 @@
     <string name="scanning_and_refreshing">Scanning and refreshing devices…</string>
     <string name="scan_and_refresh_done">Refreshed, %1$d BitLocker volumes found</string>
     <string name="settings_header_unlock">Devices &amp; Credentials</string>
-    <string name="settings_auto_unlock">Auto-unlock on insertion</string>
-    <string name="settings_auto_unlock_desc">Automatically decrypt drives with saved credentials on insertion</string>
+    <string name="settings_auto_unlock">Auto-unlock</string>
+    <string name="settings_auto_unlock_desc">Automatically decrypt drives with saved credentials</string>
     <string name="settings_credentials">Remembered Credentials</string>
     <string name="settings_credentials_count">%1$d drive credentials saved</string>
     <string name="settings_credentials_clear">Clear Credentials</string>
@@ -92,9 +92,10 @@
 
     <string name="settings_header_advanced">Advanced Options</string>
     <string name="settings_advanced_title">Advanced Options</string>
-    <string name="settings_advanced_desc">Root privilege, exclusive features, and system diagnostics</string>
+    <string name="settings_advanced_desc">Root access control, exclusive features, and system diagnostics</string>
+    <string name="settings_header_root_mode">Root Access Mode</string>
     <string name="settings_use_root">Enable Root Access</string>
-    <string name="settings_use_root_desc">Allow escalating privileges via su for kernel block devices and POSIX mounts. Disabling forces Non-Root mode.</string>
+    <string name="settings_use_root_desc">Allow escalating privileges via su to access kernel block devices directly, providing significantly higher read/write performance and advanced mount support. Disabling forces Non-Root mode.</string>
     <string name="settings_root_features_header">Root-Exclusive Features</string>
     <string name="settings_root_disabled_badge">Root Disabled</string>
     <string name="settings_non_root_mode">Non-Root Mode</string>
@@ -151,7 +152,7 @@
     <string name="mount_path_copied">Mount path copied</string>
     <string name="copy_mount_path">Copy Mount Path</string>
     <string name="mount_failed_toast">Mount failed: %1$s</string>
-    <string name="virtual_mount_to_storage">Mount to /storage</string>
+    <string name="virtual_mount_to_storage">Mount to Real Directory</string>
     <string name="storage_used">Used %1$s (%2$d%%)</string>
     <string name="storage_available">%1$s free of %2$s</string>
     <string name="dirty_volume_warning_chip">⚠️ Dirty volume (Unclean unmount)</string>
@@ -212,7 +213,7 @@
     <string name="creds_empty">No saved credentials</string>
     <string name="creds_total_count">%1$d device credentials in total</string>
     <string name="creds_delete">Delete Credential</string>
-    <string name="creds_auto_unlock_enabled">Auto-unlock on insertion</string>
+    <string name="creds_auto_unlock_enabled">Auto-unlock</string>
     <string name="creds_auto_unlock_disabled">Manual unlock only</string>
     <string name="creds_view_password">View Credential</string>
     <string name="creds_type_recovery">Recovery Key</string>
@@ -245,7 +246,7 @@
     <string name="password_autofilled">Saved password auto-filled</string>
     <string name="paste">Paste</string>
     <string name="remember_recovery_key">Remember recovery key</string>
-    <string name="auto_unlock_on_insert">Auto-unlock when this drive is inserted</string>
+    <string name="auto_unlock_on_insert">Auto-unlock</string>
     <string name="unlocking_progress">Unlocking…</string>
 
     <!-- Notifications & Service Strings -->
@@ -268,7 +269,17 @@
 
     <!-- Mount Error Messages -->
     <string name="mount_err_cannot_get_guid">Cannot obtain volume GUID</string>
+    <string name="mount_err_no_block_device">No matching kernel block device found (/dev/block/…)</string>
     <string name="mount_err_manually_locked">Volume was manually locked or safely ejected; auto-mount cancelled</string>
     <string name="mount_err_no_saved_password">No remembered password found. Please unlock and save password again</string>
     <string name="mount_err_decrypt_password_failed">Failed to decrypt remembered password</string>
+
+    <!-- Mode Switching Strings -->
+    <string name="cancel">Cancel</string>
+    <string name="switch_mode_title">Switch Working Mode</string>
+    <string name="switch_mode_msg_with_volumes">Detected %1$d active mounted volume(s). Switching working mode requires safely ejecting all volumes to prevent data loss, and restarting the app to apply the new driver architecture.\n\nDo you want to safely eject all volumes and restart now?</string>
+    <string name="switch_mode_msg_idle">Switching working mode requires restarting the app to apply the new driver architecture.\n\nRestart now?</string>
+    <string name="switch_mode_confirm_eject_restart">Eject &amp; Restart</string>
+    <string name="switch_mode_confirm_restart">Restart Now</string>
+    <string name="switch_mode_progress">Safely ejecting volumes and restarting…</string>
 </resources>

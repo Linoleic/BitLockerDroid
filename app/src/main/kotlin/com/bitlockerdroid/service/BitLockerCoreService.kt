@@ -62,7 +62,7 @@ class BitLockerCoreService : Service() {
         }
         try {
             if (android.os.Build.VERSION.SDK_INT >= 33) {
-                registerReceiver(usbReceiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED)
+                registerReceiver(usbReceiver, filter, android.content.Context.RECEIVER_EXPORTED)
             } else {
                 registerReceiver(usbReceiver, filter)
             }

@@ -50,9 +50,56 @@ object VirtualStorageMountManager {
         _mountState.value = System.currentTimeMillis()
     }
 
-    fun isSupported(): Boolean = RootAccess.hasSu()
+    fun isSupported(): Boolean = PreferenceHelper.useRootAccess && RootAccess.hasSu()
 
     fun isEnabled(context: Context): Boolean = PreferenceHelper.isVirtualMountEnabled(context)
+
+    /**
+     * Binds any unattached USB Mass Storage devices to the kernel usb-storage driver
+     * and triggers SCSI bus rescan so that /dev/block/sd* nodes are generated.
+     */
+    fun ensureUsbStorageBound() {
+        if (!RootAccess.hasSu()) return
+        try {
+            val script = "bound=0; for dev in /sys/bus/usb/devices/*; do " +
+                    "if [ -f \"\$dev/bInterfaceClass\" ] && [ \"\$(cat \"\$dev/bInterfaceClass\" 2>/dev/null)\" = \"08\" ]; then " +
+                    "if [ ! -d \"\$dev/driver\" ] || ! readlink \"\$dev/driver\" | grep -q 'usb-storage'; then " +
+                    "name=\$(basename \"\$dev\"); " +
+                    "echo -n \"\$name\" > /sys/bus/usb/drivers/usbfs/unbind 2>/dev/null; " +
+                    "echo -n \"\$name\" > /sys/bus/usb/drivers/usb-storage/bind 2>/dev/null; " +
+                    "bound=1; fi; fi; done; " +
+                    "if [ \"\$bound\" = \"1\" ]; then " +
+                    "for h in /sys/class/scsi_host/host*; do echo \"- - -\" > \"\$h/scan\" 2>/dev/null; done; " +
+                    "sleep 0.5; fi"
+            RootAccess.exec(script, 3000)
+        } catch (_: Throwable) {}
+    }
+
+    /**
+     * Resolves a block device path for a given device path and volume GUID.
+     * If [devicePath] is already a /dev/block/ node, returns it.
+     * If [devicePath] is a usb:// URI, searches kernel block nodes matching [guid].
+     */
+    fun resolveBlockDevice(devicePath: String, guid: String?): String? {
+        if (devicePath.startsWith("/dev/block/")) return devicePath
+        if (guid.isNullOrBlank()) return null
+        val nodes = BitLockerDetector.enumerateVoldNodes()
+        for (node in nodes) {
+            val g = BitLockerDetector.getVolumeGuid(node)
+            if (g.equals(guid, ignoreCase = true)) {
+                return node
+            }
+        }
+        ensureUsbStorageBound()
+        val rescannedNodes = BitLockerDetector.enumerateVoldNodes()
+        for (node in rescannedNodes) {
+            val g = BitLockerDetector.getVolumeGuid(node)
+            if (g.equals(guid, ignoreCase = true)) {
+                return node
+            }
+        }
+        return null
+    }
 
     /**
      * Inspects /proc/mounts and running bitlocker_fuse daemons to discover mounts
@@ -155,8 +202,10 @@ object VirtualStorageMountManager {
     /**
      * Attempts to mount using a remembered password from KeyGuardService.
      */
-    fun mountRemembered(context: Context, devicePath: String): Result<VirtualMountInfo> {
-        val guid = BitLockerDetector.getVolumeGuid(devicePath)
+    fun mountRemembered(context: Context, devicePath: String, expectedGuid: String? = null): Result<VirtualMountInfo> {
+        val guid = expectedGuid?.takeIf { it.isNotBlank() }
+            ?: UnlockManager.getGuidForPath(devicePath)
+            ?: BitLockerDetector.getVolumeGuid(devicePath)
             ?: return Result.failure(IllegalStateException(context.getString(R.string.mount_err_cannot_get_guid)))
         if (UnlockManager.isManuallyLocked(guid, devicePath)) {
             return Result.failure(IllegalStateException(context.getString(R.string.mount_err_manually_locked)))
@@ -165,15 +214,22 @@ object VirtualStorageMountManager {
             ?: return Result.failure(IllegalStateException(context.getString(R.string.mount_err_no_saved_password)))
         val password = KeyGuardService.decrypt(blob)
             ?: return Result.failure(IllegalStateException(context.getString(R.string.mount_err_decrypt_password_failed)))
+        val isRecovery = password.startsWith(UnlockManager.RECOVERY_PREFIX)
+        val cleanKey = if (isRecovery) password.removePrefix(UnlockManager.RECOVERY_PREFIX) else password
         val devInfo = DeviceIdentity.queryDeviceInfo(devicePath)
+
+        val resolvedPath = resolveBlockDevice(devicePath, guid)
+            ?: return Result.failure(IllegalStateException(context.getString(R.string.mount_err_no_block_device)))
+
         return mount(
             context = context,
-            devicePath = devicePath,
+            devicePath = resolvedPath,
             offset = 0L,
-            key = password,
-            isRecovery = false,
+            key = cleanKey,
+            isRecovery = isRecovery,
             volumeLabel = devInfo.friendlyName,
-            volumeGuid = guid
+            volumeGuid = guid,
+            originalPath = devicePath
         )
     }
 
@@ -208,7 +264,8 @@ object VirtualStorageMountManager {
         key: String,
         isRecovery: Boolean,
         volumeLabel: String,
-        volumeGuid: String
+        volumeGuid: String,
+        originalPath: String? = null
     ): Result<VirtualMountInfo> {
         if (!isEnabled(context)) {
             return Result.failure(IllegalStateException("Virtual mount is disabled in settings"))
@@ -216,29 +273,39 @@ object VirtualStorageMountManager {
         if (!isSupported()) {
             return Result.failure(IllegalStateException("Root access is required for /storage virtual mount"))
         }
+        val effectivePath = if (devicePath.startsWith("/dev/block/")) {
+            devicePath
+        } else {
+            resolveBlockDevice(devicePath, volumeGuid)
+                ?: return Result.failure(IllegalArgumentException(context.getString(R.string.mount_err_no_block_device)))
+        }
+
         // Defense in depth: devicePath, offset-derived strings and the storage
         // id below are all interpolated into `su -c` commands. The mount entry
         // points (remembered / registerDirect / dialog) bypass
         // DislockerCore.open, so validate here, at the choke point.
-        DevicePathSecurity.requireValid(devicePath)
+        DevicePathSecurity.requireValid(effectivePath)
 
         // Check if already mounted and healthy
-        activeMounts[devicePath]?.let { existing ->
+        val existingMatch = activeMounts[effectivePath] ?: activeMounts[devicePath] ?: (if (originalPath != null) activeMounts[originalPath] else null)
+        existingMatch?.let { existing ->
             val alive = try {
                 RootAccess.execTimeout("su -c 'kill -0 ${existing.pid} 2>/dev/null && echo alive'", 500)?.contains("alive") == true
             } catch (_: Exception) { true }
             if (alive) {
-                Log.i(TAG, "Already mounted for $devicePath at ${existing.mountPoint}")
+                Log.i(TAG, "Already mounted for $effectivePath at ${existing.mountPoint}")
                 return Result.success(existing)
             } else {
+                activeMounts.remove(effectivePath)
                 activeMounts.remove(devicePath)
+                if (originalPath != null) activeMounts.remove(originalPath)
             }
         }
 
         val daemonPath = RootAccess.ensureFuseDaemonInstalled(context) ?: "/data/local/tmp/bitlocker_fuse"
 
         // Mimic real Android USB OTG naming: /storage/ABCD-1234 using the first 8 hex characters of GUID
-        val storageId = formatStorageId(volumeGuid, devicePath)
+        val storageId = formatStorageId(volumeGuid, effectivePath)
         var mountPoint = "/storage/$storageId"
         var suffix = 1
         while (activeMounts.values.any { it.mountPoint == mountPoint }) {
@@ -248,18 +315,18 @@ object VirtualStorageMountManager {
 
         // Clean up any stale mount or conflicting bitlocker_fuse daemon for this devicePath
         try {
-            RootAccess.exec("su -c 'for pid in \$(pidof bitlocker_fuse 2>/dev/null); do if grep -q \"$devicePath\" /proc/\$pid/cmdline 2>/dev/null; then kill -9 \$pid 2>/dev/null; fi; done'")
+            RootAccess.exec("su -c 'for pid in \$(pidof bitlocker_fuse 2>/dev/null); do if grep -q \"$effectivePath\" /proc/\$pid/cmdline 2>/dev/null; then kill -9 \$pid 2>/dev/null; fi; done'")
             RootAccess.exec("su -M -c 'umount -l \"$mountPoint\" 2>/dev/null; rmdir \"$mountPoint\" 2>/dev/null'")
             // Also cleanup legacy /storage/BitLocker_* if present
             RootAccess.exec("su -M -c 'for m in /storage/BitLocker_*; do if [ -d \"\$m\" ]; then umount -l \"\$m\" 2>/dev/null; rmdir \"\$m\" 2>/dev/null; fi; done'")
         } catch (_: Throwable) {}
 
         val keyType = if (isRecovery) 2 else 1
-        LogFile.write("app", "VirtualStorageMount: starting FUSE mount for $devicePath -> $mountPoint (keyType=$keyType)")
+        LogFile.write("app", "VirtualStorageMount: starting FUSE mount for $effectivePath -> $mountPoint (keyType=$keyType)")
 
         try {
             val roFlag = if (PreferenceHelper.mountReadOnly) "ro" else "rw"
-            val cmd = "'$daemonPath' '$devicePath' $offset $keyType - '$mountPoint' $roFlag"
+            val cmd = "'$daemonPath' '$effectivePath' $offset $keyType - '$mountPoint' $roFlag"
             val pb = ProcessBuilder("su", "-M", "-c", cmd)
             pb.redirectErrorStream(true)
             val proc = pb.start()
@@ -308,24 +375,30 @@ object VirtualStorageMountManager {
 
             if (mountedPid > 0) {
                 val info = VirtualMountInfo(
-                    devicePath = devicePath,
+                    devicePath = effectivePath,
                     volumeGuid = volumeGuid,
                     mountPoint = mountPoint,
                     volumeLabel = volumeLabel,
                     pid = mountedPid
                 )
-                activeMounts[devicePath] = info
+                activeMounts[effectivePath] = info
+                if (!originalPath.isNullOrBlank()) {
+                    activeMounts[originalPath] = info
+                }
+                if (devicePath != effectivePath) {
+                    activeMounts[devicePath] = info
+                }
                 notifyStateChanged()
                 LogFile.write("app", "VirtualStorageMount: mounted successfully at $mountPoint (PID=$mountedPid)")
                 return Result.success(info)
             } else {
                 val err = errorOutput.toString().trim()
-                LogFile.write("app", "VirtualStorageMount: mount failed for $devicePath. $err")
+                LogFile.write("app", "VirtualStorageMount: mount failed for $effectivePath. $err")
                 return Result.failure(RuntimeException("Mount failed: $err"))
             }
         } catch (e: Throwable) {
             Log.e(TAG, "Virtual mount failed", e)
-            LogFile.write("app", "VirtualStorageMount: exception mounting $devicePath: ${e.message}")
+            LogFile.write("app", "VirtualStorageMount: exception mounting $effectivePath: ${e.message}")
             return Result.failure(e)
         }
     }
@@ -336,6 +409,10 @@ object VirtualStorageMountManager {
     @Synchronized
     fun unmount(devicePath: String) {
         val info = activeMounts.remove(devicePath)
+            ?: activeMounts.values.firstOrNull { it.devicePath == devicePath }
+        if (info != null) {
+            activeMounts.entries.removeIf { it.value.mountPoint == info.mountPoint || it.value.volumeGuid == info.volumeGuid }
+        }
         val mountPoint = info?.mountPoint
         LogFile.write("app", "VirtualStorageMount: unmounting $devicePath ($mountPoint)")
         notifyStateChanged()

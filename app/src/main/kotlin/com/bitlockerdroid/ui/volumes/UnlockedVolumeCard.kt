@@ -50,6 +50,7 @@ fun UnlockedVolumeCard(
     val context = LocalContext.current
     val activeMounts by VirtualStorageMountManager.activeMountsFlow.collectAsState()
     val vMount = activeMounts[volume.devicePath]
+        ?: activeMounts.values.firstOrNull { !volume.guid.isNullOrBlank() && it.volumeGuid.equals(volume.guid, ignoreCase = true) }
     var detailsExpanded by remember { mutableStateOf(false) }
     var showBenchmarkDialog by remember { mutableStateOf(false) }
 
@@ -61,7 +62,7 @@ fun UnlockedVolumeCard(
             !com.bitlockerdroid.service.UnlockManager.isManuallyLocked(volume.guid, volume.devicePath)
         ) {
             withContext(Dispatchers.IO) {
-                VirtualStorageMountManager.mountRemembered(context, volume.devicePath)
+                VirtualStorageMountManager.mountRemembered(context, volume.devicePath, volume.guid)
             }
         }
     }
@@ -301,7 +302,7 @@ fun UnlockedVolumeCard(
                 OutlinedButton(
                     onClick = {
                         Thread {
-                            val res = VirtualStorageMountManager.mountRemembered(context, volume.devicePath)
+                            val res = VirtualStorageMountManager.mountRemembered(context, volume.devicePath, volume.guid)
                             if (res.isFailure) {
                                 (context as? android.app.Activity)?.runOnUiThread {
                                     Toast.makeText(

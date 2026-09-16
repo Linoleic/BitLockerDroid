@@ -205,7 +205,6 @@ object UsbStorageManager {
                         discoveredPartitions[p.devicePath] = p
                         results.add(p)
                         LogFile.write("app", "UsbStorageManager: BitLocker partition found -> ${p.devicePath} guid=${p.guid} rkId=${p.recoveryKeyId}")
-                        UnlockManager.registerDetected(p.devicePath, p.guid, p.recoveryKeyId)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error scanning USB device ${device.deviceName}", e)
@@ -548,26 +547,30 @@ object UsbStorageManager {
         private val maxChunkBytes = 16 * 1024 // 16KB matches Linux MAX_USBFS_BUFFER_SIZE
 
         private fun safeScsiRead(lba: Long, buf: ByteBuffer) {
-            buf.position(0)
-            try {
-                scsiDevice.read(lba, buf)
-            } catch (e: Exception) {
-                Log.w(TAG, "SCSI read error at LBA $lba, reinitializing and retrying...", e)
-                try { scsiDevice.init() } catch (_: Exception) {}
+            synchronized(scsiDevice) {
                 buf.position(0)
-                scsiDevice.read(lba, buf)
+                try {
+                    scsiDevice.read(lba, buf)
+                } catch (e: Exception) {
+                    Log.w(TAG, "SCSI read error at LBA $lba, reinitializing and retrying...", e)
+                    try { scsiDevice.init() } catch (_: Exception) {}
+                    buf.position(0)
+                    scsiDevice.read(lba, buf)
+                }
             }
         }
 
         private fun safeScsiWrite(lba: Long, buf: ByteBuffer) {
-            buf.position(0)
-            try {
-                scsiDevice.write(lba, buf)
-            } catch (e: Exception) {
-                Log.w(TAG, "SCSI write error at LBA $lba, reinitializing and retrying...", e)
-                try { scsiDevice.init() } catch (_: Exception) {}
+            synchronized(scsiDevice) {
                 buf.position(0)
-                scsiDevice.write(lba, buf)
+                try {
+                    scsiDevice.write(lba, buf)
+                } catch (e: Exception) {
+                    Log.w(TAG, "SCSI write error at LBA $lba, reinitializing and retrying...", e)
+                    try { scsiDevice.init() } catch (_: Exception) {}
+                    buf.position(0)
+                    scsiDevice.write(lba, buf)
+                }
             }
         }
 

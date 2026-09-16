@@ -5,7 +5,7 @@
     <string name="password_hint">输入 BitLocker 密码</string>
     <string name="recovery_key_hint">输入 48 位恢复密钥 (XXXXXX-XXXXXX-…-XXXXXX)</string>
     <string name="remember_password">在此设备上记住密码</string>
-    <string name="auto_unlock">扫描到该盘时自动解锁</string>
+    <string name="auto_unlock">自动解锁</string>
     <string name="use_recovery_key">使用恢复密钥解锁</string>
     <string name="use_password">使用密码解锁</string>
     <string name="unlock_prompt">检测到已连接的 BitLocker 加密卷：\n%1$s</string>
@@ -44,8 +44,8 @@
     <string name="scanning_and_refreshing">正在扫描与刷新设备…</string>
     <string name="scan_and_refresh_done">已刷新，发现 %1$d 个 BitLocker 卷</string>
     <string name="settings_header_unlock">设备与凭据</string>
-    <string name="settings_auto_unlock">插盘自动解锁</string>
-    <string name="settings_auto_unlock_desc">插入已记住密码的设备时自动解密挂载</string>
+    <string name="settings_auto_unlock">自动解锁</string>
+    <string name="settings_auto_unlock_desc">检测到已记住密码的设备时自动解密挂载</string>
     <string name="settings_credentials">已记住的磁盘密码</string>
     <string name="settings_credentials_count">已保存 %1$d 个设备的解锁凭据</string>
     <string name="settings_credentials_clear">清空所有凭据</string>
@@ -93,8 +93,9 @@
     <string name="settings_header_advanced">高级选项</string>
     <string name="settings_advanced_title">高级选项</string>
     <string name="settings_advanced_desc">Root 权限控制、特有功能与系统诊断</string>
+    <string name="settings_header_root_mode">Root 运行模式</string>
     <string name="settings_use_root">使用 Root 权限</string>
-    <string name="settings_use_root_desc">允许应用通过 su 提权访问内核块设备与高级挂载；关闭后将强制以免 Root 模式运行</string>
+    <string name="settings_use_root_desc">允许应用通过 su 提权直接访问内核块设备，可提供显著更高的读写性能与高级挂载支持；关闭后将以免 Root 模式运行</string>
     <string name="settings_root_features_header">Root 特有功能</string>
     <string name="settings_root_disabled_badge">未启用 Root</string>
     <string name="settings_non_root_mode">免 Root 模式</string>
@@ -151,7 +152,7 @@
     <string name="mount_path_copied">挂载路径已复制</string>
     <string name="copy_mount_path">复制挂载路径</string>
     <string name="mount_failed_toast">挂载失败: %1$s</string>
-    <string name="virtual_mount_to_storage">虚拟挂载到 /storage</string>
+    <string name="virtual_mount_to_storage">虚拟挂载至真实目录</string>
     <string name="storage_used">已用 %1$s (%2$d%%)</string>
     <string name="storage_available">可用 %1$s / 共 %2$s</string>
     <string name="dirty_volume_warning_chip">⚠️ 脏卷 (未安全弹出)</string>
@@ -212,7 +213,7 @@
     <string name="creds_empty">暂无已保存凭据</string>
     <string name="creds_total_count">共 %1$d 个设备凭据</string>
     <string name="creds_delete">删除凭据</string>
-    <string name="creds_auto_unlock_enabled">插盘自动解锁</string>
+    <string name="creds_auto_unlock_enabled">自动解锁</string>
     <string name="creds_auto_unlock_disabled">仅手动解锁</string>
     <string name="creds_view_password">查看密码</string>
     <string name="creds_type_recovery">恢复密钥</string>
@@ -245,7 +246,7 @@
     <string name="password_autofilled">已自动填充已保存密码</string>
     <string name="paste">粘贴</string>
     <string name="remember_recovery_key">记住恢复密钥</string>
-    <string name="auto_unlock_on_insert">插入此盘时自动解锁</string>
+    <string name="auto_unlock_on_insert">自动解锁</string>
     <string name="unlocking_progress">正在解锁…</string>
 
     <!-- 通知与后台服务 -->
@@ -268,7 +269,17 @@
 
     <!-- 挂载错误提示 -->
     <string name="mount_err_cannot_get_guid">无法获取卷 GUID</string>
+    <string name="mount_err_no_block_device">未找到对应的内核块设备 (/dev/block/…)</string>
     <string name="mount_err_manually_locked">卷已被手动锁定或安全弹出，取消自动挂载</string>
     <string name="mount_err_no_saved_password">未找到已记住的密码，请重新解锁并保存密码</string>
     <string name="mount_err_decrypt_password_failed">解密已保存密码失败</string>
+
+    <!-- 模式切换相关文本 -->
+    <string name="cancel">取消</string>
+    <string name="switch_mode_title">切换工作模式</string>
+    <string name="switch_mode_msg_with_volumes">检测到当前有 %1$d 个已挂载的加密卷。切换工作模式需要先安全弹出所有卷以防止数据损坏，并重启应用以生效新的底层驱动架构。\n\n是否立即安全弹出所有卷并重启应用？</string>
+    <string name="switch_mode_msg_idle">切换工作模式需要重启应用以生效新的底层驱动架构。\n\n是否立即重启应用？</string>
+    <string name="switch_mode_confirm_eject_restart">安全弹出并重启</string>
+    <string name="switch_mode_confirm_restart">立即重启</string>
+    <string name="switch_mode_progress">正在安全弹出并重启应用…</string>
 </resources>

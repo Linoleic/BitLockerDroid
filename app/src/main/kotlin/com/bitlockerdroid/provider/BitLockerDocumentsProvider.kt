@@ -333,6 +333,41 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             out.putInt("count", names.size)
             return out
         }
+        if (method == "run_benchmark") {
+            val dev = arg ?: extras?.getString("device_path") ?: return null
+            val core = UnlockManager.get(dev) ?: return null
+            val res = kotlinx.coroutines.runBlocking {
+                com.bitlockerdroid.util.BenchmarkEngine.runBenchmark(core, appContext) { _, _ -> }
+            }
+            val out = Bundle()
+            out.putDouble("seq_mb_s", res.sequentialReadMbPerSec)
+            out.putDouble("random_4k_ms", res.random4kLatencyMs)
+            out.putDouble("random_4k_iops", res.random4kIops)
+            out.putString("usb_speed_desc", res.usbSpeedDesc)
+            out.putString("assessment", res.assessment)
+            return out
+        }
+        if (method == "set_mount_read_only") {
+            val ro = if (extras != null && extras.containsKey("read_only")) extras.getBoolean("read_only") else (arg == "true")
+            PreferenceHelper.mountReadOnly = ro
+            notifyRootsChanged(appContext)
+            val out = Bundle()
+            out.putBoolean("read_only", PreferenceHelper.mountReadOnly)
+            return out
+        }
+        if (method == "switch_mode_and_restart") {
+            val target = if (extras != null && extras.containsKey("target_root")) extras.getBoolean("target_root") else (arg == "true")
+            UnlockManager.safeEjectAll()
+            try {
+                com.bitlockerdroid.service.VirtualStorageMountManager.unmountAll()
+            } catch (_: Throwable) {}
+            PreferenceHelper.useRootAccess = target
+            com.bitlockerdroid.util.RootAccess.invalidateCache()
+            com.bitlockerdroid.util.AppRestarter.restartApp(appContext)
+            val out = Bundle()
+            out.putBoolean("success", true)
+            return out
+        }
         try {
             val res = super.call(method, arg, extras)
             LogFile.write("provider", "call SUCCESS method=$method arg=$arg")

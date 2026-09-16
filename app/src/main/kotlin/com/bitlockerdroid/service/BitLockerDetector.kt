@@ -38,15 +38,15 @@ object BitLockerDetector {
      */
     fun scanAndDetect(context: Context): Int {
         var found = 0
+        val presentBlockNodes = mutableListOf<String>()
+        val useRoot = com.bitlockerdroid.util.PreferenceHelper.useRootAccess && RootAccess.hasSu()
+        val detectedGuids = mutableSetOf<String>()
 
-        if (RootAccess.hasSu()) {
+        if (useRoot) {
+            VirtualStorageMountManager.ensureUsbStorageBound()
             val nodes = enumerateVoldNodes()
-            LogFile.write("app", "scanAndDetect (Root): ${nodes.size} vold nodes")
-
-            // Drop detected-but-unlocked volumes that are no longer present on the
-            // bus (device unplugged). Unlocked sessions are left untouched; the
-            // DocumentsProvider will re-lock them lazily.
-            UnlockManager.forgetDetectedMissing(nodes)
+            presentBlockNodes.addAll(nodes)
+            LogFile.write("app", "scanAndDetect (Root): ${nodes.size} block nodes")
 
             for (node in nodes) {
                 val headerInfo = readHeaderInfo(node)
@@ -55,6 +55,10 @@ object BitLockerDetector {
                 val recoveryKeyId = headerInfo?.recoveryKeyId
                 LogFile.write("app", "  node $node sig=$signature guid=$guid rkId=$recoveryKeyId")
                 if (signature == "-FVE-FS-" || signature == "MSWIN4.1") {
+                    if (!guid.isNullOrBlank() && !detectedGuids.add(guid.lowercase())) {
+                        LogFile.write("app", "  node $node duplicate GUID $guid, skipping duplicate registration")
+                        continue
+                    }
                     LogFile.write("app", "  >>> BitLocker DETECTED (Root): $node (guid=$guid, rkId=$recoveryKeyId)")
                     found++
                     StorageNotificationSuppressor.suppressForVolume(context, node)
@@ -66,43 +70,85 @@ object BitLockerDetector {
                 }
             }
         } else {
-            LogFile.write("app", "scanAndDetect: su not available, running in non-root USB Host mode")
+            LogFile.write("app", "scanAndDetect: running in non-root USB Host mode (useRoot=$useRoot)")
         }
 
-        // Always scan USB devices via non-root USB Host stack
-        try {
-            val usbParts = com.bitlockerdroid.usb.UsbStorageManager.scanUsbDevices(context)
-            for (p in usbParts) {
-                // Deduplicate: skip if this partition was already detected via root with the same GUID
-                if (!UnlockManager.isGuidKnown(p.guid)) {
+        // Only scan USB devices via non-root USB Host stack if Root is disabled or found 0 block devices
+        val presentUsbNodes = mutableListOf<String>()
+        if (!useRoot || presentBlockNodes.isEmpty()) {
+            try {
+                val usbParts = com.bitlockerdroid.usb.UsbStorageManager.scanUsbDevices(context)
+                for (p in usbParts) {
+                    presentUsbNodes.add(p.devicePath)
+                    if (!p.guid.isNullOrBlank() && !detectedGuids.add(p.guid.lowercase())) {
+                        LogFile.write("app", "  USB partition ${p.devicePath} duplicate GUID ${p.guid}, skipping duplicate")
+                        continue
+                    }
                     LogFile.write("app", "  >>> BitLocker DETECTED (USB Host): ${p.devicePath} (guid=${p.guid}, rkId=${p.recoveryKeyId})")
                     found++
                     UnlockManager.onDeviceDetected(context, p.devicePath, 0, p.guid, p.recoveryKeyId)
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in scanUsbDevices", e)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in scanUsbDevices", e)
         }
+
+        // Drop detected-but-unlocked or active volumes that are no longer present on ANY bus
+        val allPresentNodes = presentBlockNodes + presentUsbNodes
+        UnlockManager.forgetDetectedMissing(allPresentNodes)
 
         LogFile.write("app", "scanAndDetect done, BitLocker found=$found")
         return found
     }
 
-    /** Lists partition nodes under /dev/block/vold as root. */
+    /** Lists partition nodes under /dev/block/vold and USB SCSI nodes as root. */
     fun enumerateVoldNodes(): List<String> {
         val out = LinkedHashSet<String>()
+        val publicMinors = HashSet<String>()
 
-        // Prefer public:* partition nodes (BitLocker headers live there).
+        // 1. Prefer public:* partition nodes (BitLocker headers live there).
         val public = RootAccess.exec("ls -d /dev/block/vold/public:* 2>/dev/null")
         public?.second?.lines()?.forEach { line ->
             val l = line.trim()
-            if (l.isNotEmpty()) out.add(l)
+            if (l.isNotEmpty()) {
+                out.add(l)
+                val minorPart = l.substringAfter("public:", "").replace(',', ':')
+                if (minorPart.isNotEmpty()) {
+                    publicMinors.add(minorPart)
+                }
+            }
         }
+
+        // 2. Check kernel SCSI block devices that belong to USB (sysfs link contains /usb)
+        try {
+            val usbDisks = RootAccess.exec("for d in /sys/block/sd*; do if readlink \$d 2>/dev/null | grep -q '/usb'; then ls -d /dev/block/\$(basename \$d)* 2>/dev/null; fi; done")
+            usbDisks?.second?.lines()?.forEach { line ->
+                val l = line.trim()
+                if (l.isNotEmpty()) {
+                    val devName = l.substringAfterLast('/')
+                    val sysDev = try {
+                        val devFile = java.io.File("/sys/class/block/$devName/dev")
+                        if (devFile.exists()) devFile.readText().trim() else null
+                    } catch (_: Throwable) { null }
+                    if (sysDev != null && publicMinors.contains(sysDev)) {
+                        // Node is already represented by /dev/block/vold/public:... -> skip alias
+                        return@forEach
+                    }
+
+                    // Skip whole-disks (e.g. "sdg") that contain partitions ("sdg1", "sdg5", etc.)
+                    val isPartitionedDisk = devName.matches(Regex("^sd[a-z]+$")) &&
+                            java.io.File("/sys/class/block/$devName").listFiles()?.any {
+                                it.name.startsWith(devName) && it.name != devName
+                            } == true
+                    if (!isPartitionedDisk) {
+                        out.add(l)
+                    }
+                }
+            }
+        } catch (_: Throwable) {}
 
         // Only fall back to disk:* nodes if NO partition nodes exist
         // (rare whole-disk encryption without partition table).
-        // Scanning raw disk:* when partition nodes are present locks the kernel SCSI bus
-        // and returns redundant non-BitLocker MBR/GPT data.
         if (out.isEmpty()) {
             val disk = RootAccess.exec("ls -d /dev/block/vold/disk:* 2>/dev/null")
             disk?.second?.lines()?.forEach { line ->

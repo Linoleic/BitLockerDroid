@@ -23,6 +23,8 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
+#include <dirent.h>
 
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -220,9 +222,30 @@ int dis_io_init(dis_ctx_t *ctx)
 		close(p_to_child[0]);
 		close(p_from_child[1]);
 
-		// Close any high file descriptors
-		for (int fd = 3; fd < 64; fd++) {
-			close(fd);
+		// Close all inherited file descriptors (>= 3) so child daemons never leak
+		// pipes opened by concurrent Runtime.exec / ProcessBuilder in ART.
+#if defined(__NR_close_range)
+		if (syscall(__NR_close_range, 3, ~0U, 0) != 0)
+#endif
+		{
+			DIR *d = opendir("/proc/self/fd");
+			if (d) {
+				int dfd = dirfd(d);
+				struct dirent *de;
+				while ((de = readdir(d)) != NULL) {
+					int fd = atoi(de->d_name);
+					if (fd > 2 && fd != dfd) {
+						close(fd);
+					}
+				}
+				closedir(d);
+			} else {
+				int max_fd = (int)sysconf(_SC_OPEN_MAX);
+				if (max_fd < 0 || max_fd > 4096) max_fd = 4096;
+				for (int fd = 3; fd < max_fd; fd++) {
+					close(fd);
+				}
+			}
 		}
 
 		const char *daemon_bin = find_daemon_binary();

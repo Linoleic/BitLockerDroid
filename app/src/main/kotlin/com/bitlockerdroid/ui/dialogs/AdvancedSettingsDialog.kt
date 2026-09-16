@@ -5,6 +5,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -13,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import com.bitlockerdroid.R
 import com.bitlockerdroid.ui.settings.SettingsClickableItem
 import com.bitlockerdroid.ui.settings.SettingsGroup
@@ -39,12 +41,16 @@ fun AdvancedSettingsDialog(
     onOpenLog: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val cardBg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
     val selinuxStatus = RootAccess.getSelinuxStatus()
     val canUseRootFeatures = useRootAccess && rootSolution.isDeviceRooted
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier
+            .widthIn(min = 360.dp, max = 560.dp)
+            .fillMaxWidth(0.92f)
+            .padding(vertical = 16.dp),
         confirmButton = {
             Button(
                 onClick = onDismiss,
@@ -88,14 +94,13 @@ fun AdvancedSettingsDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 500.dp)
+                    .heightIn(max = 620.dp)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 // Section 1: Root Permission Master Switch
                 SettingsGroup(
-                    title = stringResource(R.string.settings_use_root),
-                    containerColor = cardBg
+                    title = stringResource(R.string.settings_header_root_mode)
                 ) {
                     SettingsSwitchItem(
                         title = stringResource(R.string.settings_use_root),
@@ -107,23 +112,33 @@ fun AdvancedSettingsDialog(
 
                 // Section 2: Root-Exclusive Features
                 SettingsGroup(
-                    title = stringResource(R.string.settings_root_features_header),
-                    containerColor = cardBg
+                    title = stringResource(R.string.settings_root_features_header)
                 ) {
                     if (!canUseRootFeatures) {
                         Surface(
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f),
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(12.dp)
+                                .padding(horizontal = 14.dp, vertical = 10.dp)
                         ) {
-                            Text(
-                                text = stringResource(R.string.settings_root_required_hint),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(10.dp)
-                            )
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = stringResource(R.string.settings_root_required_hint),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                            }
                         }
                     }
 
@@ -151,8 +166,7 @@ fun AdvancedSettingsDialog(
 
                 // Section 3: System Environment & Diagnostics
                 SettingsGroup(
-                    title = stringResource(R.string.settings_header_diag),
-                    containerColor = cardBg
+                    title = stringResource(R.string.settings_header_diag)
                 ) {
                     val rootSummary = if (!useRootAccess) {
                         if (rootSolution.isDeviceRooted) {

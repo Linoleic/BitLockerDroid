@@ -232,14 +232,14 @@ object PreferenceHelper {
         set(v) = try { prefs(ContextProvider.app).edit().putBoolean("mount_read_only", v).apply() } catch (_: Exception) {}
 
     fun isVirtualMountEnabled(context: Context): Boolean =
-        prefs(context).getBoolean("virtual_mount_enabled", true)
+        prefs(context).getBoolean("virtual_mount_enabled", false)
 
     fun setVirtualMountEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean("virtual_mount_enabled", enabled).apply()
     }
 
     var virtualMountEnabled: Boolean
-        get() = try { prefs(ContextProvider.app).getBoolean("virtual_mount_enabled", true) } catch (_: Exception) { true }
+        get() = try { prefs(ContextProvider.app).getBoolean("virtual_mount_enabled", false) } catch (_: Exception) { false }
         set(v) = try { prefs(ContextProvider.app).edit().putBoolean("virtual_mount_enabled", v).apply() } catch (_: Exception) {}
 
     fun isNotificationsEnabled(context: Context): Boolean =
@@ -254,14 +254,14 @@ object PreferenceHelper {
         set(v) = try { prefs(ContextProvider.app).edit().putBoolean("notifications_enabled", v).apply() } catch (_: Exception) {}
 
     fun isSuppressCorruptNotification(context: Context): Boolean =
-        prefs(context).getBoolean("suppress_corrupt_notification", true)
+        prefs(context).getBoolean("suppress_corrupt_notification", false)
 
     fun setSuppressCorruptNotification(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean("suppress_corrupt_notification", enabled).apply()
     }
 
     var suppressCorruptNotification: Boolean
-        get() = try { prefs(ContextProvider.app).getBoolean("suppress_corrupt_notification", true) } catch (_: Exception) { true }
+        get() = try { prefs(ContextProvider.app).getBoolean("suppress_corrupt_notification", false) } catch (_: Exception) { false }
         set(v) = try { prefs(ContextProvider.app).edit().putBoolean("suppress_corrupt_notification", v).apply() } catch (_: Exception) {}
 
     fun isHideSviFolder(context: Context): Boolean =
@@ -278,13 +278,17 @@ object PreferenceHelper {
     fun isUseRootAccess(context: Context): Boolean =
         prefs(context).getBoolean("use_root_access", true)
 
-    fun setUseRootAccess(context: Context, enabled: Boolean) {
-        prefs(context).edit().putBoolean("use_root_access", enabled).apply()
+    fun setUseRootAccess(context: Context, enabled: Boolean): Boolean {
+        return prefs(context).edit().putBoolean("use_root_access", enabled).commit()
     }
 
     var useRootAccess: Boolean
         get() = try { prefs(ContextProvider.app).getBoolean("use_root_access", true) } catch (_: Exception) { true }
-        set(v) = try { prefs(ContextProvider.app).edit().putBoolean("use_root_access", v).apply() } catch (_: Exception) {}
+        set(v) {
+            try {
+                prefs(ContextProvider.app).edit().putBoolean("use_root_access", v).commit()
+            } catch (_: Exception) {}
+        }
 
     // ------- theme & personalization -------
 

@@ -29,6 +29,7 @@ import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.service.UnlockedVolume
 import com.bitlockerdroid.service.VirtualStorageMountManager
 import com.bitlockerdroid.ui.dialogs.AdvancedSettingsDialog
+import com.bitlockerdroid.ui.dialogs.SwitchModeConfirmDialog
 import com.bitlockerdroid.ui.dialogs.CredentialsManagerDialog
 import com.bitlockerdroid.ui.dialogs.LogViewerDialog
 import com.bitlockerdroid.ui.dialogs.ShowPasswordDialog
@@ -62,10 +63,12 @@ class BitLockerSettingsActivity : ComponentActivity() {
 
     private var mountReadOnlyState = mutableStateOf(false)
     private var useRootAccessState = mutableStateOf(true)
-    private var virtualMountState = mutableStateOf(true)
-    private var suppressCorruptNotificationState = mutableStateOf(true)
+    private var virtualMountState = mutableStateOf(false)
+    private var suppressCorruptNotificationState = mutableStateOf(false)
     private var rootSolutionState = mutableStateOf(RootAccess.RootSolutionInfo(hasRoot = false, isDeviceRooted = false, solutionName = "", version = null, summary = ""))
     private var showAdvancedSettingsDialogState = mutableStateOf(false)
+    private var pendingRootSwitchTargetState = mutableStateOf<Boolean?>(null)
+    private var isSwitchingModeProcessingState = mutableStateOf(false)
 
     private var lastScanTimestamp = 0L
     private var themeModeState = mutableStateOf(com.bitlockerdroid.ui.theme.ThemeMode.fromString(PreferenceHelper.themeMode))
@@ -150,18 +153,34 @@ class BitLockerSettingsActivity : ComponentActivity() {
                         refreshData()
                         BitLockerDocumentsProvider.notifyRootsChanged(this)
                     },
-                    onUseRootAccessChange = { enabled ->
-                        useRootAccessState.value = enabled
-                        PreferenceHelper.useRootAccess = enabled
-                        RootAccess.invalidateCache()
-                        if (!enabled) {
-                            lifecycleScope.launch(Dispatchers.IO) {
-                                try {
-                                    VirtualStorageMountManager.unmountAll()
-                                } catch (_: Throwable) {}
+                    pendingRootSwitchTarget = pendingRootSwitchTargetState.value,
+                    isSwitchingModeProcessing = isSwitchingModeProcessingState.value,
+                    onUseRootAccessChange = { target ->
+                        if (target != useRootAccessState.value) {
+                            pendingRootSwitchTargetState.value = target
+                        }
+                    },
+                    onConfirmSwitchMode = {
+                        val target = pendingRootSwitchTargetState.value ?: return@MainAppScreen
+                        isSwitchingModeProcessingState.value = true
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            try {
+                                if (unlockedVolumesState.isNotEmpty()) {
+                                    UnlockManager.safeEjectAll()
+                                }
+                                VirtualStorageMountManager.unmountAll()
+                            } catch (_: Throwable) {}
+                            PreferenceHelper.useRootAccess = target
+                            RootAccess.invalidateCache()
+                            withContext(Dispatchers.Main) {
+                                com.bitlockerdroid.util.AppRestarter.restartApp(this@BitLockerSettingsActivity)
                             }
                         }
-                        refreshRootSolution(force = true)
+                    },
+                    onDismissSwitchMode = {
+                        if (!isSwitchingModeProcessingState.value) {
+                            pendingRootSwitchTargetState.value = null
+                        }
                     },
                     onVirtualMountChange = { enabled ->
                         virtualMountState.value = enabled
@@ -206,6 +225,14 @@ class BitLockerSettingsActivity : ComponentActivity() {
     override fun onDestroy() {
         UnlockManager.removeListener(stateChangeListener)
         super.onDestroy()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.action == android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            refreshAndScan(showToast = false)
+        }
     }
 
     override fun onResume() {
@@ -449,7 +476,11 @@ fun MainAppScreen(
     onLanguageChange: (String) -> Unit = {},
     onToggleAutoUnlock: (String, Boolean) -> Unit,
     onMountReadOnlyChange: (Boolean) -> Unit,
+    pendingRootSwitchTarget: Boolean? = null,
+    isSwitchingModeProcessing: Boolean = false,
     onUseRootAccessChange: (Boolean) -> Unit = {},
+    onConfirmSwitchMode: () -> Unit = {},
+    onDismissSwitchMode: () -> Unit = {},
     onVirtualMountChange: (Boolean) -> Unit = {},
     onSuppressCorruptNotificationChange: (Boolean) -> Unit = {},
     onOpenAdvancedSettings: () -> Unit = {},
@@ -606,6 +637,16 @@ fun MainAppScreen(
                 onSuppressCorruptNotificationChange = onSuppressCorruptNotificationChange,
                 onOpenLog = onOpenLog,
                 onDismiss = onCloseAdvancedSettings
+            )
+        }
+
+        // Mode Switch Confirmation & Restart Dialog
+        pendingRootSwitchTarget?.let {
+            SwitchModeConfirmDialog(
+                activeVolumeCount = unlockedVolumes.size,
+                isProcessing = isSwitchingModeProcessing,
+                onConfirm = onConfirmSwitchMode,
+                onDismiss = onDismissSwitchMode
             )
         }
 

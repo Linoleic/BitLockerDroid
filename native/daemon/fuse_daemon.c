@@ -1025,6 +1025,13 @@ int main(int argc, char **argv) {
         open("/dev/null", O_RDONLY);
         open("/dev/null", O_WRONLY);
         open("/dev/null", O_WRONLY);
+
+        // Close any other inherited file descriptors except g_fuse_fd
+        int max_fd = (int)sysconf(_SC_OPEN_MAX);
+        if (max_fd < 0 || max_fd > 4096) max_fd = 4096;
+        for (int fd = 3; fd < max_fd; fd++) {
+            if (fd != g_fuse_fd) close(fd);
+        }
     } else {
         printf("MOUNTED_PID=%d\n", (int)getpid());
         fflush(stdout);
