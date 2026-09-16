@@ -148,12 +148,38 @@ int dis_io_init(dis_ctx_t *ctx)
 	signal(SIGPIPE, SIG_IGN);
 
 	pthread_mutex_init(&ctx->io_lock, NULL);
+	ctx->fd = -1;
 	ctx->io_in_fd = -1;
 	ctx->io_out_fd = -1;
 	ctx->io_pid = -1;
 
 	if (!is_safe_device_path(ctx->device_path)) {
 		dis_set_error("Security error: unsafe device path %s", ctx->device_path);
+		return -1;
+	}
+
+	// 0. In-process fd / socketpair support (e.g. "fd:<in_fd>:<out_fd>" or "fd:<fd>")
+	if (strncmp(ctx->device_path, "fd:", 3) == 0) {
+		int in_fd = -1, out_fd = -1;
+		if (sscanf(ctx->device_path + 3, "%d:%d", &in_fd, &out_fd) == 2) {
+			ctx->io_in_fd = in_fd;
+			ctx->io_out_fd = out_fd;
+		} else if (sscanf(ctx->device_path + 3, "%d", &in_fd) == 1) {
+			ctx->io_in_fd = in_fd;
+			ctx->io_out_fd = in_fd;
+		}
+		if (ctx->io_in_fd >= 0 && ctx->io_out_fd >= 0) {
+			int32_t magic = 0;
+			int r = pipe_read_exact(ctx->io_out_fd, &magic, sizeof(magic), 5000);
+			if (r == sizeof(magic) && magic == DAEMON_MAGIC) {
+				DLOG("Connected to in-process I/O fd: in=%d, out=%d", ctx->io_in_fd, ctx->io_out_fd);
+				return 0;
+			}
+			ELOG("Handshake failed on in-process fd (ret=%d, magic=0x%08x)", r, (unsigned int)magic);
+			dis_set_error("In-process I/O handshake failed on %s", ctx->device_path);
+			return -1;
+		}
+		dis_set_error("Invalid fd path %s", ctx->device_path);
 		return -1;
 	}
 
@@ -246,7 +272,9 @@ void dis_io_destroy(dis_ctx_t *ctx)
 		ssize_t wr = write(ctx->io_in_fd, &exit_cmd, 1);
 		(void)wr;
 		close(ctx->io_in_fd);
-		close(ctx->io_out_fd);
+		if (ctx->io_out_fd != ctx->io_in_fd && ctx->io_out_fd >= 0) {
+			close(ctx->io_out_fd);
+		}
 		ctx->io_in_fd = -1;
 		ctx->io_out_fd = -1;
 		pthread_mutex_unlock(&ctx->io_lock);
@@ -407,20 +435,26 @@ int dis_blk_read(dis_ctx_t *ctx, uint8_t *buf, off_t offset, size_t len)
 		memcpy(req + 1, &disk_off, 8);
 		memcpy(req + 9, &req_len, 4);
 
-		if (pipe_write_exact(ctx->io_in_fd, req, sizeof(req), 5000) != sizeof(req)) {
+		int wr = pipe_write_exact(ctx->io_in_fd, req, sizeof(req), 5000);
+		if (wr != sizeof(req)) {
+			ELOG("dis_blk_read: write req failed wr=%d (expected %zu), errno=%d (%s)", wr, sizeof(req), errno, strerror(errno));
 			pthread_mutex_unlock(&ctx->io_lock);
 			dis_set_error("Daemon read write failed");
 			return -1;
 		}
 
 		int32_t status = 0;
-		if (pipe_read_exact(ctx->io_out_fd, &status, sizeof(status), 5000) != sizeof(status) || status != (int32_t)len) {
+		int rr = pipe_read_exact(ctx->io_out_fd, &status, sizeof(status), 5000);
+		if (rr != sizeof(status) || status != (int32_t)len) {
+			ELOG("dis_blk_read: read status failed rr=%d, status=%d (expected %zu), errno=%d (%s)", rr, status, len, errno, strerror(errno));
 			pthread_mutex_unlock(&ctx->io_lock);
 			dis_set_error("Daemon read returned error: %d", (int)status);
 			return -1;
 		}
 
-		if (pipe_read_exact(ctx->io_out_fd, buf, len, 10000) != (int)len) {
+		int pr = pipe_read_exact(ctx->io_out_fd, buf, len, 10000);
+		if (pr != (int)len) {
+			ELOG("dis_blk_read: read payload failed pr=%d (expected %zu), errno=%d (%s)", pr, len, errno, strerror(errno));
 			pthread_mutex_unlock(&ctx->io_lock);
 			dis_set_error("Daemon read payload truncated");
 			return -1;

@@ -18,7 +18,7 @@ object DevicePathSecurity {
      * Strictly rejects shell metacharacters: ';', '|', '&', '$', '`', ''', '"', '\n', etc.
      */
     private val SAFE_BLOCK_DEVICE_PATTERN =
-        Regex("^/dev/block/(?:[a-zA-Z0-9_.,:-]+/)*[a-zA-Z0-9_.,:-]+$")
+        Regex("^(?:/dev/block/(?:[a-zA-Z0-9_.,:-]+/)*[a-zA-Z0-9_.,:-]+|usb://[a-zA-Z0-9_.,:-]+(?:/[a-zA-Z0-9_.,:-]+)*|fd:[0-9]+(?::[0-9]+)?)$")
 
     fun isValid(path: String?): Boolean {
         if (path.isNullOrBlank()) return false

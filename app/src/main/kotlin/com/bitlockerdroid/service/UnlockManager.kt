@@ -217,6 +217,16 @@ object UnlockManager {
         sessions.containsKey(devicePath) || detected.containsKey(devicePath)
     }
 
+    /** True if a volume with [guid] is already unlocked or pending unlock. */
+    fun isGuidKnown(guid: String?): Boolean {
+        if (guid.isNullOrBlank()) return false
+        synchronized(lock) {
+            if (sessions.values.any { it.volumeGuid == guid }) return true
+            if (detected.values.any { it.guid == guid }) return true
+        }
+        return false
+    }
+
     /** Called by the unlock dialog with the user password. */
     fun unlockWithPassword(
         context: Context,

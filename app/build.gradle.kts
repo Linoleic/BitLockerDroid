@@ -179,4 +179,8 @@ dependencies {
 
     // Keystore-based key protection
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // Non-root USB Mass Storage support
+    implementation("me.jahnen.libaums:core:0.10.0")
 }
+

@@ -23,7 +23,8 @@ class DislockerCore private constructor(
     val offset: Long,
     val handle: Long,
     val info: NativeBridge.SessionInfo,
-    val isRecovery: Boolean = false
+    val isRecovery: Boolean = false,
+    val usbSession: com.bitlockerdroid.usb.UsbStorageManager.UsbSession? = null
 ) : AutoCloseable {
 
     val reader: VolumeReader by lazy { buildReader() }
@@ -453,6 +454,11 @@ class DislockerCore private constructor(
             } catch (e: Throwable) {
                 Log.w(TAG, "close failed", e)
             }
+            try {
+                usbSession?.close()
+            } catch (e: Throwable) {
+                Log.w(TAG, "usbSession close failed", e)
+            }
         }
     }
 
@@ -466,31 +472,63 @@ class DislockerCore private constructor(
          */
         fun open(devicePath: String, offset: Long, password: String): DislockerCore {
             com.bitlockerdroid.util.DevicePathSecurity.requireValid(devicePath)
-            val handle = NativeBridge.nativeOpenVolume(
-                devicePath, offset, password.toByteArray(Charsets.UTF_8)
-            )
-            if (handle == 0L) {
-                val err = NativeBridge.nativeGetLastError()
-                throw UnlockException("Unlock failed: $err")
+            var usbSession: com.bitlockerdroid.usb.UsbStorageManager.UsbSession? = null
+            val effectivePath: String
+            if (devicePath.startsWith("usb://")) {
+                val session = com.bitlockerdroid.usb.UsbStorageManager.openSession(devicePath)
+                    ?: throw UnlockException("Failed to open USB device session for $devicePath")
+                usbSession = session
+                effectivePath = "fd:${session.nativeFd}"
+            } else {
+                effectivePath = devicePath
             }
-            val info = NativeBridge.sessionInfo(handle)
-                ?: run { NativeBridge.nativeClose(handle); throw UnlockException("Cannot read session info") }
 
-            Log.i(TAG, "opened volume at $devicePath: ${info.algorithmName} ${info.volumeSize} bytes")
-            return DislockerCore(devicePath, offset, handle, info, isRecovery = false)
+            try {
+                val handle = NativeBridge.nativeOpenVolume(
+                    effectivePath, offset, password.toByteArray(Charsets.UTF_8)
+                )
+                if (handle == 0L) {
+                    val err = NativeBridge.nativeGetLastError()
+                    throw UnlockException("Unlock failed: $err")
+                }
+                val info = NativeBridge.sessionInfo(handle)
+                    ?: run { NativeBridge.nativeClose(handle); throw UnlockException("Cannot read session info") }
+
+                Log.i(TAG, "opened volume at $devicePath: ${info.algorithmName} ${info.volumeSize} bytes")
+                return DislockerCore(devicePath, offset, handle, info, isRecovery = false, usbSession = usbSession)
+            } catch (e: Throwable) {
+                usbSession?.close()
+                throw e
+            }
         }
 
         /** Unlocks with a 48-digit recovery key. */
         fun openWithRecoveryKey(devicePath: String, offset: Long, recoveryKey: String): DislockerCore {
             com.bitlockerdroid.util.DevicePathSecurity.requireValid(devicePath)
-            val handle = NativeBridge.nativeOpenVolumeRecovery(devicePath, offset, recoveryKey)
-            if (handle == 0L) {
-                val err = NativeBridge.nativeGetLastError()
-                throw UnlockException("Recovery unlock failed: $err")
+            var usbSession: com.bitlockerdroid.usb.UsbStorageManager.UsbSession? = null
+            val effectivePath: String
+            if (devicePath.startsWith("usb://")) {
+                val session = com.bitlockerdroid.usb.UsbStorageManager.openSession(devicePath)
+                    ?: throw UnlockException("Failed to open USB device session for $devicePath")
+                usbSession = session
+                effectivePath = "fd:${session.nativeFd}"
+            } else {
+                effectivePath = devicePath
             }
-            val info = NativeBridge.sessionInfo(handle)
-                ?: run { NativeBridge.nativeClose(handle); throw UnlockException("Cannot read session info") }
-            return DislockerCore(devicePath, offset, handle, info, isRecovery = true)
+
+            try {
+                val handle = NativeBridge.nativeOpenVolumeRecovery(effectivePath, offset, recoveryKey)
+                if (handle == 0L) {
+                    val err = NativeBridge.nativeGetLastError()
+                    throw UnlockException("Recovery unlock failed: $err")
+                }
+                val info = NativeBridge.sessionInfo(handle)
+                    ?: run { NativeBridge.nativeClose(handle); throw UnlockException("Cannot read session info") }
+                return DislockerCore(devicePath, offset, handle, info, isRecovery = true, usbSession = usbSession)
+            } catch (e: Throwable) {
+                usbSession?.close()
+                throw e
+            }
         }
     }
 }

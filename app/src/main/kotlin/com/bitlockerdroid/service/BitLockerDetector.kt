@@ -37,37 +37,51 @@ object BitLockerDetector {
      * Returns the number of BitLocker volumes found.
      */
     fun scanAndDetect(context: Context): Int {
-        if (!RootAccess.hasSu()) {
-            LogFile.write("app", "scanAndDetect: su not available (not granted root?)")
-            return 0
-        }
-
-        val nodes = enumerateVoldNodes()
-        LogFile.write("app", "scanAndDetect: ${nodes.size} vold nodes")
-
-        // Drop detected-but-unlocked volumes that are no longer present on the
-        // bus (device unplugged). Unlocked sessions are left untouched; the
-        // DocumentsProvider will re-lock them lazily.
-        UnlockManager.forgetDetectedMissing(nodes)
-
         var found = 0
 
-        for (node in nodes) {
-            val headerInfo = readHeaderInfo(node)
-            val signature = headerInfo?.signature
-            val guid = headerInfo?.guid
-            val recoveryKeyId = headerInfo?.recoveryKeyId
-            LogFile.write("app", "  node $node sig=$signature guid=$guid rkId=$recoveryKeyId")
-            if (signature == "-FVE-FS-" || signature == "MSWIN4.1") {
-                LogFile.write("app", "  >>> BitLocker DETECTED: $node (guid=$guid, rkId=$recoveryKeyId)")
-                found++
-                StorageNotificationSuppressor.suppressForVolume(context, node)
-                UnlockManager.onDeviceDetected(context, node, 0, guid, recoveryKeyId)
-            } else {
-                StorageNotificationSuppressor.forgetNode(node)
-                UnlockManager.forgetDetected(node)
-                UnlockManager.closeSessionIfPresent(node)
+        if (RootAccess.hasSu()) {
+            val nodes = enumerateVoldNodes()
+            LogFile.write("app", "scanAndDetect (Root): ${nodes.size} vold nodes")
+
+            // Drop detected-but-unlocked volumes that are no longer present on the
+            // bus (device unplugged). Unlocked sessions are left untouched; the
+            // DocumentsProvider will re-lock them lazily.
+            UnlockManager.forgetDetectedMissing(nodes)
+
+            for (node in nodes) {
+                val headerInfo = readHeaderInfo(node)
+                val signature = headerInfo?.signature
+                val guid = headerInfo?.guid
+                val recoveryKeyId = headerInfo?.recoveryKeyId
+                LogFile.write("app", "  node $node sig=$signature guid=$guid rkId=$recoveryKeyId")
+                if (signature == "-FVE-FS-" || signature == "MSWIN4.1") {
+                    LogFile.write("app", "  >>> BitLocker DETECTED (Root): $node (guid=$guid, rkId=$recoveryKeyId)")
+                    found++
+                    StorageNotificationSuppressor.suppressForVolume(context, node)
+                    UnlockManager.onDeviceDetected(context, node, 0, guid, recoveryKeyId)
+                } else {
+                    StorageNotificationSuppressor.forgetNode(node)
+                    UnlockManager.forgetDetected(node)
+                    UnlockManager.closeSessionIfPresent(node)
+                }
             }
+        } else {
+            LogFile.write("app", "scanAndDetect: su not available, running in non-root USB Host mode")
+        }
+
+        // Always scan USB devices via non-root USB Host stack
+        try {
+            val usbParts = com.bitlockerdroid.usb.UsbStorageManager.scanUsbDevices(context)
+            for (p in usbParts) {
+                // Deduplicate: skip if this partition was already detected via root with the same GUID
+                if (!UnlockManager.isGuidKnown(p.guid)) {
+                    LogFile.write("app", "  >>> BitLocker DETECTED (USB Host): ${p.devicePath} (guid=${p.guid}, rkId=${p.recoveryKeyId})")
+                    found++
+                    UnlockManager.onDeviceDetected(context, p.devicePath, 0, p.guid, p.recoveryKeyId)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in scanUsbDevices", e)
         }
 
         LogFile.write("app", "scanAndDetect done, BitLocker found=$found")
@@ -129,6 +143,22 @@ object BitLockerDetector {
      * The 48-digit Recovery Key Identifier is in the DATUMS_ENTRY_VMK datum with nonce range 0x0800..0x0fff.
      */
     fun extractMetadataGuids(path: String, sig: String, sector0: ByteArray): MetadataGuids {
+        if (!com.bitlockerdroid.util.DevicePathSecurity.isValid(path)) {
+            return MetadataGuids(null, null)
+        }
+        return extractMetadataGuidsFromReader(sig, sector0) { offBytes, cntBytes ->
+            val skipSectors = offBytes / 512L
+            val countSectors = cntBytes / 512
+            val metaCmd = "dd if='$path' bs=512 skip=$skipSectors count=$countSectors 2>/dev/null"
+            RootAccess.execBytes(metaCmd, 2500)
+        }
+    }
+
+    fun extractMetadataGuidsFromReader(
+        sig: String,
+        sector0: ByteArray,
+        readBytes: (offsetBytes: Long, countBytes: Int) -> ByteArray?
+    ): MetadataGuids {
         var volumeGuid: String? = null
         var recoveryKeyId: String? = null
         try {
@@ -149,10 +179,8 @@ object BitLockerDetector {
             }
 
             if (metaOffset > 0L) {
-                val skipSectors = metaOffset / 512L
                 // Read 4KB (8 sectors) to cover dataset header and top-level datums
-                val metaCmd = "dd if='$path' bs=512 skip=$skipSectors count=8 2>/dev/null"
-                val metaSector = RootAccess.execBytes(metaCmd, 2500)
+                val metaSector = readBytes(metaOffset, 4096)
                 if (metaSector != null && metaSector.size >= 0x60) {
                     val metaSig = String(metaSector, 0, 8, Charsets.US_ASCII)
                     if (metaSig == "-FVE-FS-") {
@@ -192,7 +220,7 @@ object BitLockerDetector {
                 }
             }
         } catch (e: Throwable) {
-            Log.w(TAG, "failed extracting metadata GUIDs for $path", e)
+            Log.w(TAG, "failed extracting metadata GUIDs", e)
         }
 
         // Fallback: If metadata block could not be read, check fallback offsets but filter out static spec GUIDs

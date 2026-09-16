@@ -22,7 +22,15 @@ class BitLockerCoreService : Service() {
             val action = intent?.action ?: return
             LogFile.write("app", "usbReceiver triggered: action=$action")
             if (action == android.hardware.usb.UsbManager.ACTION_USB_DEVICE_DETACHED) {
+                @Suppress("DEPRECATION")
+                val dev = intent.getParcelableExtra<android.hardware.usb.UsbDevice>(android.hardware.usb.UsbManager.EXTRA_DEVICE)
+                if (dev != null) {
+                    com.bitlockerdroid.usb.UsbStorageManager.onDeviceDetached(dev)
+                }
                 UnlockManager.onUsbDetached()
+            } else if (action == com.bitlockerdroid.usb.UsbStorageManager.ACTION_USB_PERMISSION) {
+                val granted = intent.getBooleanExtra(android.hardware.usb.UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                LogFile.write("app", "usbReceiver: USB permission granted=$granted")
             }
             Thread({
                 try {
@@ -50,6 +58,7 @@ class BitLockerCoreService : Service() {
         val filter = android.content.IntentFilter().apply {
             addAction(android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED)
             addAction(android.hardware.usb.UsbManager.ACTION_USB_DEVICE_DETACHED)
+            addAction(com.bitlockerdroid.usb.UsbStorageManager.ACTION_USB_PERMISSION)
         }
         try {
             if (android.os.Build.VERSION.SDK_INT >= 33) {

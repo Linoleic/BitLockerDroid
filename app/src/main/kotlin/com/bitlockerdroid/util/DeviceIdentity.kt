@@ -61,6 +61,14 @@ object DeviceIdentity {
             }
         }
 
+        if (devicePath.startsWith("usb://")) {
+            val usbInfo = com.bitlockerdroid.usb.UsbStorageManager.getDeviceInfo(devicePath)
+            if (usbInfo != null) {
+                cache[devicePath] = usbInfo
+                return usbInfo
+            }
+        }
+
         try {
             var vendor = ""
             var model = ""

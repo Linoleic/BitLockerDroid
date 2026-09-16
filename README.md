@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL%20v2.0-blue.svg" alt="License: GPL-2.0"></a>
-  <img src="https://img.shields.io/badge/Root-KernelSU%20%7C%20Magisk%20%7C%20APatch-orange.svg" alt="Root Required">
+  <img src="https://img.shields.io/badge/Root-Optional%20(Non--Root%20USB%20Host%20%7C%20Root)-brightgreen.svg" alt="Root Optional">
   <img src="https://img.shields.io/badge/Language-Kotlin%20%7C%20C%20(NDK)-lightgrey.svg" alt="Kotlin & C">
 </p>
 
@@ -20,9 +20,11 @@
 1. 识别设备并检测 BitLocker 分区；
 2. 输入**用户密码**或 **48 位数字恢复密钥**解锁；
 3. 解锁后直接在 Android 系统原生文件管理器（DocumentsUI）中进行**文件浏览、新建、重命名、读写编辑与安全删除**；
-4. 同时支持启动**全局 POSIX 虚拟挂载**（FUSE `/storage/XXXX-XXXX`），让第三方应用（如 MT 管理器、Termux、影音播放器等）通过绝对路径直接读写访问。
+4. 若设备具备 Root 权限，同时支持启动**全局 POSIX 虚拟挂载**（FUSE `/storage/XXXX-XXXX`），让第三方应用（如 MT 管理器、Termux、影音播放器等）通过绝对路径直接读写访问。
 
-> **运行要求**：系统具备 Root 权限（KernelSU、Magisk 或 APatch）以获取底层块设备读写能力。
+> **运行模式**：
+> - **免 Root 模式（Non-Root USB Host）**：支持外接 USB OTG 设备，通过 Android USB Host API 及用户态 SCSI 驱动栈完成通信与解密，利用 DocumentsProvider 提供原生文件管理器的完整读写（NTFS、exFAT、FAT32）；
+> - **Root 模式（KernelSU / Magisk / APatch）**：额外支持全局 POSIX 虚拟挂载（`/storage/XXXX-XXXX`）以及全部块设备访问。
 
 ---
 
@@ -164,8 +166,9 @@ chmod +x gradlew
 
 ## 常见说明 / Notes & FAQ
 
-- **为什么必须需要 Root 权限？**
-  - Android 具备严格的 SELinux 机制，第三方应用无权直接访问 `/dev/block/*` 原始块设备，必须通过 Root 提权才能读取加密扇区数据并挂载 FUSE 驱动。
+- **是否必须需要 Root 权限？**
+  - **不需要**。对于通过 USB OTG 连接的外接 U 盘或移动硬盘，应用可在免 Root 状态下通过 Android 原生 USB Host 权限直接与设备进行底层 SCSI 通信，配合 SAF DocumentsProvider 实现原生文件管理器的文件读写（支持 NTFS、exFAT、FAT32）。
+  - 若需要**全局 POSIX 虚拟挂载**（即在 `/storage/XXXX-XXXX` 生成系统绝对路径供第三方 App 访问）或访问手机板载内部存储/SD 卡分区，则需要设备具备 Root 权限。
 - **为什么拔盘前建议点击「安全弹出」？**
   - 写入操作通常具有缓存机制，安全弹出能确保所有修改已全部写回磁盘闪存，并清除卷的 Dirty Bit 标记，避免拔盘后在电脑上提示“扫描并修复”。
 
