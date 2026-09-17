@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -26,6 +27,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bitlockerdroid.R
@@ -194,31 +196,12 @@ fun UnlockedVolumeCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = stringResource(R.string.recovery_key_id),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                val prefix = volume.recoveryKeyId.take(8)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                                ) {
-                                    Text(
-                                        text = stringResource(R.string.prefix_format, prefix),
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            fontFamily = FontFamily.Monospace,
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                    )
-                                }
-                            }
+                            Text(
+                                text = stringResource(R.string.recovery_key_id),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = volume.recoveryKeyId,
@@ -413,11 +396,15 @@ fun UnlockedVolumeCard(
                             .padding(12.dp),
                         verticalAlignment = Alignment.Top
                     ) {
-                        Text(
-                            text = "⚠️",
-                            fontSize = 18.sp,
-                            modifier = Modifier.padding(end = 10.dp, top = 1.dp)
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = WarningAmber,
+                            modifier = Modifier
+                                .size(20.dp)
+                                .padding(top = 1.dp)
                         )
+                        Spacer(modifier = Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = stringResource(R.string.dirty_volume_title),
@@ -592,30 +579,12 @@ fun UnlockedVolumeCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = stringResource(R.string.readonly_mode_title),
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (mountReadOnly) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = if (mountReadOnly) MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
-                                        else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                            ) {
-                                Text(
-                                    text = if (mountReadOnly) stringResource(R.string.readonly_mode_on) else stringResource(R.string.readonly_mode_off),
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold
-                                    ),
-                                    color = if (mountReadOnly) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
+                        Text(
+                            text = stringResource(R.string.readonly_mode_title),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (mountReadOnly) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                        )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = if (mountReadOnly) stringResource(R.string.readonly_mode_desc_on)
@@ -637,52 +606,127 @@ fun UnlockedVolumeCard(
             Spacer(modifier = Modifier.height(14.dp))
 
             // Action Buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedButton(
-                    onClick = { showBenchmarkDialog = true },
-                    enabled = !isEjecting,
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text(text = stringResource(R.string.benchmark_btn))
-                }
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                if (maxWidth < 420.dp) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { showBenchmarkDialog = true },
+                                enabled = !isEjecting,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.benchmark_btn),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
 
-                OutlinedButton(
-                    onClick = onLock,
-                    enabled = !isEjecting,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.primary
-                    )
-                ) {
-                    if (isEjecting) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(text = stringResource(R.string.safe_ejecting))
-                    } else {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_eject),
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(text = stringResource(R.string.safe_eject))
+                            OutlinedButton(
+                                onClick = onLock,
+                                enabled = !isEjecting,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.primary
+                                ),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                if (isEjecting) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = stringResource(R.string.safe_ejecting),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                } else {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_eject),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = stringResource(R.string.safe_eject),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+
+                        Button(
+                            onClick = onOpen,
+                            enabled = !isEjecting,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = stringResource(R.string.open),
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
-                }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedButton(
+                            onClick = { showBenchmarkDialog = true },
+                            enabled = !isEjecting,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(text = stringResource(R.string.benchmark_btn))
+                        }
 
-                Button(
-                    onClick = onOpen,
-                    enabled = !isEjecting,
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text(text = stringResource(R.string.open))
+                        OutlinedButton(
+                            onClick = onLock,
+                            enabled = !isEjecting,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            if (isEjecting) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(text = stringResource(R.string.safe_ejecting))
+                            } else {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_eject),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(text = stringResource(R.string.safe_eject))
+                            }
+                        }
+
+                        Button(
+                            onClick = onOpen,
+                            enabled = !isEjecting,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(text = stringResource(R.string.open))
+                        }
+                    }
                 }
             }
         }
@@ -711,9 +755,9 @@ private fun VolumeDetailRow(
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(90.dp)
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        Spacer(modifier = Modifier.width(8.dp))
         Row(
             modifier = Modifier.weight(1f),
             horizontalArrangement = Arrangement.End,

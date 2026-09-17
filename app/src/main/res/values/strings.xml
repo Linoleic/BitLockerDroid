@@ -155,7 +155,7 @@
     <string name="virtual_mount_to_storage">Mount to Real Directory</string>
     <string name="storage_used">Used %1$s (%2$d%%)</string>
     <string name="storage_available">%1$s free of %2$s</string>
-    <string name="dirty_volume_warning_chip">⚠️ Dirty volume (Unclean unmount)</string>
+    <string name="dirty_volume_warning_chip">Dirty volume (Unclean unmount)</string>
     <string name="dirty_volume_title">Unclean Unmount Warning</string>
     <string name="dirty_volume_desc">This volume was not cleanly unmounted. To prevent data corruption, read-only mode or repairing on PC is recommended.</string>
     <string name="hardware_details_title">Hardware &amp; Volume Details</string>
@@ -166,8 +166,8 @@
     <string name="volume_serial">Volume Serial</string>
     <string name="volume_serial_copied">Volume serial copied</string>
     <string name="sector_and_alignment">Sector &amp; Alignment</string>
-    <string name="sector_4kn_aligned">%1$d B (4Kn · 16KB aligned)</string>
-    <string name="sector_512e_aligned">%1$d B (512e · 16KB aligned)</string>
+    <string name="sector_4kn_aligned">%1$d B (4Kn · Aligned)</string>
+    <string name="sector_512e_aligned">%1$d B (512e · Aligned)</string>
     <string name="unlock_method">Unlock Method</string>
     <string name="method_recovery_key">48-digit Recovery Key</string>
     <string name="method_user_password">User Password</string>
@@ -175,13 +175,13 @@
     <string name="perm_read_write">Read / Write</string>
     <string name="perm_read_only">Read-Only</string>
     <string name="volume_health">Volume Health</string>
-    <string name="health_dirty">Dirty (Dirty bit set, unclean unmount)</string>
-    <string name="health_clean">Clean (Cleanly unmounted)</string>
+    <string name="health_dirty">Dirty</string>
+    <string name="health_clean">Clean</string>
     <string name="readonly_mode_title">Read-Only Protection</string>
-    <string name="readonly_mode_on">Enabled (Read-only)</string>
-    <string name="readonly_mode_off">Disabled (Read/Write)</string>
-    <string name="readonly_mode_desc_on">Strict read-only protection active; file creation, edit, or deletion is prohibited</string>
-    <string name="readonly_mode_desc_off">Full write access enabled; creating, editing, renaming, and deleting files are permitted</string>
+    <string name="readonly_mode_on">Read-Only</string>
+    <string name="readonly_mode_off">Read / Write</string>
+    <string name="readonly_mode_desc_on">Write and modification prohibited</string>
+    <string name="readonly_mode_desc_off">Full read and write access allowed</string>
     <string name="benchmark_btn">Benchmark</string>
     <string name="copy_field_format">Copy %1$s</string>
 

@@ -161,31 +161,12 @@ fun DetectedVolumeCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = stringResource(R.string.recovery_key_id),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = WarningAmber
-                                )
-                                val prefix = volume.recoveryKeyId.take(8)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = WarningAmber.copy(alpha = 0.25f)
-                                ) {
-                                    Text(
-                                        text = stringResource(R.string.prefix_format, prefix),
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            fontFamily = FontFamily.Monospace,
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                    )
-                                }
-                            }
+                            Text(
+                                text = stringResource(R.string.recovery_key_id),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = WarningAmber
+                            )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = volume.recoveryKeyId,

@@ -173,10 +173,10 @@ fun CredentialsManagerDialog(
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Text(
-                                        text = if (cred.autoUnlock) stringResource(R.string.creds_auto_unlock_enabled) else stringResource(R.string.creds_auto_unlock_disabled),
+                                        text = stringResource(R.string.creds_auto_unlock_enabled),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Medium,
-                                        color = if (cred.autoUnlock) SuccessGreen else MaterialTheme.colorScheme.outline
+                                        color = if (cred.autoUnlock) SuccessGreen else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Switch(

@@ -74,8 +74,21 @@ fun BenchmarkDialog(
         onDismissRequest = { if (!isRunning) onDismiss() },
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(text = "⚡", fontSize = 22.sp)
-                Spacer(modifier = Modifier.width(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(
                         text = stringResource(R.string.benchmark_dialog_title),
@@ -185,8 +198,10 @@ fun BenchmarkDialog(
                                 Text(
                                     text = stringResource(R.string.benchmark_seq_read),
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = String.format(Locale.US, "%.1f MB/s", r.sequentialReadMbPerSec),
                                     style = MaterialTheme.typography.titleMedium.copy(
@@ -205,8 +220,10 @@ fun BenchmarkDialog(
                                 Text(
                                     text = stringResource(R.string.benchmark_4k_latency),
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = String.format(Locale.US, "%.2f ms (%.0f IOPS)", r.random4kLatencyMs, r.random4kIops),
                                     style = MaterialTheme.typography.bodyMedium.copy(
@@ -225,8 +242,10 @@ fun BenchmarkDialog(
                                 Text(
                                     text = stringResource(R.string.benchmark_link_speed),
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Surface(
                                     shape = RoundedCornerShape(6.dp),
                                     color = if (r.usbLinkSpeedMbps != null && r.usbLinkSpeedMbps >= 5000) SuccessGreen.copy(alpha = 0.15f)

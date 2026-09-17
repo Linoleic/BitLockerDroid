@@ -468,31 +468,12 @@ fun UnlockDialogScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = stringResource(R.string.recovery_key_id),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                        val prefix = recoveryKeyId?.take(8) ?: ""
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Surface(
-                                            shape = RoundedCornerShape(4.dp),
-                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                                        ) {
-                                            Text(
-                                                text = stringResource(R.string.prefix_8_digits, prefix),
-                                                style = MaterialTheme.typography.labelSmall.copy(
-                                                    fontFamily = FontFamily.Monospace,
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                ),
-                                                color = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                                            )
-                                        }
-                                    }
+                                    Text(
+                                        text = stringResource(R.string.recovery_key_id),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
                                     Spacer(modifier = Modifier.height(3.dp))
                                     Text(
                                         text = recoveryKeyId ?: "",

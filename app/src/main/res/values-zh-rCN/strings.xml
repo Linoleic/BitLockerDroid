@@ -22,7 +22,7 @@
     <string name="no_detected_volumes">未检测到待解锁的 BitLocker 卷。</string>
     <string name="refresh">刷新</string>
     <string name="lock">安全锁定</string>
-    <string name="open">在文件管理器中打开</string>
+    <string name="open">打开</string>
     <string name="open_failed">无法在文件管理器中定位该卷</string>
     <string name="locked">卷已锁定并释放句柄</string>
     <string name="view_log">查看日志</string>
@@ -155,7 +155,7 @@
     <string name="virtual_mount_to_storage">虚拟挂载至真实目录</string>
     <string name="storage_used">已用 %1$s (%2$d%%)</string>
     <string name="storage_available">可用 %1$s / 共 %2$s</string>
-    <string name="dirty_volume_warning_chip">⚠️ 脏卷 (未安全弹出)</string>
+    <string name="dirty_volume_warning_chip">脏卷 (未安全弹出)</string>
     <string name="dirty_volume_title">卷未安全移除警告</string>
     <string name="dirty_volume_desc">该分区上次未安全弹出。为防止数据损坏，建议开启只读保护或在电脑上修复。</string>
     <string name="hardware_details_title">详细硬件与卷参数</string>
@@ -166,8 +166,8 @@
     <string name="volume_serial">卷序列号</string>
     <string name="volume_serial_copied">卷序列号已复制</string>
     <string name="sector_and_alignment">扇区与对齐</string>
-    <string name="sector_4kn_aligned">%1$d B (4Kn · 16KB 对齐就绪)</string>
-    <string name="sector_512e_aligned">%1$d B (512e · 16KB 对齐就绪)</string>
+    <string name="sector_4kn_aligned">%1$d B (4Kn · 原生对齐)</string>
+    <string name="sector_512e_aligned">%1$d B (512e · 模拟对齐)</string>
     <string name="unlock_method">解锁方式</string>
     <string name="method_recovery_key">48 位恢复密钥</string>
     <string name="method_user_password">用户密码</string>
@@ -175,13 +175,13 @@
     <string name="perm_read_write">读写 (Read / Write)</string>
     <string name="perm_read_only">只读 (Read-Only)</string>
     <string name="volume_health">卷健康状态</string>
-    <string name="health_dirty">异常 (Dirty Bit 置位，未安全弹出)</string>
-    <string name="health_clean">健康 (Clean，正常卸载)</string>
+    <string name="health_dirty">异常 (Dirty)</string>
+    <string name="health_clean">正常 (Clean)</string>
     <string name="readonly_mode_title">只读保护模式</string>
-    <string name="readonly_mode_on">已开启 (只读)</string>
-    <string name="readonly_mode_off">正常读写</string>
-    <string name="readonly_mode_desc_on">已启用只读硬保护，严格禁止新建、覆盖、修改或删除文件</string>
-    <string name="readonly_mode_desc_off">允许对该加密盘进行新建、重命名、编辑与删除文件</string>
+    <string name="readonly_mode_on">只读</string>
+    <string name="readonly_mode_off">读写</string>
+    <string name="readonly_mode_desc_on">禁止写入与修改文件</string>
+    <string name="readonly_mode_desc_off">允许完整读写与修改</string>
     <string name="benchmark_btn">基准测速</string>
     <string name="copy_field_format">复制 %1$s</string>
 

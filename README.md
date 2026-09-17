@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL%20v2.0-blue.svg" alt="License: GPL-2.0"></a>
-  <img src="https://img.shields.io/badge/Android-8.0+--15%20(16KB%20Ready)-blue.svg" alt="Android 8.0+ 16KB Ready">
+  <img src="https://img.shields.io/badge/Android-8.0--17-blue.svg" alt="Android 8.0 ~ 17">
   <img src="https://img.shields.io/badge/Root-Optional%20(Non--Root%20USB%20Host%20%7C%20Root)-brightgreen.svg" alt="Root Optional">
   <img src="https://img.shields.io/badge/Language-Kotlin%20%7C%20C%20(NDK)-lightgrey.svg" alt="Kotlin & C">
 </p>
@@ -170,7 +170,7 @@ Android 原生“文件”应用 (DocumentsUI)                系统全局绝对
 
 | 维度 | 规格要求 / 支持范围 | 补充说明 |
 |---|---|---|
-| **操作系统** | Android 8.0 (API 26) 及更高版本 | 全面适配 Android 14 / 15，支持 16KB 内存页对齐 |
+| **操作系统** | Android 8.0 ~ 17 (API 26 ~ 36) | 兼容主流与最新 Android 系统版本 |
 | **处理器架构** | `arm64-v8a`, `armeabi-v7a` | 提供 64 位与 32 位全指令集编译支持 |
 | **Root 授权方案** | **免 Root** / **KernelSU** / **Magisk** / **APatch** | 免 Root 模式无需刷机；Root 模式支持三大主流授权工具 |
 | **受支持文件系统** | **NTFS**, **exFAT**, **FAT32** | 完整支持文件与目录的查看、创建、修改写入、重命名与删除 |
@@ -230,7 +230,7 @@ BitLockerDroid/
 │   │   └── res/                         # 资源文件 (多语言 strings.xml, 图标, 布局)
 │   └── build.gradle.kts                 # 模块构建脚本
 ├── native/                              # 底层 C/C++ 核心与驱动引擎
-│   ├── CMakeLists.txt                   # NDK CMake 构建配置 (16KB 页对齐支持)
+│   ├── CMakeLists.txt                   # NDK CMake 构建配置
 │   ├── daemon/                          # FUSE 守护进程 (fuse_daemon) 与 I/O 特权守护进程
 │   ├── dislocker/                       # BitLocker 解密核心逻辑 (VMK/FVEK, 算法解析)
 │   ├── jni/                             # JNI 绑定胶水层 (dislocker_jni.c)
@@ -317,5 +317,5 @@ BitLockerDroid/
 ### 核心上游与依赖致谢
 - **BitLocker 解析核心**：参考并移植自开源项目 [dislocker](https://github.com/Aorimn/dislocker) (GPL-2.0)；
 - **密码学与摘要计算**：采用 [mbedtls](https://github.com/Mbed-TLS/mbedtls) (Apache-2.0 / GPL-2.0)；
-- **NTFS 文件系统引擎**：内置深度定制并进行 16KB 页对齐改造的 [libntfs-3g](https://github.com/tuxera/ntfs-3g) (GPL-2.0)；
+- **NTFS 文件系统引擎**：内置深度定制移植的 [libntfs-3g](https://github.com/tuxera/ntfs-3g) (GPL-2.0)；
 - **FAT32 文件系统引擎**：采用 [FatFs](http://elm-chan.org/fsw/ff/00index_e.html) (ChaN)。
