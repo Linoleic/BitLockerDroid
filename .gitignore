@@ -6,6 +6,7 @@ backup.txt
 PROJECT_STATUS.md
 local.properties
 INSTALL.md
+tools/
 
 # ============================================================
 # 证书与密钥配置
