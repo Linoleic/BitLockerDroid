@@ -153,6 +153,9 @@
     <string name="copy_mount_path">Copy Mount Path</string>
     <string name="mount_failed_toast">Mount failed: %1$s</string>
     <string name="virtual_mount_to_storage">Mount to Real Directory</string>
+    <string name="unmount_virtual_mount">Unmount</string>
+    <string name="mount_success_toast">Mounted to %1$s</string>
+    <string name="unmount_success_toast">Unmounted</string>
     <string name="storage_used">Used %1$s (%2$d%%)</string>
     <string name="storage_available">%1$s free of %2$s</string>
     <string name="dirty_volume_warning_chip">Dirty volume (Unclean unmount)</string>

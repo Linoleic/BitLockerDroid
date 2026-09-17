@@ -34,8 +34,6 @@ fun AdvancedSettingsDialog(
     rootSolution: RootAccess.RootSolutionInfo,
     useRootAccess: Boolean,
     onUseRootAccessChange: (Boolean) -> Unit,
-    virtualMountEnabled: Boolean,
-    onVirtualMountChange: (Boolean) -> Unit,
     suppressCorruptNotification: Boolean,
     onSuppressCorruptNotificationChange: (Boolean) -> Unit,
     onOpenLog: () -> Unit,
@@ -141,19 +139,6 @@ fun AdvancedSettingsDialog(
                             }
                         }
                     }
-
-                    SettingsSwitchItem(
-                        title = stringResource(R.string.settings_posix_mount),
-                        description = stringResource(R.string.settings_posix_mount_desc),
-                        checked = virtualMountEnabled && canUseRootFeatures,
-                        enabled = canUseRootFeatures,
-                        onCheckedChange = onVirtualMountChange
-                    )
-
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                    )
 
                     SettingsSwitchItem(
                         title = stringResource(R.string.settings_suppress_corrupt_notification),

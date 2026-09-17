@@ -13,8 +13,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -33,9 +32,11 @@ import androidx.compose.ui.unit.sp
 import com.bitlockerdroid.R
 import com.bitlockerdroid.service.UnlockedVolume
 import com.bitlockerdroid.service.VirtualStorageMountManager
+import com.bitlockerdroid.service.VirtualStorageMountManager.VirtualMountInfo
 import com.bitlockerdroid.ui.theme.SuccessGreen
 import com.bitlockerdroid.ui.theme.WarningAmber
 import com.bitlockerdroid.util.DeviceIdentity
+import com.bitlockerdroid.util.PreferenceHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -43,38 +44,26 @@ import kotlinx.coroutines.withContext
 @Composable
 fun UnlockedVolumeCard(
     volume: UnlockedVolume,
-    mountReadOnly: Boolean,
+    vMount: VirtualMountInfo? = null,
+    isVirtualMountSupported: Boolean = false,
     onMountReadOnlyChange: (Boolean) -> Unit,
     onOpen: () -> Unit,
     onLock: () -> Unit,
     isEjecting: Boolean = false
 ) {
     val context = LocalContext.current
-    val activeMounts by VirtualStorageMountManager.activeMountsFlow.collectAsState()
-    val vMount = activeMounts[volume.devicePath]
-        ?: activeMounts.values.firstOrNull { !volume.guid.isNullOrBlank() && it.volumeGuid.equals(volume.guid, ignoreCase = true) }
     var detailsExpanded by remember { mutableStateOf(false) }
     var showBenchmarkDialog by remember { mutableStateOf(false) }
-
-    LaunchedEffect(volume.devicePath) {
-        if (vMount == null &&
-            !isEjecting &&
-            VirtualStorageMountManager.isEnabled(context) &&
-            VirtualStorageMountManager.isSupported() &&
-            !com.bitlockerdroid.service.UnlockManager.isManuallyLocked(volume.guid, volume.devicePath)
-        ) {
-            withContext(Dispatchers.IO) {
-                VirtualStorageMountManager.mountRemembered(context, volume.devicePath, volume.guid)
-            }
-        }
-    }
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = CardDefaults.outlinedCardBorder().copy(
+            brush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        )
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
             Row(
@@ -231,12 +220,12 @@ fun UnlockedVolumeCard(
                 }
             }
 
-            // POSIX Virtual Mount Path Section with copy button
+            // POSIX Virtual Mount Section (Root Mode)
             if (vMount != null) {
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Surface(
                     shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -257,12 +246,32 @@ fun UnlockedVolumeCard(
                                 text = vMount.mountPoint,
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     fontFamily = FontFamily.Monospace,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontSize = 11.sp
                                 ),
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
+                        TextButton(
+                            onClick = {
+                                Thread {
+                                    VirtualStorageMountManager.unmount(volume.devicePath)
+                                    PreferenceHelper.setVolumeVirtualMountEnabled(context, volume.guid, volume.devicePath, false)
+                                    (context as? android.app.Activity)?.runOnUiThread {
+                                        Toast.makeText(context, R.string.unmount_success_toast, Toast.LENGTH_SHORT).show()
+                                    }
+                                }.start()
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            modifier = Modifier.height(28.dp),
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.unmount_virtual_mount),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
                         IconButton(
                             onClick = {
                                 val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
@@ -280,14 +289,23 @@ fun UnlockedVolumeCard(
                         }
                     }
                 }
-            } else if (VirtualStorageMountManager.isSupported() && VirtualStorageMountManager.isEnabled(context)) {
-                Spacer(modifier = Modifier.height(10.dp))
+            } else if (isVirtualMountSupported) {
+                Spacer(modifier = Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = {
                         Thread {
                             val res = VirtualStorageMountManager.mountRemembered(context, volume.devicePath, volume.guid)
-                            if (res.isFailure) {
-                                (context as? android.app.Activity)?.runOnUiThread {
+                            if (res.isSuccess) {
+                                PreferenceHelper.setVolumeVirtualMountEnabled(context, volume.guid, volume.devicePath, true)
+                            }
+                            (context as? android.app.Activity)?.runOnUiThread {
+                                if (res.isSuccess) {
+                                    Toast.makeText(
+                                        context,
+                                        context.getString(R.string.mount_success_toast, res.getOrNull()?.mountPoint ?: ""),
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                } else {
                                     Toast.makeText(
                                         context,
                                         context.getString(R.string.mount_failed_toast, res.exceptionOrNull()?.message ?: ""),
@@ -429,10 +447,8 @@ fun UnlockedVolumeCard(
             Surface(
                 shape = RoundedCornerShape(10.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable { detailsExpanded = !detailsExpanded }
+                modifier = Modifier.fillMaxWidth(),
+                onClick = { detailsExpanded = !detailsExpanded }
             ) {
                 Row(
                     modifier = Modifier
@@ -559,14 +575,17 @@ fun UnlockedVolumeCard(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Read-Only Access Mode Control (主页盘符控制处)
+            // Read-Only Access Mode Control (每个盘符独立控制)
+            var isVolumeRo by remember(volume.devicePath, volume.guid) {
+                mutableStateOf(PreferenceHelper.isVolumeReadOnly(context, volume.guid, volume.devicePath))
+            }
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = if (mountReadOnly) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
+                color = if (isVolumeRo) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
                         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
                 border = androidx.compose.foundation.BorderStroke(
                     1.dp,
-                    if (mountReadOnly) MaterialTheme.colorScheme.error.copy(alpha = 0.4f)
+                    if (isVolumeRo) MaterialTheme.colorScheme.error.copy(alpha = 0.4f)
                     else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
                 ),
                 modifier = Modifier.fillMaxWidth()
@@ -583,11 +602,11 @@ fun UnlockedVolumeCard(
                             text = stringResource(R.string.readonly_mode_title),
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (mountReadOnly) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                            color = if (isVolumeRo) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = if (mountReadOnly) stringResource(R.string.readonly_mode_desc_on)
+                            text = if (isVolumeRo) stringResource(R.string.readonly_mode_desc_on)
                                    else stringResource(R.string.readonly_mode_desc_off),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -595,8 +614,10 @@ fun UnlockedVolumeCard(
                     }
                     Spacer(modifier = Modifier.width(10.dp))
                     Switch(
-                        checked = mountReadOnly,
+                        checked = isVolumeRo,
                         onCheckedChange = { enabled ->
+                            isVolumeRo = enabled
+                            PreferenceHelper.setVolumeReadOnly(context, volume.guid, volume.devicePath, enabled)
                             onMountReadOnlyChange(enabled)
                         }
                     )
@@ -606,90 +627,27 @@ fun UnlockedVolumeCard(
             Spacer(modifier = Modifier.height(14.dp))
 
             // Action Buttons
-            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                if (maxWidth < 420.dp) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OutlinedButton(
-                                onClick = { showBenchmarkDialog = true },
-                                enabled = !isEjecting,
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.benchmark_btn),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-
-                            OutlinedButton(
-                                onClick = onLock,
-                                enabled = !isEjecting,
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = MaterialTheme.colorScheme.primary
-                                ),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                if (isEjecting) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                        strokeWidth = 2.dp,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = stringResource(R.string.safe_ejecting),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                } else {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.ic_eject),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = stringResource(R.string.safe_eject),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                        }
-
-                        Button(
-                            onClick = onOpen,
-                            enabled = !isEjecting,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = stringResource(R.string.open),
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-                } else {
+            val isCompact = LocalConfiguration.current.screenWidthDp < 480
+            if (isCompact) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                        verticalAlignment = Alignment.CenterVertically
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         OutlinedButton(
                             onClick = { showBenchmarkDialog = true },
                             enabled = !isEjecting,
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Text(text = stringResource(R.string.benchmark_btn))
+                            Text(
+                                text = stringResource(R.string.benchmark_btn),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
 
                         OutlinedButton(
@@ -698,7 +656,8 @@ fun UnlockedVolumeCard(
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.outlinedButtonColors(
                                 contentColor = MaterialTheme.colorScheme.primary
-                            )
+                            ),
+                            modifier = Modifier.weight(1f)
                         ) {
                             if (isEjecting) {
                                 CircularProgressIndicator(
@@ -707,7 +666,11 @@ fun UnlockedVolumeCard(
                                     color = MaterialTheme.colorScheme.primary
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text(text = stringResource(R.string.safe_ejecting))
+                                Text(
+                                    text = stringResource(R.string.safe_ejecting),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             } else {
                                 Icon(
                                     painter = painterResource(id = R.drawable.ic_eject),
@@ -715,17 +678,74 @@ fun UnlockedVolumeCard(
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text(text = stringResource(R.string.safe_eject))
+                                Text(
+                                    text = stringResource(R.string.safe_eject),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                         }
+                    }
 
-                        Button(
-                            onClick = onOpen,
-                            enabled = !isEjecting,
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text(text = stringResource(R.string.open))
+                    Button(
+                        onClick = onOpen,
+                        enabled = !isEjecting,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = stringResource(R.string.open),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(
+                        onClick = { showBenchmarkDialog = true },
+                        enabled = !isEjecting,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(text = stringResource(R.string.benchmark_btn))
+                    }
+
+                    OutlinedButton(
+                        onClick = onLock,
+                        enabled = !isEjecting,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.primary
+                        )
+                    ) {
+                        if (isEjecting) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(text = stringResource(R.string.safe_ejecting))
+                        } else {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_eject),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(text = stringResource(R.string.safe_eject))
                         }
+                    }
+
+                    Button(
+                        onClick = onOpen,
+                        enabled = !isEjecting,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(text = stringResource(R.string.open))
                     }
                 }
             }

@@ -52,7 +52,12 @@ object VirtualStorageMountManager {
 
     fun isSupported(): Boolean = PreferenceHelper.useRootAccess && RootAccess.hasSu()
 
-    fun isEnabled(context: Context): Boolean = PreferenceHelper.isVirtualMountEnabled(context)
+    fun isEnabled(context: Context, volumeGuid: String? = null, devicePath: String? = null): Boolean {
+        if (!volumeGuid.isNullOrBlank() || !devicePath.isNullOrBlank()) {
+            return PreferenceHelper.isVolumeVirtualMountEnabled(context, volumeGuid, devicePath)
+        }
+        return PreferenceHelper.isVirtualMountEnabled(context)
+    }
 
     /**
      * Binds any unattached USB Mass Storage devices to the kernel usb-storage driver
@@ -210,12 +215,19 @@ object VirtualStorageMountManager {
         if (UnlockManager.isManuallyLocked(guid, devicePath)) {
             return Result.failure(IllegalStateException(context.getString(R.string.mount_err_manually_locked)))
         }
-        val blob = PreferenceHelper.getRememberedPassword(context, guid)
-            ?: return Result.failure(IllegalStateException(context.getString(R.string.mount_err_no_saved_password)))
-        val password = KeyGuardService.decrypt(blob)
-            ?: return Result.failure(IllegalStateException(context.getString(R.string.mount_err_decrypt_password_failed)))
-        val isRecovery = password.startsWith(UnlockManager.RECOVERY_PREFIX)
-        val cleanKey = if (isRecovery) password.removePrefix(UnlockManager.RECOVERY_PREFIX) else password
+
+        val sessionCred = UnlockManager.getSessionCredential(devicePath, guid)
+        val (cleanKey, isRecovery) = if (sessionCred != null) {
+            sessionCred
+        } else {
+            val blob = PreferenceHelper.getRememberedPassword(context, guid)
+                ?: return Result.failure(IllegalStateException(context.getString(R.string.mount_err_no_saved_password)))
+            val password = KeyGuardService.decrypt(blob)
+                ?: return Result.failure(IllegalStateException(context.getString(R.string.mount_err_decrypt_password_failed)))
+            val rec = password.startsWith(UnlockManager.RECOVERY_PREFIX)
+            val k = if (rec) password.removePrefix(UnlockManager.RECOVERY_PREFIX) else password
+            Pair(k, rec)
+        }
         val devInfo = DeviceIdentity.queryDeviceInfo(devicePath)
 
         val resolvedPath = resolveBlockDevice(devicePath, guid)
@@ -267,9 +279,6 @@ object VirtualStorageMountManager {
         volumeGuid: String,
         originalPath: String? = null
     ): Result<VirtualMountInfo> {
-        if (!isEnabled(context)) {
-            return Result.failure(IllegalStateException("Virtual mount is disabled in settings"))
-        }
         if (!isSupported()) {
             return Result.failure(IllegalStateException("Root access is required for /storage virtual mount"))
         }
@@ -302,13 +311,21 @@ object VirtualStorageMountManager {
             }
         }
 
+        // Prune dead mounts from activeMounts
+        activeMounts.entries.removeIf { (_, info) ->
+            val dead = try {
+                RootAccess.execTimeout("su -c 'kill -0 ${info.pid} 2>/dev/null && echo alive'", 300)?.contains("alive") != true
+            } catch (_: Exception) { false }
+            dead
+        }
+
         val daemonPath = RootAccess.ensureFuseDaemonInstalled(context) ?: "/data/local/tmp/bitlocker_fuse"
 
         // Mimic real Android USB OTG naming: /storage/ABCD-1234 using the first 8 hex characters of GUID
         val storageId = formatStorageId(volumeGuid, effectivePath)
         var mountPoint = "/storage/$storageId"
         var suffix = 1
-        while (activeMounts.values.any { it.mountPoint == mountPoint }) {
+        while (activeMounts.values.any { it.mountPoint == mountPoint && it.devicePath != effectivePath }) {
             suffix++
             mountPoint = "/storage/${storageId}_$suffix"
         }
@@ -325,7 +342,8 @@ object VirtualStorageMountManager {
         LogFile.write("app", "VirtualStorageMount: starting FUSE mount for $effectivePath -> $mountPoint (keyType=$keyType)")
 
         try {
-            val roFlag = if (PreferenceHelper.mountReadOnly) "ro" else "rw"
+            val isRo = PreferenceHelper.isVolumeReadOnly(context, volumeGuid, effectivePath)
+            val roFlag = if (isRo) "ro" else "rw"
             val cmd = "'$daemonPath' '$effectivePath' $offset $keyType - '$mountPoint' $roFlag"
             val pb = ProcessBuilder("su", "-M", "-c", cmd)
             pb.redirectErrorStream(true)

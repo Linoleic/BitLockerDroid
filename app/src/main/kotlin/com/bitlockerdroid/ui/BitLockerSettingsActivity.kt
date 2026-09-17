@@ -126,13 +126,11 @@ class BitLockerSettingsActivity : ComponentActivity() {
                     showLogDialog = showLogDialogState.value,
                     logContent = logContentState.value,
                     rememberedCredentials = rememberedCredentialsState,
-                    mountReadOnly = mountReadOnlyState.value,
                     themeMode = currentTheme,
                     currentLanguage = currentLang,
                     useRootAccess = useRootAccessState.value,
                     rootSolution = rootSolutionState.value,
                     showAdvancedSettingsDialog = showAdvancedSettingsDialogState.value,
-                    virtualMountEnabled = virtualMountState.value,
                     suppressCorruptNotification = suppressCorruptNotificationState.value,
                     onThemeModeChange = { newMode ->
                         themeModeState.value = newMode
@@ -148,8 +146,6 @@ class BitLockerSettingsActivity : ComponentActivity() {
                         refreshRememberedCredentials()
                     },
                     onMountReadOnlyChange = { enabled ->
-                        mountReadOnlyState.value = enabled
-                        PreferenceHelper.mountReadOnly = enabled
                         refreshData()
                         BitLockerDocumentsProvider.notifyRootsChanged(this)
                     },
@@ -180,17 +176,6 @@ class BitLockerSettingsActivity : ComponentActivity() {
                     onDismissSwitchMode = {
                         if (!isSwitchingModeProcessingState.value) {
                             pendingRootSwitchTargetState.value = null
-                        }
-                    },
-                    onVirtualMountChange = { enabled ->
-                        virtualMountState.value = enabled
-                        PreferenceHelper.virtualMountEnabled = enabled
-                        if (!enabled) {
-                            lifecycleScope.launch(Dispatchers.IO) {
-                                try {
-                                    VirtualStorageMountManager.unmountAll()
-                                } catch (_: Throwable) {}
-                            }
                         }
                     },
                     onSuppressCorruptNotificationChange = { enabled ->
@@ -464,24 +449,21 @@ fun MainAppScreen(
     showLogDialog: Boolean,
     logContent: String,
     rememberedCredentials: List<PreferenceHelper.SavedCredential>,
-    mountReadOnly: Boolean,
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     currentLanguage: String = PreferenceHelper.LANG_SYSTEM,
     useRootAccess: Boolean = true,
     rootSolution: RootAccess.RootSolutionInfo,
     showAdvancedSettingsDialog: Boolean = false,
-    virtualMountEnabled: Boolean = true,
     suppressCorruptNotification: Boolean = true,
     onThemeModeChange: (ThemeMode) -> Unit = {},
     onLanguageChange: (String) -> Unit = {},
     onToggleAutoUnlock: (String, Boolean) -> Unit,
-    onMountReadOnlyChange: (Boolean) -> Unit,
+    onMountReadOnlyChange: (Boolean) -> Unit = {},
     pendingRootSwitchTarget: Boolean? = null,
     isSwitchingModeProcessing: Boolean = false,
     onUseRootAccessChange: (Boolean) -> Unit = {},
     onConfirmSwitchMode: () -> Unit = {},
     onDismissSwitchMode: () -> Unit = {},
-    onVirtualMountChange: (Boolean) -> Unit = {},
     onSuppressCorruptNotificationChange: (Boolean) -> Unit = {},
     onOpenAdvancedSettings: () -> Unit = {},
     onCloseAdvancedSettings: () -> Unit = {},
@@ -600,8 +582,8 @@ fun MainAppScreen(
                     unlockedVolumes = unlockedVolumes,
                     detectedVolumes = detectedVolumes,
                     isRefreshing = isRefreshing,
-                    mountReadOnly = mountReadOnly,
                     ejectingPaths = ejectingPaths,
+                    isVirtualMountSupported = useRootAccess && (rootSolution.isDeviceRooted || RootAccess.cachedHasSu == true),
                     onMountReadOnlyChange = onMountReadOnlyChange,
                     onRefreshAndScan = onRefreshAndScan,
                     onOpenVolume = onOpenVolume,
@@ -611,14 +593,12 @@ fun MainAppScreen(
             } else {
                 SettingsTabContent(
                     rememberedCredentials = rememberedCredentials,
-                    mountReadOnly = mountReadOnly,
                     themeMode = themeMode,
                     currentLanguage = currentLanguage,
                     useRootAccess = useRootAccess,
                     rootSolution = rootSolution,
                     onOpenCredentialsManager = { showCredentialsDialog = true },
                     onOpenAdvancedSettings = onOpenAdvancedSettings,
-                    onMountReadOnlyChange = onMountReadOnlyChange,
                     onThemeModeChange = onThemeModeChange,
                     onLanguageChange = onLanguageChange
                 )
@@ -631,8 +611,6 @@ fun MainAppScreen(
                 rootSolution = rootSolution,
                 useRootAccess = useRootAccess,
                 onUseRootAccessChange = onUseRootAccessChange,
-                virtualMountEnabled = virtualMountEnabled,
-                onVirtualMountChange = onVirtualMountChange,
                 suppressCorruptNotification = suppressCorruptNotification,
                 onSuppressCorruptNotificationChange = onSuppressCorruptNotificationChange,
                 onOpenLog = onOpenLog,

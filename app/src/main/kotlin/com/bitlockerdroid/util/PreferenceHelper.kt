@@ -226,6 +226,75 @@ object PreferenceHelper {
         get() = try { prefs(ContextProvider.app).getBoolean("notify_on_insert", true) } catch (_: Exception) { true }
         set(v) = try { prefs(ContextProvider.app).edit().putBoolean("notify_on_insert", v).apply() } catch (_: Exception) {}
 
+    fun getVolumeKey(volumeGuid: String?, devicePath: String? = null): String {
+        if (!volumeGuid.isNullOrBlank() && !isInvalidGuid(volumeGuid)) {
+            return "guid_${volumeGuid.trim()}"
+        }
+        if (!devicePath.isNullOrBlank()) {
+            val sanitized = devicePath.trim().replace('/', '_').replace(':', '_')
+            return "dev_$sanitized"
+        }
+        return "default"
+    }
+
+    /** Checks whether read-only mode is enabled for a specific volume. Default: false */
+    fun isVolumeReadOnly(context: Context, volumeGuid: String?, devicePath: String? = null): Boolean {
+        val p = prefs(context)
+        if (!volumeGuid.isNullOrBlank() && !isInvalidGuid(volumeGuid)) {
+            val gKey = "ro_guid_${volumeGuid.trim()}"
+            if (p.contains(gKey)) return p.getBoolean(gKey, false)
+            if (p.contains("ro_vol_$volumeGuid")) return p.getBoolean("ro_vol_$volumeGuid", false)
+        }
+        if (!devicePath.isNullOrBlank()) {
+            val devKey = getVolumeKey(null, devicePath)
+            if (p.contains("ro_$devKey")) return p.getBoolean("ro_$devKey", false)
+        }
+        return p.getBoolean("mount_read_only", false)
+    }
+
+    /** Enables or disables read-only mode for a specific volume. */
+    fun setVolumeReadOnly(context: Context, volumeGuid: String?, devicePath: String? = null, readOnly: Boolean) {
+        val key = getVolumeKey(volumeGuid, devicePath)
+        val editor = prefs(context).edit().putBoolean("ro_$key", readOnly)
+        if (!devicePath.isNullOrBlank()) {
+            val devKey = getVolumeKey(null, devicePath)
+            editor.putBoolean("ro_$devKey", readOnly)
+        }
+        if (!volumeGuid.isNullOrBlank() && !isInvalidGuid(volumeGuid)) {
+            editor.putBoolean("ro_vol_$volumeGuid", readOnly)
+        }
+        editor.apply()
+    }
+
+    /** Checks whether POSIX virtual mount is enabled for a specific volume. Default: false */
+    fun isVolumeVirtualMountEnabled(context: Context, volumeGuid: String?, devicePath: String? = null): Boolean {
+        val p = prefs(context)
+        if (!volumeGuid.isNullOrBlank() && !isInvalidGuid(volumeGuid)) {
+            val gKey = "vmount_guid_${volumeGuid.trim()}"
+            if (p.contains(gKey)) return p.getBoolean(gKey, false)
+            if (p.contains("vmount_vol_$volumeGuid")) return p.getBoolean("vmount_vol_$volumeGuid", false)
+        }
+        if (!devicePath.isNullOrBlank()) {
+            val devKey = getVolumeKey(null, devicePath)
+            if (p.contains("vmount_$devKey")) return p.getBoolean("vmount_$devKey", false)
+        }
+        return false
+    }
+
+    /** Enables or disables POSIX virtual mount for a specific volume. */
+    fun setVolumeVirtualMountEnabled(context: Context, volumeGuid: String?, devicePath: String? = null, enabled: Boolean) {
+        val key = getVolumeKey(volumeGuid, devicePath)
+        val editor = prefs(context).edit().putBoolean("vmount_$key", enabled)
+        if (!devicePath.isNullOrBlank()) {
+            val devKey = getVolumeKey(null, devicePath)
+            editor.putBoolean("vmount_$devKey", enabled)
+        }
+        if (!volumeGuid.isNullOrBlank() && !isInvalidGuid(volumeGuid)) {
+            editor.putBoolean("vmount_vol_$volumeGuid", enabled)
+        }
+        editor.apply()
+    }
+
     /** When true, volumes are served strictly read-only without write permissions. */
     var mountReadOnly: Boolean
         get() = try { prefs(ContextProvider.app).getBoolean("mount_read_only", false) } catch (_: Exception) { false }

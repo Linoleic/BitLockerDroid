@@ -10,6 +10,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -25,15 +29,18 @@ import com.bitlockerdroid.R
 import com.bitlockerdroid.service.DetectedVolume
 import com.bitlockerdroid.ui.theme.WarningAmber
 import com.bitlockerdroid.util.DeviceIdentity
+import com.bitlockerdroid.util.PreferenceHelper
 
 @Composable
 fun DetectedVolumeCard(
     volume: DetectedVolume,
-    mountReadOnly: Boolean,
     onMountReadOnlyChange: (Boolean) -> Unit,
     onUnlock: () -> Unit
 ) {
     val context = LocalContext.current
+    var isReadOnly by remember(volume.devicePath, volume.guid) {
+        mutableStateOf(PreferenceHelper.isVolumeReadOnly(context, volume.guid, volume.devicePath))
+    }
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -198,7 +205,7 @@ fun DetectedVolumeCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Read-Only Mount Mode Control
+            // Read-Only Control (per-volume independent)
             Surface(
                 shape = RoundedCornerShape(10.dp),
                 color = WarningAmber.copy(alpha = 0.12f),
@@ -207,7 +214,7 @@ fun DetectedVolumeCard(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -219,15 +226,19 @@ fun DetectedVolumeCard(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = if (mountReadOnly) stringResource(R.string.mount_readonly_desc_active) else stringResource(R.string.mount_full_access),
+                            text = if (isReadOnly) stringResource(R.string.mount_readonly_desc_active) else stringResource(R.string.mount_full_access),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Switch(
-                        checked = mountReadOnly,
-                        onCheckedChange = onMountReadOnlyChange
+                        checked = isReadOnly,
+                        onCheckedChange = { checked ->
+                            isReadOnly = checked
+                            PreferenceHelper.setVolumeReadOnly(context, volume.guid, volume.devicePath, checked)
+                            onMountReadOnlyChange(checked)
+                        }
                     )
                 }
             }

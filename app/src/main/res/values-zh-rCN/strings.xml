@@ -153,6 +153,9 @@
     <string name="copy_mount_path">复制挂载路径</string>
     <string name="mount_failed_toast">挂载失败: %1$s</string>
     <string name="virtual_mount_to_storage">虚拟挂载至真实目录</string>
+    <string name="unmount_virtual_mount">卸载</string>
+    <string name="mount_success_toast">已虚拟挂载至 %1$s</string>
+    <string name="unmount_success_toast">已卸载虚拟挂载</string>
     <string name="storage_used">已用 %1$s (%2$d%%)</string>
     <string name="storage_available">可用 %1$s / 共 %2$s</string>
     <string name="dirty_volume_warning_chip">脏卷 (未安全弹出)</string>

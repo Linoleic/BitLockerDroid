@@ -348,11 +348,17 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             return out
         }
         if (method == "set_mount_read_only") {
+            val devPath = extras?.getString("device_path") ?: arg
+            val guid = extras?.getString("guid")
             val ro = if (extras != null && extras.containsKey("read_only")) extras.getBoolean("read_only") else (arg == "true")
-            PreferenceHelper.mountReadOnly = ro
+            if (!devPath.isNullOrBlank() || !guid.isNullOrBlank()) {
+                PreferenceHelper.setVolumeReadOnly(appContext, guid, devPath, ro)
+            } else {
+                PreferenceHelper.mountReadOnly = ro
+            }
             notifyRootsChanged(appContext)
             val out = Bundle()
-            out.putBoolean("read_only", PreferenceHelper.mountReadOnly)
+            out.putBoolean("read_only", ro)
             return out
         }
         if (method == "switch_mode_and_restart") {
@@ -404,7 +410,8 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             if (v.size > 0L) {
                 row.add(Root.COLUMN_CAPACITY_BYTES, v.size)
             }
-            val canWrite = (core?.writer?.isMounted == true) && !com.bitlockerdroid.util.PreferenceHelper.mountReadOnly
+            val isRo = PreferenceHelper.isVolumeReadOnly(appContext, core?.volumeGuid, v.devicePath)
+            val canWrite = (core?.writer?.isMounted == true) && !isRo
             var rootFlags = Root.FLAG_LOCAL_ONLY or Root.FLAG_SUPPORTS_IS_CHILD or Root.FLAG_SUPPORTS_SEARCH
             if (canWrite) {
                 rootFlags = rootFlags or Root.FLAG_SUPPORTS_CREATE
@@ -678,10 +685,11 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         displayName: String
     ): String? {
         Log.i(TAG, "createDocument: parent=$parentDocumentId, mime=$mimeType, name=$displayName")
-        if (com.bitlockerdroid.util.PreferenceHelper.mountReadOnly) {
+        val core = coreFor(parentDocumentId) ?: throw SecurityException("Volume is locked")
+        val parentDevPath = core.devicePath
+        if (PreferenceHelper.isVolumeReadOnly(appContext, core.volumeGuid, parentDevPath)) {
             throw UnsupportedOperationException("Volume mounted in read-only mode")
         }
-        val core = coreFor(parentDocumentId) ?: throw SecurityException("Volume is locked")
         val writer = core.writer ?: throw UnsupportedOperationException("Writing not supported on this volume")
         val parentRecord = recordFrom(parentDocumentId)
         val parentPath = core.resolvePath(parentRecord) ?: "/"
@@ -1007,7 +1015,8 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             val effRecord = core.resolveRecord(record)
 
             if (mode.contains("w") || mode.contains("rw")) {
-                if (com.bitlockerdroid.util.PreferenceHelper.mountReadOnly) {
+                val docDevPath = core.devicePath
+                if (PreferenceHelper.isVolumeReadOnly(appContext, core.volumeGuid, docDevPath)) {
                     throw SecurityException("Volume is mounted in read-only mode")
                 }
                 val writer = core.writer ?: throw SecurityException("Volume is read-only")
@@ -1359,7 +1368,9 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         }
 
         var flags = 0
-        val canWrite = (core.writer?.isMounted == true) && !com.bitlockerdroid.util.PreferenceHelper.mountReadOnly
+        val docDevPath = core.devicePath
+        val isRo = PreferenceHelper.isVolumeReadOnly(appContext, core.volumeGuid, docDevPath)
+        val canWrite = (core.writer?.isMounted == true) && !isRo
         if (isDir) {
             flags = flags or Document.FLAG_DIR_PREFERS_LAST_MODIFIED
             if (canWrite) {
@@ -1399,7 +1410,9 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         val core = coreFor(documentId)
         val record = recordFrom(documentId)
         val isRoot = (record == core?.reader?.rootRef)
-        val canWrite = (core?.writer?.isMounted == true) && !com.bitlockerdroid.util.PreferenceHelper.mountReadOnly
+        val rowDevPath = core?.devicePath
+        val rowRo = PreferenceHelper.isVolumeReadOnly(appContext, core?.volumeGuid, rowDevPath)
+        val canWrite = (core?.writer?.isMounted == true) && !rowRo
 
         val mimeType2 = if (entry.isDirectory) {
             Document.MIME_TYPE_DIR

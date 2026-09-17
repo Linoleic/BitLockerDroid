@@ -29,10 +29,14 @@ class DislockerCore private constructor(
 
     val reader: VolumeReader by lazy { buildReader() }
     val writer: com.bitlockerdroid.ntfs.VolumeWriter? by lazy {
+        val app = try { com.bitlockerdroid.util.ContextProvider.app } catch (_: Throwable) { null }
+        val isRo = if (app != null) {
+            com.bitlockerdroid.util.PreferenceHelper.isVolumeReadOnly(app, volumeGuid, devicePath)
+        } else false
         when (reader) {
             is NtfsReader -> {
                 try {
-                    com.bitlockerdroid.ntfs.NtfsWriter(handle, com.bitlockerdroid.util.PreferenceHelper.mountReadOnly)
+                    com.bitlockerdroid.ntfs.NtfsWriter(handle, isRo)
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to initialize NtfsWriter", e)
                     null
@@ -40,7 +44,7 @@ class DislockerCore private constructor(
             }
             is ExFatReader, is Fat32Reader -> {
                 try {
-                    com.bitlockerdroid.ntfs.FatFsWriter(handle, com.bitlockerdroid.util.PreferenceHelper.mountReadOnly)
+                    com.bitlockerdroid.ntfs.FatFsWriter(handle, isRo)
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to initialize FatFsWriter", e)
                     null

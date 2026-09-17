@@ -187,16 +187,25 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff) {
 
 /* ---------------- High-Level Bridge APIs ---------------- */
 
-static void make_ff_path(fatfs_slot_t *slot, const char *path, char *out, size_t out_len) {
+void dis_fatfs_make_path(dis_fatfs_handle_t vol_handle, const char *path, char *out, size_t out_len) {
+    int pdrv = 0;
+    if (vol_handle) {
+        fatfs_slot_t *slot = (fatfs_slot_t *)vol_handle;
+        pdrv = slot->pdrv;
+    }
     if (!path || path[0] == '\0' || strcmp(path, "/") == 0) {
-        snprintf(out, out_len, "%d:/", slot->pdrv);
+        snprintf(out, out_len, "%d:/", pdrv);
         return;
     }
     if (path[0] == '/') {
-        snprintf(out, out_len, "%d:%s", slot->pdrv, path);
+        snprintf(out, out_len, "%d:%s", pdrv, path);
     } else {
-        snprintf(out, out_len, "%d:/%s", slot->pdrv, path);
+        snprintf(out, out_len, "%d:/%s", pdrv, path);
     }
+}
+
+static void make_ff_path(fatfs_slot_t *slot, const char *path, char *out, size_t out_len) {
+    dis_fatfs_make_path((dis_fatfs_handle_t)slot, path, out, out_len);
 }
 
 dis_fatfs_handle_t dis_fatfs_mount(dis_ctx_t *ctx, int read_only) {

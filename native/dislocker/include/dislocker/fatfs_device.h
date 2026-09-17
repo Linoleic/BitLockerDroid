@@ -14,6 +14,9 @@ typedef void* dis_fatfs_handle_t;
 /* Mount the FAT/exFAT volume over the decrypted dislocker session */
 dis_fatfs_handle_t dis_fatfs_mount(dis_ctx_t *ctx, int read_only);
 
+/* Format a path with the volume's logical drive prefix (e.g. "0:/path") */
+void dis_fatfs_make_path(dis_fatfs_handle_t vol_handle, const char *path, char *out, size_t out_len);
+
 /* Unmount and flush the FatFs volume */
 int dis_fatfs_umount(dis_fatfs_handle_t vol_handle);
 

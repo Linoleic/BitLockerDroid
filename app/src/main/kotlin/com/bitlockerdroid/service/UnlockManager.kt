@@ -72,6 +72,18 @@ object UnlockManager {
 
     /** devicePath -> live core session */
     private val sessions = HashMap<String, DislockerCore>()
+    private val sessionCredentials = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Boolean>>()
+
+    fun getSessionCredential(devicePath: String, guid: String? = null): Pair<String, Boolean>? {
+        sessionCredentials[devicePath]?.let { return it }
+        if (!guid.isNullOrBlank()) {
+            val entry = sessionCredentials.entries.firstOrNull {
+                getGuidForPath(it.key).equals(guid, ignoreCase = true)
+            }
+            if (entry != null) return entry.value
+        }
+        return null
+    }
 
     /** devicePath -> detected-but-not-yet-unlocked volume. */
     private val detected = HashMap<String, DetectedVolume>()
@@ -117,6 +129,9 @@ object UnlockManager {
                 val freeBytes = space?.second ?: -1L
                 val usedBytes = if (freeBytes >= 0L) (totalBytes - freeBytes).coerceAtLeast(0L) else -1L
                 val serial = try { core.reader.volumeSerial() } catch (_: Exception) { 0L }
+                val isRo = com.bitlockerdroid.util.ContextProvider.app?.let { app ->
+                    PreferenceHelper.isVolumeReadOnly(app, core.volumeGuid, path)
+                } ?: false
                 result.add(
                     UnlockedVolume(
                         devicePath = path,
@@ -124,7 +139,7 @@ object UnlockManager {
                         label = core.volumeLabel,
                         fsType = fsName,
                         cipher = core.info.algorithmName,
-                        canWrite = (core.writer?.isMounted == true) && !PreferenceHelper.mountReadOnly,
+                        canWrite = (core.writer?.isMounted == true) && !isRo,
                         guid = core.volumeGuid,
                         recoveryKeyId = core.recoveryKeyId,
                         deviceName = devInfo.friendlyName,
@@ -348,6 +363,9 @@ object UnlockManager {
                 old
             }
             stale?.close()
+            // Save session credentials in memory for the duration of this session
+            sessionCredentials[devicePath] = Pair(credential, isRecovery)
+
             // Save the encrypted credential only if the user asked to remember it.
             // Keyed strictly by persistent Volume GUID rather than ephemeral device node.
             if (!guid.isNullOrBlank()) {
@@ -366,12 +384,14 @@ object UnlockManager {
                 LogFile.write("app", "unlockWithCredential: no volume GUID found for $devicePath, skipping credential persistence")
             }
 
-            // Trigger userspace FUSE virtual mount to /storage/BitLocker_<Label> only for real kernel block devices
+            // Trigger userspace FUSE virtual mount to /storage/<ID> if enabled for this volume
             val effectiveGuid = guid ?: ""
             val effectiveLabel = core.volumeLabel.ifBlank {
                 com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath).friendlyName
             }
-            if (VirtualStorageMountManager.isEnabled(context) && VirtualStorageMountManager.isSupported()) {
+            val shouldVirtualMount = VirtualStorageMountManager.isSupported() &&
+                PreferenceHelper.isVolumeVirtualMountEnabled(context, effectiveGuid, devicePath)
+            if (shouldVirtualMount) {
                 val resolvedBlock = VirtualStorageMountManager.resolveBlockDevice(devicePath, effectiveGuid)
                 if (resolvedBlock != null) {
                     Thread {
@@ -461,6 +481,7 @@ object UnlockManager {
                 capacity = devInfo.sizeBytes
             )
         }
+        sessionCredentials.remove(devicePath)
 
         // 1. Unmount POSIX FUSE mount first so external apps can no longer issue IO
         try {
@@ -505,6 +526,7 @@ object UnlockManager {
     fun safeEjectAll(): List<Result<String>> {
         val paths = synchronized(lock) { sessions.keys.toList() }
         val results = paths.map { safeEject(it) }
+        sessionCredentials.clear()
         try {
             VirtualStorageMountManager.unmountAll()
         } catch (_: Throwable) {}
@@ -603,7 +625,10 @@ object UnlockManager {
         }
         stale?.close()
 
-        if (key != null && context != null && VirtualStorageMountManager.isEnabled(context) && VirtualStorageMountManager.isSupported()) {
+        if (key != null && context != null &&
+            VirtualStorageMountManager.isSupported() &&
+            PreferenceHelper.isVolumeVirtualMountEnabled(context, core.volumeGuid, core.devicePath)
+        ) {
             val guid = core.volumeGuid ?: ""
             val effectiveLabel = core.volumeLabel.ifBlank {
                 com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(core.devicePath).friendlyName

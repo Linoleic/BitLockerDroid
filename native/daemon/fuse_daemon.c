@@ -206,8 +206,10 @@ static int query_file_meta(const char *path, file_meta_t *meta) {
         ntfs_inode_close(ni);
         return 0;
     } else if (g_fs_type == FS_TYPE_FATFS) {
+        char ff_path[1024];
+        dis_fatfs_make_path(g_fatfs_vol, path, ff_path, sizeof(ff_path));
         FILINFO fno;
-        FRESULT fr = f_stat(path, &fno);
+        FRESULT fr = f_stat(ff_path, &fno);
         if (fr != FR_OK) return -ENOENT;
 
         meta->is_dir = (fno.fattrib & AM_DIR) ? 1 : 0;
@@ -318,6 +320,22 @@ static void handle_fuse_lookup(int fd, struct fuse_in_header *in, void *data) {
         return;
     }
 
+    if (strcmp(child_name, ".") == 0) {
+        file_meta_t meta;
+        int ret = query_file_meta(parent_path, &meta);
+        if (ret == 0) {
+            struct fuse_entry_out entry;
+            memset(&entry, 0, sizeof(entry));
+            entry.nodeid = in->nodeid;
+            entry.generation = 1;
+            entry.entry_valid = 5;
+            entry.attr_valid = 5;
+            fill_fuse_attr(in->nodeid, &meta, &entry.attr);
+            send_fuse_reply(fd, in->unique, 0, &entry, sizeof(entry));
+            return;
+        }
+    }
+
     char full_path[1024];
     if (strcmp(parent_path, "/") == 0) {
         snprintf(full_path, sizeof(full_path), "/%s", child_name);
@@ -392,6 +410,12 @@ static int ntfs_filldir_cb(void *dirent_ctx, const ntfschar *name, const int nam
         return 0;
     }
 
+    // Skip "." and ".." as they are already emitted in handle_fuse_readdir
+    if (strcmp(mbs, ".") == 0 || strcmp(mbs, "..") == 0) {
+        free(mbs);
+        return 0;
+    }
+
     // Skip special NTFS metadata hidden files ($MFT, $LogFile, etc.)
     if (mbs[0] == '$' && strcmp(mbs, "$RECYCLE.BIN") != 0) {
         free(mbs);
@@ -446,11 +470,14 @@ static void handle_fuse_readdir(int fd, struct fuse_in_header *in, void *data) {
             ntfs_inode_close(dir_ni);
         }
     } else if (g_fs_type == FS_TYPE_FATFS) {
+        char ff_path[1024];
+        dis_fatfs_make_path(g_fatfs_vol, path, ff_path, sizeof(ff_path));
         DIR dir;
-        FRESULT fr = f_opendir(&dir, path);
+        FRESULT fr = f_opendir(&dir, ff_path);
         if (fr == FR_OK) {
             FILINFO fno;
             while (f_readdir(&dir, &fno) == FR_OK && fno.fname[0] != 0) {
+                if (strcmp(fno.fname, ".") == 0 || strcmp(fno.fname, "..") == 0) continue;
                 int is_dir = (fno.fattrib & AM_DIR) ? 1 : 0;
                 char child_path[1024];
                 if (strcmp(path, "/") == 0) snprintf(child_path, sizeof(child_path), "/%s", fno.fname);
@@ -496,8 +523,10 @@ static void handle_fuse_read(int fd, struct fuse_in_header *in, void *data) {
             ntfs_inode_close(ni);
         }
     } else if (g_fs_type == FS_TYPE_FATFS) {
+        char ff_path[1024];
+        dis_fatfs_make_path(g_fatfs_vol, path, ff_path, sizeof(ff_path));
         FIL fil;
-        FRESULT fr = f_open(&fil, path, FA_READ);
+        FRESULT fr = f_open(&fil, ff_path, FA_READ);
         if (fr == FR_OK) {
             f_lseek(&fil, rin->offset);
             UINT br = 0;
@@ -905,6 +934,7 @@ static void cleanup_mount(void) {
 int main(int argc, char **argv) {
     signal(SIGTERM, sig_handler);
     signal(SIGINT, sig_handler);
+    signal(SIGHUP, SIG_IGN);
     signal(SIGPIPE, SIG_IGN);
     signal(SIGUSR1, sigusr1_handler);
 
@@ -1019,19 +1049,13 @@ int main(int argc, char **argv) {
             _exit(0);
         }
         setsid();
+        signal(SIGHUP, SIG_IGN);
         close(0);
         close(1);
         close(2);
         open("/dev/null", O_RDONLY);
         open("/dev/null", O_WRONLY);
         open("/dev/null", O_WRONLY);
-
-        // Close any other inherited file descriptors except g_fuse_fd
-        int max_fd = (int)sysconf(_SC_OPEN_MAX);
-        if (max_fd < 0 || max_fd > 4096) max_fd = 4096;
-        for (int fd = 3; fd < max_fd; fd++) {
-            if (fd != g_fuse_fd) close(fd);
-        }
     } else {
         printf("MOUNTED_PID=%d\n", (int)getpid());
         fflush(stdout);
@@ -1112,6 +1136,9 @@ int main(int argc, char **argv) {
                 break;
             case FUSE_READDIR:
                 handle_fuse_readdir(g_fuse_fd, in, data);
+                break;
+            case 44: // FUSE_READDIRPLUS (reject with ENOSYS so kernel falls back to FUSE_READDIR)
+                send_fuse_reply(g_fuse_fd, in->unique, -ENOSYS, NULL, 0);
                 break;
             case FUSE_RELEASE:
             case FUSE_RELEASEDIR:

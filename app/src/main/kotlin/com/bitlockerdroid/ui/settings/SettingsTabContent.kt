@@ -27,14 +27,12 @@ import com.bitlockerdroid.util.RootAccess
 @Composable
 fun SettingsTabContent(
     rememberedCredentials: List<PreferenceHelper.SavedCredential>,
-    mountReadOnly: Boolean,
     themeMode: ThemeMode,
     currentLanguage: String,
     useRootAccess: Boolean,
     rootSolution: RootAccess.RootSolutionInfo,
     onOpenCredentialsManager: () -> Unit,
     onOpenAdvancedSettings: () -> Unit,
-    onMountReadOnlyChange: (Boolean) -> Unit,
     onThemeModeChange: (ThemeMode) -> Unit,
     onLanguageChange: (String) -> Unit
 ) {
@@ -73,16 +71,6 @@ fun SettingsTabContent(
             // Group 2: General & Mount Protection
             SettingsGroup(title = stringResource(R.string.settings_header_mount)) {
                 val context = LocalContext.current
-                SettingsSwitchItem(
-                    title = stringResource(R.string.settings_mount_readonly),
-                    description = stringResource(R.string.settings_mount_readonly_desc),
-                    checked = mountReadOnly,
-                    onCheckedChange = onMountReadOnlyChange
-                )
-                HorizontalDivider(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                )
                 var hideSvi by remember { mutableStateOf(PreferenceHelper.hideSviFolder) }
                 SettingsSwitchItem(
                     title = stringResource(R.string.settings_hide_svi),
