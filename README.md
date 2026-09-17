@@ -1,8 +1,11 @@
 # BitLockerDroid (BitUnlocker)
 
 <p align="center">
-  <b>Android 原生 Microsoft BitLocker 加密盘管理工具（支持 NTFS、exFAT、FAT32）</b><br>
-  <b>Native Android application to unlock, browse, mount, read, and write Microsoft BitLocker encrypted drives.</b>
+  <b>English</b> | <a href="README_zh.md">简体中文</a>
+</p>
+
+<p align="center">
+  <b>Native Android application to unlock, browse, mount, read, and write Microsoft BitLocker encrypted drives (NTFS, exFAT, FAT32).</b>
 </p>
 
 <p align="center">
@@ -14,53 +17,53 @@
 
 ---
 
-## 目录 / Table of Contents
+## Table of Contents
 
-- [项目简介](#项目简介--introduction)
-- [双运行模式与架构对比](#双运行模式与架构对比--dual-mode-architecture)
-- [读写性能基准数据](#读写性能基准数据--performance)
-- [核心特性](#核心特性--features)
-- [系统架构](#系统架构--architecture)
-- [技术规格与兼容性](#技术规格与兼容性--specifications)
-- [快速上手指南](#快速上手指南--quick-start)
-- [源码构建](#源码构建--build)
-- [常见问题解答](#常见问题解答--faq)
-- [开源协议与致谢](#开源协议与致谢--license--acknowledgments)
-
----
-
-## 项目简介 / Introduction
-
-**BitLockerDroid**（应用显示名 **BitUnlocker**）是一个 Android 平台上的 BitLocker 加密卷访问工具，支持在移动设备上解锁并读写 Windows BitLocker 加密的外接存储设备（USB OTG U 盘、移动硬盘及 SD 卡）。
-
-- **文件系统支持**：支持 NTFS、exFAT 与 FAT32 分区的文件浏览、新建、修改、重命名与删除。
-- **认证凭据**：支持用户密码（PBKDF2/SHA-256）与 48 位数字恢复密钥。
-- **系统集成**：接入 Android 存储访问框架（SAF DocumentsProvider），可在系统“文件”管理器中直接管理。
-- **全局虚拟挂载（Root）**：通过 FUSE 将解密卷挂载至 `/storage/XXXX-XXXX`，供第三方应用通过绝对路径直接访问。
-- **双运行模式**：支持免 Root（Android USB Host API）与 Root（直通内核块设备）两种底层架构。
+- [Introduction](#introduction)
+- [Dual-Mode Architecture](#dual-mode-architecture)
+- [Read/Write Benchmark & Performance](#readwrite-benchmark--performance)
+- [Key Features](#key-features)
+- [System Architecture](#system-architecture)
+- [Technical Specifications & Compatibility](#technical-specifications--compatibility)
+- [Quick Start](#quick-start)
+- [Build from Source](#build-from-source)
+- [FAQ & Technical Notes](#faq--technical-notes)
+- [License & Acknowledgments](#license--acknowledgments)
 
 ---
 
-## 双运行模式与架构对比 / Dual-Mode Architecture
+## Introduction
 
-应用提供免 Root 与 Root 两种底层驱动架构，可在设置中无缝切换（切换时自动落盘并安全卸载）：
+**BitLockerDroid** (application display name **BitUnlocker**) is an Android application designed to access and manage Microsoft BitLocker encrypted drives on mobile devices. It enables unlocking, browsing, reading, and writing to external storage media (USB OTG flash drives, external HDDs/SSDs, and SD cards).
 
-| 维度 | 免 Root 模式 (USB Host API) | Root 模式 (KernelSU / Magisk / APatch) |
+- **Filesystem Support**: Full CRUD operations (browse, create, modify, rename, delete) on NTFS, exFAT, and FAT32 partitions.
+- **Authentication Credentials**: Supports user passwords (PBKDF2/SHA-256) and 48-digit numerical recovery keys.
+- **System Integration**: Integrated with the Android Storage Access Framework (SAF DocumentsProvider) for file management directly within the system "Files" app.
+- **Global POSIX Virtual Mount (Root)**: Leverages FUSE to mount decrypted volumes to `/storage/XXXX-XXXX`, enabling third-party apps to access files via standard Linux absolute paths.
+- **Dual Operation Modes**: Supports both Non-Root (Android USB Host API) and Root (direct kernel block device access) underlying architectures.
+
+---
+
+## Dual-Mode Architecture
+
+The application provides two distinct driver architectures, seamlessly switchable in Settings (dirty data is flushed and active sessions are cleanly unmounted before switching):
+
+| Dimension | Non-Root Mode (USB Host API) | Root Mode (KernelSU / Magisk / APatch) |
 |---|---|---|
-| **权限要求** | 仅需 USB 设备授权，无需 Root | 需要 Root 授权 (su) |
-| **设备支持** | USB OTG 外接设备 | USB OTG、多分区磁盘、内核块设备节点 |
-| **底层通道** | Android USB Host API + 用户态 SCSI 驱动 | Linux 内核块设备节点 (`/dev/block/vold/*`) |
-| **读取吞吐** | 顺序读取约 15 ~ 19 MB/s | 顺序读取最高达 163+ MB/s |
-| **挂载形式** | SAF DocumentsProvider（系统文件管理器） | SAF DocumentsProvider + 全局 FUSE 挂载 (`/storage/XXXX-XXXX`) |
-| **误报提示** | 通知监听服务自动过滤格式化误报 | 特权屏蔽系统格式化误报提示 |
+| **Privilege Requirement** | USB device permission only; no Root required | Root permission (su) |
+| **Device Support** | USB OTG external storage devices | USB OTG devices, multi-partition disks, kernel block nodes |
+| **I/O Channel** | Android USB Host API + user-space SCSI driver | Linux kernel block device nodes (`/dev/block/vold/*`) |
+| **Read Throughput** | Sequential read ~15 to 19 MB/s | Sequential read up to 163+ MB/s |
+| **Mount Form** | SAF DocumentsProvider (system Files app) | SAF DocumentsProvider + Global FUSE (`/storage/XXXX-XXXX`) |
+| **System False Alerts** | Notification listener suppresses system format prompts | Privileged suppression of false format notifications |
 
 ---
 
-## 读写性能基准数据 / Performance
+## Read/Write Benchmark & Performance
 
-测试数据基于同一 USB 3.0 物理闪存盘划分的 6 个 BitLocker 分区：
+The following benchmarks were collected from 6 independent BitLocker partitions configured with different filesystems and encryption ciphers on the same physical USB 3.0 flash drive:
 
-| 分区标识 | 文件系统 | 加密算法模式 | 免 Root 顺序读取 | Root 顺序读取 | 吞吐提升 | 免 Root 4K 随机延时 (IOPS) | Root 4K 随机延时 (IOPS) |
+| Partition | Filesystem | Cipher Mode | Non-Root Seq Read | Root Seq Read | Speedup | Non-Root 4K Latency (IOPS) | Root 4K Latency (IOPS) |
 |---|---|---|---|---|---|---|---|
 | **NT+X** | **NTFS** | **AES-XTS-128** | 16.14 MB/s | **163.94 MB/s** | **10.16x** | 1.10 ms (909 IOPS) | **0.69 ms** (1451 IOPS) |
 | **EX+X** | **exFAT** | **AES-XTS-128** | 18.90 MB/s | **101.13 MB/s** | **5.35x** | 1.25 ms (798 IOPS) | **0.74 ms** (1357 IOPS) |
@@ -69,126 +72,127 @@
 | **32+X** | **FAT32** | **AES-XTS-128** | 16.67 MB/s | **43.90 MB/s** | **2.63x** | 1.39 ms (720 IOPS) | **1.83 ms** (545 IOPS) |
 | **NT+C** | **NTFS** | **AES-CBC-128** | 16.55 MB/s | **41.03 MB/s** | **2.48x** | 1.21 ms (826 IOPS) | **0.99 ms** (1006 IOPS) |
 
-- **吞吐说明**：免 Root 模式受限于 Android USB Host 用户态与内核态数据拷贝及调度队列瓶颈；Root 模式直通内核原生块设备 I/O，吞吐提升 2.5 ~ 10 倍。
-- **稳定性**：各组合均通过高负载目录遍历、文件读写、SHA-256 校验与安全删除验证。
+- **Throughput Analysis**: Non-Root mode is constrained by repeated user-space to kernel-space buffer copies and USB Host queue scheduling in the Android Framework. Root mode bypasses intermediate layers and accesses block devices directly via asynchronous kernel I/O, delivering 2.5x to 10x throughput improvements.
+- **Stability Verified**: All combinations passed rigorous stress testing including recursive directory walks, file creation/modification, SHA-256 verification readback, and safe deletion.
 
 ---
 
-## 核心特性 / Features
+## Key Features
 
-- **全主流文件系统透明读写**：内置裁剪优化的 `libntfs-3g`（集成卷头扇区写屏障）、exFAT 驱动（支持 >4GB 大文件）与 `FatFs`（支持长文件名 LFN），提供完整的增删改查及系统级快速检索。
-- **单盘多分区精准识别**：基于硬件拓扑层级分析，准确辨识父级磁盘与子分区节点，杜绝裸设备与分区重复识别；支持多分区独立或并发自动解锁。
-- **数据安全与平稳弹出**：提供硬件级只读保护开关，驱动层主动拦截写入；安全弹出强制双级缓存落盘并清除 Dirty Bit，避免插回 Windows 提示扫描修复；自动预警未正常卸载的脏卷。
-- **全局 POSIX 虚拟挂载**：Root 模式下通过 FUSE 注入全局挂载命名空间（`/storage/XXXX-XXXX`），MT 管理器、Termux、多媒体播放器等应用可通过标准 Linux 绝对路径直接读写。
-- **驱动器基准测速**：内置无损安全测速功能，实时测算大块连续读取吞吐 (MB/s) 与 4K 随机延时 (IOPS)，自动识别 USB 物理协商速率。
-- **安全凭据与误报拦截**：凭据基于 Android Keystore 硬件根密钥加密存储，支持生物识别安全查阅；自动过滤系统因无法识别加密卷而触发的格式化误报通知。
+- **Transparent Filesystem Read/Write**: Custom optimized `libntfs-3g` (with sector write barriers protecting `-FVE-FS-` metadata), exFAT driver (supporting files >4GB), and `FatFs` (full Long File Name / LFN support). Delivers complete CRUD operations and native system search integration.
+- **Accurate Multi-Partition Scanning**: Analyzes hardware topology to distinguish parent disk devices from partition nodes, preventing duplicate drive listings and supporting concurrent auto-unlocking.
+- **Data Safety & Eject Protection**: Hardware-level read-only protection toggle intercepts all write operations at driver level. Safe eject forces two-level cache flush and clears filesystem Dirty Bits to prevent Windows from prompting "Scan and fix drive". Warns on unclean unmounted volumes.
+- **Global POSIX Virtual Mount**: In Root mode, injects a FUSE mount into the PID 1 mount namespace (`/storage/XXXX-XXXX`), enabling direct access via standard Linux paths in MT Manager, Termux, media players, and terminal utilities.
+- **Non-Destructive Drive Benchmark**: Built-in read-only benchmark tool to measure sequential read throughput (MB/s), 4K random read latency (IOPS), and negotiated USB bus speed (USB 2.0 / USB 3.0 5Gbps / USB 3.1+ 10Gbps).
+- **Hardware-Backed Credentials & False Alert Filter**: Credentials encrypted via Android Keystore hardware root of trust, guarded by biometric verification. Automatically filters system notifications falsely claiming the encrypted drive is corrupted.
 
 ---
 
-## 系统架构 / Architecture
+## System Architecture
 
 ```
-                       外接 USB OTG 加密存储设备
-                                   │
-         ┌─────────────────────────┴─────────────────────────┐
-         ▼                                                   ▼
-【免 Root 运行模式】                                 【Root 运行模式】
-Android USB Host API (android.hardware.usb)        Linux 内核块设备节点 (/dev/block/vold/*)
-         │                                                   │
-         ▼                                                   ▼
-用户态 SCSI/BOT 协议栈 (UsbMassStorageDriver)       Direct I/O 高性能块读取 (su daemon)
-         │                                                   │
-         └─────────────────────────┬─────────────────────────┘
-                                   │
-                                   ▼
-                   [BitLocker 探测器 (BitLockerDetector)]
-                   扫描检测 -FVE-FS- 卷头签名与分区拓扑
-                                   │
-                                   ▼
-                   [DislockerCore 本地核心引擎 (JNI / C)]
-                   mbedtls 密码学原语 (PBKDF2, AES-CCM, VMK 派生)
-                   提取 FVEK 会话密钥 (AES-XTS / AES-CBC)
-                                   │
-                                   ▼
-                   [按需动态扇区解密与写屏障拦截]
-                   扇区级写拦截 (保护元数据区域与 MBR/GPT)
-                                   │
-         ┌─────────────────────────┼─────────────────────────┐
-         ▼                         ▼                         ▼
-   libntfs-3g 驱动            FatFs 驱动                exFAT 自研驱动
-  (NTFS 读写与重命名)      (FAT32 长文件名读写)        (exFAT 簇链与元数据)
-         │                         │                         │
-         └─────────────────────────┼─────────────────────────┘
-                                   │
-         ┌─────────────────────────┴─────────────────────────┐
-         ▼                                                   ▼
-【SAF 存储访问框架】                                 【全局 POSIX 虚拟挂载】
-BitLockerDocumentsProvider                         bitlocker_fuse_daemon (Root 特权)
-         │                                                   │
-         ▼                                                   ▼
-Android 原生“文件”应用 (DocumentsUI)                系统全局绝对路径 (/storage/XXXX-XXXX)
-(直接在系统抽屉内增删改查)                          (MT管理器、Termux、媒体播放器无缝读写)
+                         External USB OTG Encrypted Drive
+                                        │
+             ┌──────────────────────────┴──────────────────────────┐
+             ▼                                                     ▼
+    [Non-Root Mode]                                           [Root Mode]
+Android USB Host API (android.hardware.usb)              Linux Kernel Block Nodes (/dev/block/vold/*)
+             │                                                     │
+             ▼                                                     ▼
+User-space SCSI/BOT Stack (UsbMassStorageDriver)         Direct I/O High-Performance Block I/O (su)
+             │                                                     │
+             └──────────────────────────┬──────────────────────────┘
+                                        │
+                                        ▼
+                       [BitLocker Detector (BitLockerDetector)]
+                       Scans -FVE-FS- volume header & partition topology
+                                        │
+                                        ▼
+                       [DislockerCore Native Engine (JNI / C)]
+                       mbedtls crypto primitives (PBKDF2, AES-CCM, VMK derivation)
+                       Extracts FVEK session key (AES-XTS / AES-CBC)
+                                        │
+                                        ▼
+                       [Dynamic Sector Decryption & Write Barrier]
+                       Sector-level write filter (protects volume metadata & MBR/GPT)
+                                        │
+             ┌──────────────────────────┼──────────────────────────┐
+             ▼                          ▼                          ▼
+      libntfs-3g Driver            FatFs Driver               Custom exFAT Driver
+     (NTFS read/write)          (FAT32 LFN support)          (Cluster chain & metadata)
+             │                          │                          │
+             └──────────────────────────┼──────────────────────────┘
+                                        │
+             ┌──────────────────────────┴──────────────────────────┐
+             ▼                                                     ▼
+    [SAF Storage Access Framework]                            [Global POSIX Virtual Mount]
+    BitLockerDocumentsProvider                                bitlocker_fuse_daemon (Root)
+             │                                                     │
+             ▼                                                     ▼
+    Android System Files App (DocumentsUI)                    Global Absolute Path (/storage/XXXX-XXXX)
+    (Native file management & search)                         (MT Manager, Termux, media players)
 ```
 
 ---
 
-## 技术规格与兼容性 / Specifications
+## Technical Specifications & Compatibility
 
-| 维度 | 规格要求 / 支持范围 | 说明 |
+| Dimension | Supported Range / Specification | Notes |
 |---|---|---|
-| **操作系统** | Android 8.0 ~ 17 (API 26 ~ 36) | 覆盖主流与最新 Android 版本 |
-| **处理器架构** | `arm64-v8a`, `armeabi-v7a` | 提供 64 位与 32 位原生 ABI 支持 |
-| **Root 方案** | **免 Root** / **KernelSU** / **Magisk** / **APatch** | 免 Root 零门槛；Root 模式性能更优 |
-| **受支持文件系统** | **NTFS**, **exFAT**, **FAT32** | 完整增删改查、重命名与大文件读写 |
-| **加密算法支持** | AES-XTS (128/256 位)、AES-CBC (128/256 位) | 覆盖 Windows 10/11 默认及 Windows 7 兼容格式 |
-| **认证凭据类型** | 用户密码、48 位数字恢复密钥 | 自动展示恢复标识符 (Recovery Key ID) 便于核对 |
-| **硬件形态与接口** | U 盘、移动固态硬盘 (PSSD)、移动机械硬盘、SD 卡 | USB 2.0 / USB 3.0 (5Gbps) / USB 3.1+ (10Gbps) |
+| **Operating System** | Android 8.0 ~ 17 (API 26 ~ 36) | Broad compatibility with current and future Android releases |
+| **CPU Architectures** | `arm64-v8a`, `armeabi-v7a` | Full 64-bit and 32-bit native ABI binaries |
+| **Root Schemes** | **Non-Root** / **KernelSU** / **Magisk** / **APatch** | Zero setup for non-root; higher performance with Root |
+| **Supported Filesystems** | **NTFS**, **exFAT**, **FAT32** | Full browse, create, modify, rename, and delete capabilities |
+| **Encryption Ciphers** | AES-XTS (128/256-bit), AES-CBC (128/256-bit) | Covers Windows 10/11 defaults and Windows 7 legacy volumes |
+| **Authentication Types** | User Password, 48-digit Recovery Key | Displays Recovery Key ID for verification against Microsoft account |
+| **Hardware Form Factors** | USB flash drives, Portable SSDs (PSSD), External HDDs, SD cards | Single-partition and multi-partition drives |
+| **Physical Interfaces** | USB Type-C OTG, USB-A adapters, Hubs/Docks | USB 2.0 / USB 3.0 (5 Gbps) / USB 3.1+ (10 Gbps) links |
 
 ---
 
-## 快速上手指南 / Quick Start
+## Quick Start
 
-1. **安装**：从 [Releases](https://github.com/Linoleic/BitLockerDroid/releases) 下载并安装 `app-release.apk`。
-2. **连接与授权**：插入 USB OTG 设备。免 Root 模式允许 USB 访问授权；Root 用户在授权管理应用中授予 Root 权限。
-3. **解锁**：点击卡片「解锁」，输入密码或 48 位恢复密钥（核对界面显示的恢复标识符，可勾选“记住凭据”以便下次插盘秒解）。
-4. **浏览与安全弹出**：
-   - 点击「打开」直接在系统“文件”管理器中管理数据；
-   - Root 模式下点击「虚拟挂载至真实目录」可通过 `/storage/XXXX-XXXX` 供第三方应用访问；
-   - 使用完毕后点击「安全弹出」等待通知提示后再拔除设备。
+1. **Install**: Download and install `app-release.apk` from [GitHub Releases](https://github.com/Linoleic/BitLockerDroid/releases).
+2. **Connect & Grant Permission**: Connect your USB OTG drive. Non-root users tap **Allow** when the system USB prompt appears; Root users grant superuser permission in KernelSU / Magisk / APatch.
+3. **Unlock**: Tap **Unlock** on the volume card. Enter the user password or 48-digit recovery key (verify the displayed Recovery Key ID; optionally check "Remember credential" for automatic unlock on next insertion).
+4. **Access & Safe Eject**:
+   - Tap **Open** to manage files directly in the Android system "Files" app.
+   - In Root mode, tap **Virtual mount to real directory** to access files at `/storage/XXXX-XXXX` using third-party apps.
+   - Always tap **Safe Eject** and wait for confirmation before physically unplugging the drive.
 
 ---
 
-## 源码构建 / Build
+## Build from Source
 
-快速本地构建：
+Quick local build:
 ```bash
 git clone https://github.com/Linoleic/BitLockerDroid.git
 cd BitLockerDroid
 ./gradlew :app:assembleRelease
 ```
-产物输出路径：`app/build/outputs/apk/release/app-release.apk`。
+Output artifact: `app/build/outputs/apk/release/app-release.apk`.
 
-完整依赖环境要求、NDK 独立构建与签名配置请参阅 **[BUILD.md](BUILD.md)**。
-
----
-
-## 常见问题解答 / FAQ
-
-- **Q: 为什么拔下设备前一定要点击“安全弹出”？**  
-  **A**: 驱动在弹出时会强制执行双级数据缓存落盘并清除文件系统的 Dirty Bit 标志位。若直接强拔，未清空的 Dirty Bit 会导致设备插回 Windows 电脑时弹出“此驱动器存在问题，需要扫描并修复”的提示。
-- **Q: 恢复标识符（Recovery Key ID）有什么用？**  
-  **A**: 同一存储设备在重置或多处备份时可能有多组 48 位恢复密钥。解锁弹窗会显示当前卷的恢复标识符，与微软账户网页端（[account.microsoft.com/devices/recoverykey](https://account.microsoft.com/devices/recoverykey)）查到的标识符比对一致后再输入，避免无效尝试。
-- **Q: 为什么部分第三方应用在挂载后找不到 `/storage/XXXX-XXXX`？**  
-  **A**: 全局挂载将 FUSE 挂载点注入至 PID 1 挂载命名空间，支持标准 POSIX 路径的应用（如 MT 管理器、Termux、VLC 等）可无障碍访问。部分仅依赖 Android MediaStore 媒体库的简易图库不会主动扫描外置非内建路径。
+For full environment prerequisites, NDK CMake builds, host verification tools, and release signing configurations, see the comprehensive **[Build Guide (BUILD.md)](BUILD.md)** (or **[中文构建指南 (BUILD_zh.md)](BUILD_zh.md)**).
 
 ---
 
-## 开源协议与致谢 / License & Acknowledgments
+## FAQ & Technical Notes
 
-本项目采用 **GNU General Public License v2.0 (GPL-2.0)** 协议开源。详细协议文本见 [LICENSE](LICENSE)。
+- **Q: Why should I always tap "Safe Eject" before unplugging?**  
+  **A**: Safe eject triggers a two-level cache flush to storage and clears the filesystem Dirty Bit. Directly pulling the drive leaves the Dirty Bit active, causing Windows to display "There is a problem with this drive, scan and fix now" upon reconnection.
+- **Q: What is the Recovery Key ID used for?**  
+  **A**: An encrypted drive may have multiple historical recovery keys. The unlock dialog displays the Recovery Key ID so you can verify it matches the key listed in your Microsoft account ([account.microsoft.com/devices/recoverykey](https://account.microsoft.com/devices/recoverykey)) before entering the 48 digits.
+- **Q: Why do some apps not see `/storage/XXXX-XXXX` after virtual mount?**  
+  **A**: Global mount injects the FUSE filesystem into the system PID 1 mount namespace, making it accessible to any app that reads standard POSIX paths (such as MT Manager, Termux, VLC, text editors). However, simplified gallery apps that rely strictly on the Android MediaStore database will not index external non-standard mount paths.
 
-### 核心上游与依赖
-- **BitLocker 解析核心**：[dislocker](https://github.com/Aorimn/dislocker) (GPL-2.0)
-- **密码学与摘要计算**：[mbedtls](https://github.com/Mbed-TLS/mbedtls) (Apache-2.0 / GPL-2.0)
-- **NTFS 文件系统引擎**：[libntfs-3g](https://github.com/tuxera/ntfs-3g) (GPL-2.0)
-- **FAT32 文件系统引擎**：[FatFs](http://elm-chan.org/fsw/ff/00index_e.html) (ChaN)
+---
+
+## License & Acknowledgments
+
+This project is licensed under the **GNU General Public License v2.0 (GPL-2.0)**. See the [LICENSE](LICENSE) file for details.
+
+### Core Upstream Dependencies
+- **BitLocker Parsing Core**: [dislocker](https://github.com/Aorimn/dislocker) (GPL-2.0)
+- **Cryptographic Primitives**: [mbedtls](https://github.com/Mbed-TLS/mbedtls) (Apache-2.0 / GPL-2.0)
+- **NTFS Filesystem Engine**: [libntfs-3g](https://github.com/tuxera/ntfs-3g) (GPL-2.0)
+- **FAT32 Filesystem Engine**: [FatFs](http://elm-chan.org/fsw/ff/00index_e.html) (ChaN)
