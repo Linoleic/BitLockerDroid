@@ -478,3 +478,31 @@ int dis_ntfs_get_space(dis_ntfs_handle_t vol_handle, int64_t *total_bytes, int64
 		(long long)vol->nr_clusters, (long long)vol->free_clusters, (unsigned int)vol->cluster_size);
 	return 0;
 }
+
+int dis_ntfs_repair_dirty(dis_ntfs_handle_t vol_handle)
+{
+	if (!vol_handle)
+		return -EINVAL;
+	ntfs_volume *vol = (ntfs_volume *)vol_handle;
+
+	BOOL was_ro = NVolReadOnly(vol);
+	if (was_ro) {
+		vol->state &= ~NV_ReadOnly;
+		if (vol->dev)
+			NDevClearReadOnly(vol->dev);
+	}
+
+	le16 clean_flags = cpu_to_le16(le16_to_cpu(vol->flags) & ~(VOLUME_IS_DIRTY | VOLUME_CHKDSK_UNDERWAY));
+	int ret = ntfs_volume_write_flags(vol, clean_flags);
+	if (ret < 0) {
+		DLOG("ntfs_volume_write_flags failed: errno=%d", errno);
+	}
+	sync_volume_metadata(vol);
+
+	if (was_ro) {
+		vol->state |= NV_ReadOnly;
+		if (vol->dev)
+			NDevSetReadOnly(vol->dev);
+	}
+	return ret < 0 ? -errno : 0;
+}

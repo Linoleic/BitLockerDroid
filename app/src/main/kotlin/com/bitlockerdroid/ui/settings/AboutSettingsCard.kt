@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -54,12 +55,20 @@ fun AboutSettingsCard() {
             fontWeight = FontWeight.Bold
         )
         Spacer(modifier = Modifier.height(4.dp))
+        val versionName = remember(context) {
+            try {
+                val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+                pInfo.versionName ?: "1.0.1"
+            } catch (_: Exception) {
+                "1.0.1"
+            }
+        }
         Surface(
             shape = RoundedCornerShape(6.dp),
             color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f)
         ) {
             Text(
-                text = "v1.0.0",
+                text = "v$versionName",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSecondaryContainer,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)

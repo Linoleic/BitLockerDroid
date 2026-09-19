@@ -18,8 +18,12 @@ import java.util.concurrent.ConcurrentHashMap
 class ExFatReader(
     private val source: NtfsBlockSource,
     private val boot: BootSector,
-    private val bootBytes: ByteArray = ByteArray(0)
+    private val bootBytes: ByteArray = ByteArray(0),
+    private val dataOffset: Long = 0L
 ) : VolumeReader {
+
+    private fun toPhysical(logical: Long): Long =
+        if (dataOffset > 0 && logical < 8192L) dataOffset + logical else logical
 
     companion object {
         private const val ENTRY_SIZE = 32
@@ -62,6 +66,14 @@ class ExFatReader(
             return false
         }
 
+    fun updateBootFlags(cleanFlags: Int) {
+        if (bootBytes.size >= 0x6C) {
+            bootBytes[0x6A] = (cleanFlags and 0xff).toByte()
+            bootBytes[0x6B] = ((cleanFlags shr 8) and 0xff).toByte()
+        }
+        invalidateCache()
+    }
+
     /** Cache of entries by ref. */
     private val entryCache = ConcurrentHashMap<Long, VolumeEntry>()
     private val noFatChainMap = ConcurrentHashMap<Long, Boolean>()
@@ -82,6 +94,98 @@ class ExFatReader(
         noFatChainMap.clear()
         startClusterMap.clear()
         labelCache = null
+    }
+
+    override fun diagnose(): VolumeDiagnostic {
+        val items = mutableListOf<DiagnosticItem>()
+        var structuralError = false
+        val secSize = boot.bytesPerSector
+
+        // 1. Boot region 11-sector checksum validation
+        var checksum = 0L
+        val secBuf = ByteArray(secSize)
+        var readOk = true
+        for (s in 0..10) {
+            val phys = toPhysical(s.toLong() * secSize)
+            if (source.read(phys, secBuf, 0, secSize) < secSize) {
+                readOk = false
+                break
+            }
+            for (i in 0 until secSize) {
+                if (s == 0 && (i == 106 || i == 107 || i == 112)) continue
+                checksum = (((checksum and 1L) shl 31) or (checksum ushr 1)) + (secBuf[i].toLong() and 0xffL)
+                checksum = checksum and 0xffffffffL
+            }
+        }
+        val sec11 = ByteArray(secSize)
+        val sec11Read = source.read(toPhysical(11L * secSize), sec11, 0, secSize) >= secSize
+        val storedChecksum = if (sec11Read) NtfsVolume.le32(sec11, 0) else -1L
+        val checksumMatch = readOk && sec11Read && (checksum == storedChecksum)
+        android.util.Log.i("ExFatDiag", "exFAT Boot Checksum: calculated=0x%08X stored=0x%08X match=%b".format(checksum, storedChecksum, checksumMatch))
+        items.add(DiagnosticItem(
+            name = "主引导区循环冗余校验和",
+            passed = checksumMatch,
+            detail = if (checksumMatch) "11 扇区校验和 (0x%08X) 与扇区 11 匹配一致".format(checksum)
+                     else "主引导区校验和损坏 (计算值 0x%08X != 存储值 0x%08X)".format(checksum, storedChecksum)
+        ))
+        if (!checksumMatch) structuralError = true
+
+        // 2. Backup boot sector comparison
+        val sec12 = ByteArray(secSize)
+        val sec12Read = source.read(toPhysical(12L * secSize), sec12, 0, secSize) >= secSize
+        if (sec12Read && bootBytes.size >= 120) {
+            val match = sec12[108] == bootBytes[108] && // bytesPerSectorShift
+                sec12[109] == bootBytes[109] && // sectorsPerClusterShift
+                NtfsVolume.le32(sec12, 88) == NtfsVolume.le32(bootBytes, 88) && // clusterHeapOffset
+                NtfsVolume.le32(sec12, 92) == NtfsVolume.le32(bootBytes, 92) && // clusterCount
+                NtfsVolume.le32(sec12, 96) == NtfsVolume.le32(bootBytes, 96)    // firstClusterOfRootDir
+            items.add(DiagnosticItem(
+                name = "备份引导扇区比对",
+                passed = match,
+                detail = if (match) "主引导区 (扇区 0) 与备份区 (扇区 12) 参数一致"
+                         else "备份引导扇区与主扇区核心参数不匹配"
+            ))
+            if (!match) structuralError = true
+        }
+
+        // 3. Media failure flag in VolumeFlags
+        val mediaFailure = if (bootBytes.size >= 0x6C) {
+            val flags = NtfsVolume.le16(bootBytes, 0x6A)
+            (flags and 0x0004) != 0
+        } else false
+        items.add(DiagnosticItem(
+            name = "底层介质错误标志 (MediaFailure)",
+            passed = !mediaFailure,
+            detail = if (!mediaFailure) "未检测到硬件/介质写入失败标记"
+                     else "检测到 MediaFailure 硬件介质故障标记，存储块可能损坏"
+        ))
+        if (mediaFailure) structuralError = true
+
+        // 4. Root directory and critical stream entries
+        var rootOk = true
+        var rootMsg = "根目录结构正常"
+        try {
+            val entries = listDirectory(rootRef)
+            // exFAT root directory must be readable without error
+        } catch (e: Exception) {
+            rootOk = false
+            rootMsg = "根目录解析失败: ${e.message}"
+        }
+        items.add(DiagnosticItem(
+            name = "根目录与元数据流",
+            passed = rootOk,
+            detail = rootMsg
+        ))
+        if (!rootOk) structuralError = true
+
+        val dirty = isDirty
+        return VolumeDiagnostic(
+            fsName = "exFAT",
+            isClean = !dirty && !structuralError,
+            isDirty = dirty,
+            hasStructuralErrors = structuralError,
+            items = items
+        )
     }
 
     override fun readEntry(ref: Long): VolumeEntry? {

@@ -10,6 +10,7 @@ import com.bitlockerdroid.ntfs.NtfsReader
 import com.bitlockerdroid.ntfs.NtfsVolume
 import com.bitlockerdroid.ntfs.NtfsVolume.BootSector
 import com.bitlockerdroid.ntfs.VolumeReader
+import com.bitlockerdroid.util.LogFile
 import com.bitlockerdroid.util.NativeBridge
 import com.bitlockerdroid.util.RootAccess
 import java.util.concurrent.atomic.AtomicInteger
@@ -331,9 +332,11 @@ class DislockerCore private constructor(
         try { NativeBridge.nativeGetRecoveryKeyId(handle) } catch (e: Exception) { null }
     }
 
-    val isDirty: Boolean by lazy {
-        try { reader.isDirty } catch (e: Exception) { false }
-    }
+    val isDirty: Boolean
+        get() = try { reader.isDirty } catch (e: Exception) { false }
+
+    /** Performs non-destructive integrity diagnostics on filesystem metadata structures. */
+    fun diagnose(): com.bitlockerdroid.ntfs.VolumeDiagnostic = reader.diagnose()
 
     /** Returns Pair(totalBytes, freeBytes) queried from native filesystem, or null if unavailable. */
     fun getSpaceInfo(): Pair<Long, Long>? {
@@ -406,13 +409,13 @@ class DislockerCore private constructor(
             val exBoot = ExFatVolume.parseBootSector(bootBytes)
                 ?: throw IllegalStateException("Invalid exFAT boot sector")
             Log.i(TAG, "volume is exFAT (oem=$oem)")
-            return ExFatReader(blockSource, exBoot, bootBytes)
+            return ExFatReader(blockSource, exBoot, bootBytes, info.dataOffset)
         }
 
         val fatBoot = Fat32Volume.parseBootSector(bootBytes)
         if (fatBoot != null) {
             Log.i(TAG, "volume is FAT32 (oem=$oem)")
-            return Fat32Reader(blockSource, fatBoot, bootBytes)
+            return Fat32Reader(blockSource, fatBoot, bootBytes, info.dataOffset)
         }
 
         throw IllegalStateException(
@@ -463,6 +466,162 @@ class DislockerCore private constructor(
             } catch (e: Throwable) {
                 Log.w(TAG, "usbSession close failed", e)
             }
+        }
+    }
+
+    /**
+     * Maps a filesystem-relative logical byte offset to the physical offset on the
+     * encrypted block device, accounting for the BitLocker header redirection of the
+     * boot sector area (first 8192 bytes / nb_backup_sectors).
+     */
+    private fun toPhysicalOffset(logicalOffset: Long): Long {
+        val backupBytes = 8192L
+        return if (info.dataOffset > 0 && logicalOffset < backupBytes) {
+            info.dataOffset + logicalOffset
+        } else {
+            logicalOffset
+        }
+    }
+
+    /**
+     * Checks and clears filesystem dirty flags / unclean unmount markers, restoring
+     * the volume to a clean state.
+     */
+    fun repairDirty(): Result<String> {
+        val fsName = when (reader) {
+            is com.bitlockerdroid.ntfs.NtfsReader -> "NTFS"
+            is com.bitlockerdroid.ntfs.ExFatReader -> "exFAT"
+            is com.bitlockerdroid.ntfs.Fat32Reader -> "FAT32"
+            else -> "Unknown"
+        }
+        Log.i(TAG, "Starting repairDirty for $devicePath ($fsName)")
+        try {
+            when (reader) {
+                is com.bitlockerdroid.ntfs.NtfsReader -> {
+                    val w = writer as? com.bitlockerdroid.ntfs.NtfsWriter
+                    var success = false
+                    if (w != null && w.isMounted) {
+                        success = w.repairDirty()
+                    }
+                    if (!success) {
+                        val tempWriter = com.bitlockerdroid.ntfs.NtfsWriter(handle, readOnly = false)
+                        try {
+                            if (tempWriter.isMounted) {
+                                success = tempWriter.repairDirty()
+                            }
+                        } finally {
+                            tempWriter.close()
+                        }
+                    }
+                    if (!success) {
+                        return Result.failure(Exception("NTFS dirty bit repair failed in ntfs-3g"))
+                    }
+                }
+                is com.bitlockerdroid.ntfs.ExFatReader -> {
+                    val sectorSize = if (info.sectorSize > 0) info.sectorSize else 512
+                    val sec0Offset = toPhysicalOffset(0L)
+                    val sec0Raw = NativeBridge.nativeRead(handle, sec0Offset, sectorSize)
+                        ?: return Result.failure(Exception("Cannot read exFAT main boot sector"))
+                    val sec0 = sec0Raw.copyOf(sectorSize)
+                    val flags0 = (sec0[0x6A].toInt() and 0xff) or ((sec0[0x6B].toInt() and 0xff) shl 8)
+                    val cleanFlags0 = flags0 and 0x0006.inv()
+                    sec0[0x6A] = (cleanFlags0 and 0xff).toByte()
+                    sec0[0x6B] = ((cleanFlags0 shr 8) and 0xff).toByte()
+                    val w0 = NativeBridge.nativeWrite(handle, sec0Offset, sec0, sectorSize)
+                    if (w0 < 0) {
+                        return Result.failure(Exception("Cannot write exFAT main boot sector"))
+                    }
+
+                    // Update backup boot sector (sector 12)
+                    val backupOffset = toPhysicalOffset(12L * sectorSize)
+                    val sec12Raw = NativeBridge.nativeRead(handle, backupOffset, sectorSize)
+                    if (sec12Raw != null && sec12Raw.size >= sectorSize) {
+                        val sec12 = sec12Raw.copyOf(sectorSize)
+                        val flags12 = (sec12[0x6A].toInt() and 0xff) or ((sec12[0x6B].toInt() and 0xff) shl 8)
+                        val cleanFlags12 = flags12 and 0x0006.inv()
+                        sec12[0x6A] = (cleanFlags12 and 0xff).toByte()
+                        sec12[0x6B] = ((cleanFlags12 shr 8) and 0xff).toByte()
+                        NativeBridge.nativeWrite(handle, backupOffset, sec12, sectorSize)
+                    }
+                    (reader as com.bitlockerdroid.ntfs.ExFatReader).updateBootFlags(cleanFlags0)
+                }
+                is com.bitlockerdroid.ntfs.Fat32Reader -> {
+                    val boot = (reader as com.bitlockerdroid.ntfs.Fat32Reader).boot
+                    val sectorSize = boot.bytesPerSector
+
+                    // 1. Clear Windows fastfat dirty bit in Sector 0 (offset 0x41 / decimal 65)
+                    val sec0Offset = toPhysicalOffset(0L)
+                    val sec0Raw = NativeBridge.nativeRead(handle, sec0Offset, sectorSize)
+                        ?: return Result.failure(Exception("Cannot read FAT32 main boot sector"))
+                    val sec0 = sec0Raw.copyOf(sectorSize)
+                    sec0[0x41] = 0.toByte()
+                    val w0 = NativeBridge.nativeWrite(handle, sec0Offset, sec0, sectorSize)
+                    if (w0 < 0) {
+                        return Result.failure(Exception("Cannot write FAT32 main boot sector"))
+                    }
+
+                    // 2. Clear backup boot sector (usually sector 6)
+                    if (boot.backupBootSector in 1 until boot.reservedSectors) {
+                        val bkOffset = toPhysicalOffset(boot.backupBootSector.toLong() * sectorSize)
+                        val secBkRaw = NativeBridge.nativeRead(handle, bkOffset, sectorSize)
+                        if (secBkRaw != null && secBkRaw.size >= sectorSize) {
+                            val secBk = secBkRaw.copyOf(sectorSize)
+                            secBk[0x41] = 0.toByte()
+                            NativeBridge.nativeWrite(handle, bkOffset, secBk, sectorSize)
+                        }
+                    }
+
+                    // 3. Clear FAT[1] dirty bits (Bit 31: clean shutdown, Bit 30: hard error)
+                    val fat1Offset = toPhysicalOffset(boot.fatStartByte)
+                    val secFat1Raw = NativeBridge.nativeRead(handle, fat1Offset, sectorSize)
+                        ?: return Result.failure(Exception("Cannot read FAT32 FAT1"))
+                    if (secFat1Raw.size >= 8) {
+                        val secFat1 = secFat1Raw.copyOf(sectorSize)
+                        val fat1 = com.bitlockerdroid.ntfs.NtfsVolume.le32(secFat1, 4)
+                        val cleanFat1 = fat1 or 0xC0000000L
+                        secFat1[4] = (cleanFat1 and 0xff).toByte()
+                        secFat1[5] = ((cleanFat1 shr 8) and 0xff).toByte()
+                        secFat1[6] = ((cleanFat1 shr 16) and 0xff).toByte()
+                        secFat1[7] = ((cleanFat1 shr 24) and 0xff).toByte()
+                        val w1 = NativeBridge.nativeWrite(handle, fat1Offset, secFat1, sectorSize)
+                        if (w1 < 0) {
+                            return Result.failure(Exception("Cannot write FAT32 FAT1"))
+                        }
+
+                        // 4. FAT 2 (backup FAT)
+                        if (boot.fatCount > 1) {
+                            val fat2Offset = toPhysicalOffset(boot.fatStartByte + boot.sectorsPerFat * sectorSize)
+                            val secFat2Raw = NativeBridge.nativeRead(handle, fat2Offset, sectorSize)
+                            if (secFat2Raw != null && secFat2Raw.size >= 8) {
+                                val secFat2 = secFat2Raw.copyOf(sectorSize)
+                                secFat2[4] = secFat1[4]
+                                secFat2[5] = secFat1[5]
+                                secFat2[6] = secFat1[6]
+                                secFat2[7] = secFat1[7]
+                                NativeBridge.nativeWrite(handle, fat2Offset, secFat2, sectorSize)
+                            }
+                        }
+                    }
+
+                    (reader as com.bitlockerdroid.ntfs.Fat32Reader).updateBootFlags(clean = true)
+                }
+                else -> {
+                    return Result.failure(Exception("Unsupported filesystem: $fsName"))
+                }
+            }
+
+            flush()
+            invalidateCache()
+
+            if (isDirty) {
+                return Result.failure(Exception("Volume is still marked dirty after repair"))
+            }
+
+            LogFile.write("app", "repairDirty: successfully repaired $devicePath ($fsName)")
+            return Result.success(fsName)
+        } catch (e: Throwable) {
+            Log.e(TAG, "repairDirty failed for $devicePath", e)
+            return Result.failure(e)
         }
     }
 

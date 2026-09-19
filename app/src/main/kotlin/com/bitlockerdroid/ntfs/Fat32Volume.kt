@@ -18,7 +18,8 @@ object Fat32Volume {
         val reservedSectors: Int,
         val fatCount: Int,
         val sectorsPerFat: Long,
-        val rootCluster: Long
+        val rootCluster: Long,
+        val backupBootSector: Int = 6
     ) {
         val clusterSize: Long get() = bytesPerSector.toLong() * sectorsPerCluster
 
@@ -59,8 +60,10 @@ object Fat32Volume {
         val sectorsPerFat = le32(sector, 0x24)
         val rootCluster = le32(sector, 0x2c)
 
-        if (bytesPerSector == 0 || sectorsPerCluster == 0 || fatCount == 0 ||
-            sectorsPerFat == 0L || rootCluster == 0L) return null
+        val backupBootSector = if (sector.size >= 0x34) {
+            val bk = (sector[0x32].toInt() and 0xff) or ((sector[0x33].toInt() and 0xff) shl 8)
+            if (bk in 1 until reservedSectors) bk else 6
+        } else 6
 
         return BootSector(
             bytesPerSector = bytesPerSector,
@@ -68,7 +71,8 @@ object Fat32Volume {
             reservedSectors = reservedSectors,
             fatCount = fatCount,
             sectorsPerFat = sectorsPerFat,
-            rootCluster = rootCluster
+            rootCluster = rootCluster,
+            backupBootSector = backupBootSector
         )
     }
 

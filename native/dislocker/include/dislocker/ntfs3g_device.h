@@ -36,6 +36,9 @@ int64_t dis_ntfs_truncate(dis_ntfs_handle_t vol_handle, const char *path, int64_
 /* Get total and free space in bytes. Returns 0 on success, -1 on error. */
 int dis_ntfs_get_space(dis_ntfs_handle_t vol_handle, int64_t *total_bytes, int64_t *free_bytes);
 
+/* Clear volume dirty flags (VOLUME_IS_DIRTY, VOLUME_CHKDSK_UNDERWAY) and flush metadata */
+int dis_ntfs_repair_dirty(dis_ntfs_handle_t vol_handle);
+
 #ifdef __cplusplus
 }
 #endif

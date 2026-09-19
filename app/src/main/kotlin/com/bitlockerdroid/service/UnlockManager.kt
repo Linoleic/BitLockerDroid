@@ -522,6 +522,36 @@ object UnlockManager {
         safeEject(devicePath)
     }
 
+    /** Repairs unclean unmount dirty flags for the volume at [devicePath]. */
+    fun repairDirtyVolume(devicePath: String): Result<String> {
+        val core: DislockerCore
+        synchronized(lock) {
+            core = sessions[devicePath] ?: return Result.failure(IllegalStateException("Volume session not found"))
+        }
+        val res = core.repairDirty()
+        if (res.isSuccess) {
+            notifyStateChanged()
+            com.bitlockerdroid.util.ContextProvider.app?.let { ctx ->
+                com.bitlockerdroid.provider.BitLockerDocumentsProvider.notifyRootsChanged(ctx)
+            }
+        }
+        return res
+    }
+
+    /** Performs non-destructive integrity diagnostics on filesystem metadata structures. */
+    fun diagnoseVolume(devicePath: String): com.bitlockerdroid.ntfs.VolumeDiagnostic? {
+        val core: DislockerCore
+        synchronized(lock) {
+            core = sessions[devicePath] ?: return null
+        }
+        return try {
+            core.diagnose()
+        } catch (e: Throwable) {
+            Log.e(TAG, "diagnose failed for $devicePath", e)
+            null
+        }
+    }
+
     /** Safely ejects all active unlocked BitLocker volumes. */
     fun safeEjectAll(): List<Result<String>> {
         val paths = synchronized(lock) { sessions.keys.toList() }

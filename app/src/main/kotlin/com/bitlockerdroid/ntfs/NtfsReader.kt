@@ -157,6 +157,100 @@ class NtfsReader(
         }
     }
 
+    override fun diagnose(): VolumeDiagnostic {
+        val items = mutableListOf<DiagnosticItem>()
+        var structuralError = false
+
+        // 1. Boot sector validation
+        val bsValid = boot.bytesPerSector in listOf(512, 1024, 2048, 4096) &&
+            boot.sectorsPerCluster > 0 &&
+            boot.totalClusters > 0 &&
+            boot.mftLcn > 0
+        items.add(DiagnosticItem(
+            name = "NTFS 主引导扇区参数",
+            passed = bsValid,
+            detail = if (bsValid) "参数有效 (扇区 ${boot.bytesPerSector}B, 簇大小 ${boot.clusterSize}B, MFT簇 ${boot.mftLcn})"
+                     else "NTFS 引导扇区损坏或参数异常"
+        ))
+        if (!bsValid) structuralError = true
+
+        // 2. Core MFT system records fixup validation
+        val sysRecords = listOf(
+            0L to "\$MFT (元文件索引表)",
+            3L to "\$Volume (卷信息属性)",
+            5L to "根目录 (Record 5)",
+            6L to "\$Bitmap (簇分配位图)"
+        )
+        var mftFixupOk = true
+        var mftFixupMsg = "关键系统记录校验序列号 (Fixup) 全部通过"
+        for ((recNum, desc) in sysRecords) {
+            val bytePos = boot.mftStartByte + recNum * MFT_RECORD_SIZE
+            val buf = ByteArray(MFT_RECORD_SIZE)
+            val n = source.read(bytePos, buf, 0, MFT_RECORD_SIZE)
+            if (n < 56 || le32(buf, 0) != NtfsFileRecord.FILE_RECORD_MAGIC) {
+                mftFixupOk = false
+                mftFixupMsg = "系统记录 $desc 读取失败或 Magic 无效"
+                break
+            }
+            if (!NtfsFileRecordParser.applyUpdateSequenceArray(buf, 0x04, boot.bytesPerSector)) {
+                mftFixupOk = false
+                mftFixupMsg = "系统记录 $desc USN 更新序列校验失败，存在扇区写入撕裂"
+                break
+            }
+        }
+        items.add(DiagnosticItem(
+            name = "MFT 核心系统记录完整性 (Fixup)",
+            passed = mftFixupOk,
+            detail = mftFixupMsg
+        ))
+        if (!mftFixupOk) structuralError = true
+
+        // 3. $MFTMirr consistency
+        var mirrOk = true
+        var mirrMsg = "镜像文件表 (\$MFTMirr) 结构有效"
+        if (boot.mftMirrorLcn > 0) {
+            val mirrBytePos = boot.mftMirrorLcn * boot.clusterSize
+            val mirrBuf = ByteArray(MFT_RECORD_SIZE)
+            val n = source.read(mirrBytePos, mirrBuf, 0, MFT_RECORD_SIZE)
+            if (n < 56 || le32(mirrBuf, 0) != NtfsFileRecord.FILE_RECORD_MAGIC ||
+                !NtfsFileRecordParser.applyUpdateSequenceArray(mirrBuf, 0x04, boot.bytesPerSector)) {
+                mirrOk = false
+                mirrMsg = "镜像记录 0 (\$MFTMirr) 损坏或校验失败"
+            }
+        }
+        items.add(DiagnosticItem(
+            name = "MFT 镜像备份比对 (\$MFTMirr)",
+            passed = mirrOk,
+            detail = mirrMsg
+        ))
+        if (!mirrOk) structuralError = true
+
+        // 4. Root Directory ($INDEX_ROOT) readability
+        var rootOk = true
+        var rootMsg = "根目录索引可正常读取"
+        try {
+            listDirectory(rootRef)
+        } catch (e: Exception) {
+            rootOk = false
+            rootMsg = "根目录索引解析失败: ${e.message}"
+        }
+        items.add(DiagnosticItem(
+            name = "根目录 B-Tree 索引树",
+            passed = rootOk,
+            detail = rootMsg
+        ))
+        if (!rootOk) structuralError = true
+
+        val dirty = isDirty
+        return VolumeDiagnostic(
+            fsName = "NTFS",
+            isClean = !dirty && !structuralError,
+            isDirty = dirty,
+            hasStructuralErrors = structuralError,
+            items = items
+        )
+    }
+
     private fun readRecord(recordNumber: Long): NtfsFileRecord? {
         synchronized(cache) {
             if (cache.containsKey(recordNumber)) return cache[recordNumber]

@@ -42,7 +42,32 @@ interface VolumeReader {
 
     /** Invalidates any in-memory cached directory or entry structures. */
     fun invalidateCache() {}
+
+    /** Performs non-destructive integrity diagnostics on filesystem metadata structures. */
+    fun diagnose(): VolumeDiagnostic = VolumeDiagnostic(
+        fsName = "Unknown",
+        isClean = !isDirty,
+        isDirty = isDirty,
+        hasStructuralErrors = false,
+        items = emptyList()
+    )
 }
+
+/** Individual diagnostic check item. */
+data class DiagnosticItem(
+    val name: String,
+    val passed: Boolean,
+    val detail: String
+)
+
+/** Overall volume health and structural integrity diagnostic summary. */
+data class VolumeDiagnostic(
+    val fsName: String,
+    val isClean: Boolean,
+    val isDirty: Boolean,
+    val hasStructuralErrors: Boolean,
+    val items: List<DiagnosticItem>
+)
 
 /** Metadata of a directory or file record (used by the provider). */
 class VolumeEntry(

@@ -84,6 +84,18 @@ class NtfsWriter(
         return Pair(arr[0], arr[1])
     }
 
+    /** Clears VOLUME_IS_DIRTY and VOLUME_CHKDSK_UNDERWAY in the $Volume MFT record. */
+    fun repairDirty(): Boolean {
+        if (!isMounted) return false
+        val ret = NativeBridge.nativeNtfsRepairDirty(volHandle)
+        if (ret != 0) {
+            Log.e(TAG, "repairDirty failed: error=$ret (${NativeBridge.nativeGetLastError()})")
+            return false
+        }
+        Log.i(TAG, "Successfully repaired NTFS dirty flags")
+        return true
+    }
+
     override fun close() {
         if (volHandle != 0L) {
             NativeBridge.nativeNtfsUmount(volHandle)

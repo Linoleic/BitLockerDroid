@@ -16,9 +16,13 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class Fat32Reader(
     private val source: NtfsBlockSource,
-    private val boot: BootSector,
-    private val bootBytes: ByteArray = ByteArray(0)
+    val boot: BootSector,
+    private val bootBytes: ByteArray = ByteArray(0),
+    private val dataOffset: Long = 0L
 ) : VolumeReader {
+
+    private fun toPhysical(logical: Long): Long =
+        if (dataOffset > 0 && logical < 8192L) dataOffset + logical else logical
 
     companion object {
         private const val DIR_ENTRY_SIZE = 32
@@ -64,18 +68,35 @@ class Fat32Reader(
     override val isDirty: Boolean
         get() {
             cachedDirty?.let { return it }
-            // In FAT32, cluster 1 in the FAT table (offset fatStartByte + 4)
+            // 1. Windows fastfat dirty bit: Boot Sector offset 0x41 (0x01 = dirty, 0x00 = clean)
+            var dirty = false
+            if (bootBytes.size > 0x41 && (bootBytes[0x41].toInt() and 0xff) != 0) {
+                dirty = true
+            }
+            // 2. In FAT32 spec, cluster 1 in the FAT table (offset fatStartByte + 4)
             // holds volume integrity flags in its high 2 bits:
             //   Bit 31 (0x80000000): Clean shut down bit (1 = clean, 0 = dirty)
             //   Bit 30 (0x40000000): Hard error bit (1 = clean, 0 = disk error)
-            val sector = ByteArray(512)
-            val dirty = if (source.read(boot.fatStartByte, sector, 0, 512) >= 8) {
-                val fat1 = le32(sector, 4)
-                (fat1 and 0x80000000L) == 0L || (fat1 and 0x40000000L) == 0L
-            } else false
+            if (!dirty) {
+                val sector = ByteArray(512)
+                if (source.read(boot.fatStartByte, sector, 0, 512) >= 8) {
+                    val fat1 = le32(sector, 4)
+                    if ((fat1 and 0x80000000L) == 0L || (fat1 and 0x40000000L) == 0L) {
+                        dirty = true
+                    }
+                }
+            }
             cachedDirty = dirty
             return dirty
         }
+
+    fun updateBootFlags(clean: Boolean) {
+        if (bootBytes.size > 0x41) {
+            bootBytes[0x41] = if (clean) 0 else 1
+        }
+        cachedDirty = !clean
+        entryCache.clear()
+    }
 
     /** first cluster -> entry metadata, filled by [listDirectory]. */
     private val entryCache = ConcurrentHashMap<Long, VolumeEntry>()
@@ -83,6 +104,150 @@ class Fat32Reader(
     override fun invalidateCache() {
         cachedDirty = null
         entryCache.clear()
+    }
+
+    override fun diagnose(): VolumeDiagnostic {
+        val items = mutableListOf<DiagnosticItem>()
+        var structuralError = false
+
+        // 1. Boot sector validity
+        val bsValid = bootBytes.size >= 512 &&
+            bootBytes[510] == 0x55.toByte() && bootBytes[511] == 0xAA.toByte() &&
+            boot.bytesPerSector in listOf(512, 1024, 2048, 4096) &&
+            boot.sectorsPerCluster in listOf(1, 2, 4, 8, 16, 32, 64, 128) &&
+            boot.reservedSectors >= 1 &&
+            boot.fatCount in 1..2 &&
+            boot.sectorsPerFat > 0L &&
+            boot.rootCluster >= 2L
+        items.add(DiagnosticItem(
+            name = "主引导扇区结构",
+            passed = bsValid,
+            detail = if (bsValid) "参数格式正常 (扇区 ${boot.bytesPerSector}B, 簇大小 ${boot.clusterSize}B)"
+                     else "主引导扇区签名或参数损坏"
+        ))
+        if (!bsValid) structuralError = true
+
+        // 2. Backup boot sector comparison
+        if (boot.backupBootSector in 1 until boot.reservedSectors) {
+            val bkSec = ByteArray(512)
+            val bkOff = toPhysical(boot.backupBootSector.toLong() * boot.bytesPerSector)
+            val readOk = source.read(bkOff, bkSec, 0, 512) >= 512
+            if (readOk) {
+                val bkSig = bkSec[510] == 0x55.toByte() && bkSec[511] == 0xAA.toByte()
+                val bkSecPerClus = bkSec[13].toInt() and 0xff
+                val bkRsvd = (bkSec[14].toInt() and 0xff) or ((bkSec[15].toInt() and 0xff) shl 8)
+                val bkFatSz = NtfsVolume.le32(bkSec, 0x24)
+                val bkRoot = NtfsVolume.le32(bkSec, 0x2c)
+                val match = bkSig && bkSecPerClus == boot.sectorsPerCluster &&
+                    bkRsvd == boot.reservedSectors && bkFatSz == boot.sectorsPerFat &&
+                    bkRoot == boot.rootCluster
+                items.add(DiagnosticItem(
+                    name = "备份引导扇区比对",
+                    passed = match,
+                    detail = if (match) "扇区 0 与备份扇区 ${boot.backupBootSector} 关键参数一致"
+                             else "备份扇区与主引导扇区参数不匹配"
+                ))
+                if (!match) structuralError = true
+            } else {
+                items.add(DiagnosticItem(
+                    name = "备份引导扇区比对",
+                    passed = false,
+                    detail = "无法读取备份引导扇区 (扇区 ${boot.backupBootSector})"
+                ))
+                structuralError = true
+            }
+        }
+
+        // 3. FSInfo sector validation
+        val secFsInfo = ByteArray(512)
+        val fsInfoOff = toPhysical(boot.bytesPerSector.toLong())
+        if (source.read(fsInfoOff, secFsInfo, 0, 512) >= 512) {
+            val leadSig = NtfsVolume.le32(secFsInfo, 0)
+            val structSig = NtfsVolume.le32(secFsInfo, 484)
+            val trailSig = (secFsInfo[510].toInt() and 0xff) or ((secFsInfo[511].toInt() and 0xff) shl 8)
+            val fsInfoValid = leadSig == 0x41615252L && structSig == 0x61417272L && trailSig == 0xAA55
+            items.add(DiagnosticItem(
+                name = "FSInfo 信息扇区签名",
+                passed = fsInfoValid,
+                detail = if (fsInfoValid) "特征签名匹配正常"
+                         else "FSInfo 扇区签名无效"
+            ))
+            if (!fsInfoValid) structuralError = true
+        }
+
+        // 4. FAT 1 vs FAT 2 Consistency
+        if (boot.fatCount >= 2) {
+            val f1 = ByteArray(512)
+            val f2 = ByteArray(512)
+            val fat2Start = boot.fatStartByte + boot.sectorsPerFat * boot.bytesPerSector
+            val r1 = source.read(boot.fatStartByte, f1, 0, 512)
+            val r2 = source.read(fat2Start, f2, 0, 512)
+            if (r1 >= 512 && r2 >= 512) {
+                var fatMatch = true
+                for (i in 8 until 512) {
+                    if (f1[i] != f2[i]) {
+                        fatMatch = false
+                        break
+                    }
+                }
+                items.add(DiagnosticItem(
+                    name = "双分配表一致性 (FAT1 / FAT2)",
+                    passed = fatMatch,
+                    detail = if (fatMatch) "主/备分配表关键项一致"
+                             else "FAT1 与 FAT2 数据不一致，可能存在写入中断"
+                ))
+                if (!fatMatch) structuralError = true
+            }
+        }
+
+        // 5. Root Directory & Cluster Chain
+        var rootChainOk = true
+        var rootChainMsg = "根目录簇链可正常遍历"
+        var cur = boot.rootCluster
+        val visited = HashSet<Long>()
+        var count = 0
+        while (cur in 2L..0x0ffffff6L) {
+            if (!visited.add(cur)) {
+                rootChainOk = false
+                rootChainMsg = "根目录簇链检测到循环死链 (簇 $cur)"
+                break
+            }
+            if (++count > 256) {
+                rootChainOk = false
+                rootChainMsg = "根目录簇链异常超长"
+                break
+            }
+            val next = nextCluster(cur)
+            if (next == BAD_CLUSTER) {
+                rootChainOk = false
+                rootChainMsg = "根目录包含坏簇标记 (簇 $cur)"
+                break
+            }
+            cur = next
+        }
+        if (rootChainOk) {
+            try {
+                listDirectory(rootRef)
+            } catch (e: Exception) {
+                rootChainOk = false
+                rootChainMsg = "根目录项解析异常: ${e.message}"
+            }
+        }
+        items.add(DiagnosticItem(
+            name = "根目录结构与簇链",
+            passed = rootChainOk,
+            detail = rootChainMsg
+        ))
+        if (!rootChainOk) structuralError = true
+
+        val dirty = isDirty
+        return VolumeDiagnostic(
+            fsName = "FAT32",
+            isClean = !dirty && !structuralError,
+            isDirty = dirty,
+            hasStructuralErrors = structuralError,
+            items = items
+        )
     }
 
     override fun readEntry(ref: Long): VolumeEntry? {

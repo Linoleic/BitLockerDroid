@@ -745,6 +745,12 @@ static jlongArray native_ntfsGetSpace(JNIEnv *env, jobject thiz, jlong volHandle
 	return out;
 }
 
+static jint native_ntfsRepairDirty(JNIEnv *env, jobject thiz, jlong volHandle)
+{
+	if (!volHandle) return -1;
+	return (jint)dis_ntfs_repair_dirty((dis_ntfs_handle_t)(intptr_t)volHandle);
+}
+
 static jlongArray native_fatfsGetSpace(JNIEnv *env, jobject thiz, jlong volHandle)
 {
 	if (!volHandle) return NULL;
@@ -784,6 +790,7 @@ static const JNINativeMethod methods[] = {
 	NATIVE_METHOD(env, cls, "nativeNtfsWrite", "(JLjava/lang/String;J[BI)J", native_ntfsWrite),
 	NATIVE_METHOD(env, cls, "nativeNtfsTruncate", "(JLjava/lang/String;J)J", native_ntfsTruncate),
 	NATIVE_METHOD(env, cls, "nativeNtfsGetSpace", "(J)[J", native_ntfsGetSpace),
+	NATIVE_METHOD(env, cls, "nativeNtfsRepairDirty", "(J)I", native_ntfsRepairDirty),
 
 	/* FatFs bridge (FAT32 & exFAT) */
 	NATIVE_METHOD(env, cls, "nativeFatfsMount", "(JZ)J", native_fatfsMount),
