@@ -55,6 +55,7 @@ The application provides two distinct driver architectures, seamlessly switchabl
 | **I/O Channel** | Android USB Host API + user-space SCSI driver | Linux kernel block device nodes (`/dev/block/vold/*`) |
 | **Read Throughput** | Sequential read ~15 to 19 MB/s | Sequential read up to 163+ MB/s |
 | **Mount Form** | SAF DocumentsProvider (system Files app) | SAF DocumentsProvider + Global FUSE (`/storage/XXXX-XXXX`) |
+| **Dirty Repair & Diagnostics** | Read-only structural diagnostics & clean unmount | 1-Click Dirty Bit reset & deep structural integrity diagnostics |
 | **System False Alerts** | Notification listener suppresses system format prompts | Privileged suppression of false format notifications |
 
 ---
@@ -81,6 +82,10 @@ The following benchmarks were collected from 6 independent BitLocker partitions 
 
 - **Transparent Filesystem Read/Write**: Custom optimized `libntfs-3g` (with sector write barriers protecting `-FVE-FS-` metadata), exFAT driver (supporting files >4GB), and `FatFs` (full Long File Name / LFN support). Delivers complete CRUD operations and native system search integration.
 - **Accurate Multi-Partition Scanning**: Analyzes hardware topology to distinguish parent disk devices from partition nodes, preventing duplicate drive listings and supporting concurrent auto-unlocking.
+- **Dirty Volume Repair & Structural Diagnostics**:
+  - **1-Click Dirty Bit Reset**: Instantly resets unclean unmount flags across NTFS, FAT32, and exFAT partitions caused by hot-unplugging, restoring full read/write access without requiring a PC.
+  - **Deep Structural Integrity Diagnostics**: Sub-50ms non-destructive metadata integrity scan covering NTFS (MFT USN/Fixup torn-write validation, `$MFTMirr` consistency, `$INDEX_ROOT` B-Tree index), FAT32 (Sector 0 vs Sector 6 backup boot sector, FSInfo signature, FAT1 vs FAT2 consistency, directory loop detection), and exFAT (Microsoft-compliant 11-sector cyclic redundancy boot checksum, Sector 12 backup comparison, `MediaFailure` hardware flag, root directory stream parsing).
+  - **Pre-Flight Safety Barrier**: Automatically validates volume health prior to dirty bit reset. Displays high-risk warning banners and prevents accidental writes if true structural corruption is detected.
 - **Data Safety & Eject Protection**: Hardware-level read-only protection toggle intercepts all write operations at driver level. Safe eject forces two-level cache flush and clears filesystem Dirty Bits to prevent Windows from prompting "Scan and fix drive". Warns on unclean unmounted volumes.
 - **Global POSIX Virtual Mount**: In Root mode, injects a FUSE mount into the PID 1 mount namespace (`/storage/XXXX-XXXX`), enabling direct access via standard Linux paths in MT Manager, Termux, media players, and terminal utilities.
 - **Non-Destructive Drive Benchmark**: Built-in read-only benchmark tool to measure sequential read throughput (MB/s), 4K random read latency (IOPS), and negotiated USB bus speed (USB 2.0 / USB 3.0 5Gbps / USB 3.1+ 10Gbps).
