@@ -214,6 +214,13 @@ object PreferenceHelper {
         prefs(context).edit().putBoolean("notify_on_insert", enabled).apply()
     }
 
+    fun isBiometricVaultEnabled(context: Context): Boolean =
+        prefs(context).getBoolean("biometric_vault_enabled", false)
+
+    fun setBiometricVaultEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean("biometric_vault_enabled", enabled).apply()
+    }
+
     var dynamicColor: Boolean
         get() = try { prefs(ContextProvider.app).getBoolean("dynamic_color", true) } catch (_: Exception) { true }
         set(v) = try { prefs(ContextProvider.app).edit().putBoolean("dynamic_color", v).apply() } catch (_: Exception) {}
@@ -225,6 +232,10 @@ object PreferenceHelper {
     var notifyOnInsert: Boolean
         get() = try { prefs(ContextProvider.app).getBoolean("notify_on_insert", true) } catch (_: Exception) { true }
         set(v) = try { prefs(ContextProvider.app).edit().putBoolean("notify_on_insert", v).apply() } catch (_: Exception) {}
+
+    var biometricVaultEnabled: Boolean
+        get() = try { prefs(ContextProvider.app).getBoolean("biometric_vault_enabled", false) } catch (_: Exception) { false }
+        set(v) = try { prefs(ContextProvider.app).edit().putBoolean("biometric_vault_enabled", v).apply() } catch (_: Exception) {}
 
     fun getVolumeKey(volumeGuid: String?, devicePath: String? = null): String {
         if (!volumeGuid.isNullOrBlank() && !isInvalidGuid(volumeGuid)) {

@@ -764,6 +764,194 @@ static jlongArray native_fatfsGetSpace(JNIEnv *env, jobject thiz, jlong volHandl
 	return out;
 }
 
+/* ---------------- Disaster Recovery & Raw Block Access ---------------- */
+
+static jbyteArray native_extractFveMetadata(JNIEnv *env, jobject thiz, jstring path, jlong offset)
+{
+	if (!path) return NULL;
+	const char *cpath = (*env)->GetStringUTFChars(env, path, NULL);
+	if (!cpath) return NULL;
+
+	dis_ctx_t *ctx = calloc(1, sizeof(dis_ctx_t));
+	if (!ctx) {
+		(*env)->ReleaseStringUTFChars(env, path, cpath);
+		return NULL;
+	}
+
+	snprintf(ctx->device_path, sizeof(ctx->device_path), "%s", cpath);
+	ctx->offset = (off_t)offset;
+	(*env)->ReleaseStringUTFChars(env, path, cpath);
+
+	if (dis_io_init(ctx) != 0) {
+		LOGE("dis_io_init failed for extract: %s", dis_get_last_error());
+		free(ctx);
+		return NULL;
+	}
+
+	uint8_t *pkg = NULL;
+	size_t pkg_len = 0;
+	int ret = dis_metadata_extract_package(ctx, &pkg, &pkg_len);
+
+	dis_close_volume(ctx);
+
+	if (ret != DIS_RET_SUCCESS || !pkg || pkg_len == 0) {
+		LOGE("extractFveMetadata failed: %s", dis_get_last_error());
+		if (pkg) free(pkg);
+		return NULL;
+	}
+
+	jbyteArray arr = read_bytes(env, pkg, pkg_len);
+	free(pkg);
+	return arr;
+}
+
+static jbyteArray native_extractFveMetadataFromHandle(JNIEnv *env, jobject thiz, jlong handle)
+{
+	jni_slot_t *slot = slot_acquire(handle);
+	if (!slot) {
+		(*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/IllegalStateException"),
+			"invalid or closed session handle");
+		return NULL;
+	}
+	dis_ctx_t *ctx = slot->ctx;
+
+	uint8_t *pkg = NULL;
+	size_t pkg_len = 0;
+	int ret = dis_metadata_extract_package(ctx, &pkg, &pkg_len);
+	slot_release(slot);
+
+	if (ret != DIS_RET_SUCCESS || !pkg || pkg_len == 0) {
+		LOGE("extractFveMetadataFromHandle failed: %s", dis_get_last_error());
+		if (pkg) free(pkg);
+		return NULL;
+	}
+
+	jbyteArray arr = read_bytes(env, pkg, pkg_len);
+	free(pkg);
+	return arr;
+}
+
+static jint native_restoreFveMetadata(JNIEnv *env, jobject thiz, jstring path, jlong offset, jbyteArray data, jlong targetPartitionSize)
+{
+	if (!path || !data) return -1;
+	const char *cpath = (*env)->GetStringUTFChars(env, path, NULL);
+	if (!cpath) return -1;
+
+	jsize dlen = (*env)->GetArrayLength(env, data);
+	if (dlen <= 0) {
+		(*env)->ReleaseStringUTFChars(env, path, cpath);
+		return -1;
+	}
+
+	uint8_t *pkg = malloc((size_t)dlen);
+	if (!pkg) {
+		(*env)->ReleaseStringUTFChars(env, path, cpath);
+		return -1;
+	}
+	(*env)->GetByteArrayRegion(env, data, 0, dlen, (jbyte *)pkg);
+
+	dis_ctx_t *ctx = calloc(1, sizeof(dis_ctx_t));
+	if (!ctx) {
+		free(pkg);
+		(*env)->ReleaseStringUTFChars(env, path, cpath);
+		return -1;
+	}
+
+	snprintf(ctx->device_path, sizeof(ctx->device_path), "%s", cpath);
+	ctx->offset = (off_t)offset;
+	(*env)->ReleaseStringUTFChars(env, path, cpath);
+
+	if (dis_io_init(ctx) != 0) {
+		LOGE("dis_io_init failed for restore: %s", dis_get_last_error());
+		free(pkg);
+		free(ctx);
+		return -102;
+	}
+
+	int ret = dis_metadata_restore_package(ctx, pkg, (size_t)dlen, (uint64_t)targetPartitionSize);
+
+	dis_close_volume(ctx);
+	free(pkg);
+	return (jint)ret;
+}
+
+static jlong native_openRawDevice(JNIEnv *env, jobject thiz, jstring path, jlong offset)
+{
+	if (!path) return 0;
+	const char *cpath = (*env)->GetStringUTFChars(env, path, NULL);
+	if (!cpath) return 0;
+
+	dis_ctx_t *ctx = calloc(1, sizeof(dis_ctx_t));
+	if (!ctx) {
+		(*env)->ReleaseStringUTFChars(env, path, cpath);
+		return 0;
+	}
+
+	snprintf(ctx->device_path, sizeof(ctx->device_path), "%s", cpath);
+	ctx->offset = (off_t)offset;
+	ctx->sector_size = 512;
+	(*env)->ReleaseStringUTFChars(env, path, cpath);
+
+	if (dis_io_init(ctx) != 0) {
+		LOGE("dis_io_init failed for raw device: %s", dis_get_last_error());
+		free(ctx);
+		return 0;
+	}
+
+	ctx->volume_size = dis_blk_get_size(ctx);
+	if (ctx->volume_size > (uint64_t)ctx->offset)
+		ctx->volume_size -= ctx->offset;
+
+	jlong h = slot_register(ctx);
+	if (!h)
+		dis_close_volume(ctx);
+	return h;
+}
+
+static jbyteArray native_readRaw(JNIEnv *env, jobject thiz, jlong handle, jlong offset, jint size)
+{
+	jni_slot_t *slot = slot_acquire(handle);
+	if (!slot || size <= 0) {
+		if (slot)
+			slot_release(slot);
+		(*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/IllegalArgumentException"),
+			"invalid or closed session handle");
+		return NULL;
+	}
+	dis_ctx_t *ctx = slot->ctx;
+
+	uint8_t *buf = (uint8_t *)malloc((size_t)size);
+	if (!buf) {
+		slot_release(slot);
+		return NULL;
+	}
+
+	int ret = dis_blk_read(ctx, buf, (off_t)offset, (size_t)size);
+	slot_release(slot);
+
+	if (ret < 0) {
+		free(buf);
+		LOGE("dis_blk_read failed: %s", dis_get_last_error());
+		return NULL;
+	}
+
+	jbyteArray arr = read_bytes(env, buf, (size_t)ret);
+	free(buf);
+	return arr;
+}
+
+static jlong native_getDeviceSize(JNIEnv *env, jobject thiz, jlong handle)
+{
+	jni_slot_t *slot = slot_acquire(handle);
+	if (!slot) return 0;
+	dis_ctx_t *ctx = slot->ctx;
+	uint64_t sz = dis_blk_get_size(ctx);
+	if (sz > (uint64_t)ctx->offset)
+		sz -= ctx->offset;
+	slot_release(slot);
+	return (jlong)sz;
+}
+
 /* ---------------- registration ---------------- */
 
 static const JNINativeMethod methods[] = {
@@ -780,6 +968,14 @@ static const JNINativeMethod methods[] = {
 	NATIVE_METHOD(env, cls, "nativeClose", "(J)V", native_close),
 	NATIVE_METHOD(env, cls, "nativeSync", "(J)I", native_sync),
 	NATIVE_METHOD(env, cls, "nativeGetLastError", "()Ljava/lang/String;", native_getLastError),
+
+	/* Disaster Recovery & Low-level Backup */
+	NATIVE_METHOD(env, cls, "nativeExtractFveMetadata", "(Ljava/lang/String;J)[B", native_extractFveMetadata),
+	NATIVE_METHOD(env, cls, "nativeExtractFveMetadataFromHandle", "(J)[B", native_extractFveMetadataFromHandle),
+	NATIVE_METHOD(env, cls, "nativeRestoreFveMetadata", "(Ljava/lang/String;J[BJ)I", native_restoreFveMetadata),
+	NATIVE_METHOD(env, cls, "nativeOpenRawDevice", "(Ljava/lang/String;J)J", native_openRawDevice),
+	NATIVE_METHOD(env, cls, "nativeReadRaw", "(JJI)[B", native_readRaw),
+	NATIVE_METHOD(env, cls, "nativeGetDeviceSize", "(J)J", native_getDeviceSize),
 
 	/* NTFS-3G bridge */
 	NATIVE_METHOD(env, cls, "nativeNtfsMount", "(JZ)J", native_ntfsMount),

@@ -36,6 +36,7 @@ import com.bitlockerdroid.R
 import com.bitlockerdroid.service.UnlockedVolume
 import com.bitlockerdroid.service.VirtualStorageMountManager
 import com.bitlockerdroid.service.VirtualStorageMountManager.VirtualMountInfo
+import com.bitlockerdroid.ui.dialogs.DisasterRecoveryDialog
 import com.bitlockerdroid.ui.theme.SuccessGreen
 import com.bitlockerdroid.ui.theme.WarningAmber
 import com.bitlockerdroid.util.DeviceIdentity
@@ -59,6 +60,7 @@ fun UnlockedVolumeCard(
     val scope = rememberCoroutineScope()
     var detailsExpanded by remember { mutableStateOf(false) }
     var showBenchmarkDialog by remember { mutableStateOf(false) }
+    var showDisasterDialog by remember { mutableStateOf(false) }
     var showRepairConfirm by remember { mutableStateOf(false) }
     var showStandaloneDiagnostic by remember { mutableStateOf(false) }
     var isRepairing by remember { mutableStateOf(false) }
@@ -640,6 +642,26 @@ fun UnlockedVolumeCard(
                                     style = MaterialTheme.typography.labelMedium
                                 )
                             }
+
+                            Spacer(modifier = Modifier.height(6.dp))
+                            OutlinedButton(
+                                onClick = { showDisasterDialog = true },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(vertical = 6.dp)
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_shield_check),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = stringResource(R.string.disaster_recovery_title),
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                            }
                         }
                     }
                 }
@@ -828,6 +850,27 @@ fun UnlockedVolumeCard(
         com.bitlockerdroid.ui.dialogs.BenchmarkDialog(
             devicePath = volume.devicePath,
             onDismiss = { showBenchmarkDialog = false }
+        )
+    }
+
+    if (showDisasterDialog) {
+        val core = com.bitlockerdroid.service.UnlockManager.get(volume.devicePath)
+        val handle = core?.handle ?: 0L
+        val offset = core?.offset ?: 0L
+        val displayName = if (volume.deviceName.isNotBlank()) {
+            volume.deviceName
+        } else {
+            volume.label.ifBlank { stringResource(R.string.encrypted_storage_device) }
+        }
+        DisasterRecoveryDialog(
+            volumeGuid = volume.guid ?: "",
+            devicePath = volume.devicePath,
+            partitionOffset = offset,
+            totalVolumeSize = volume.size,
+            volumeLabel = displayName,
+            sessionHandle = handle,
+            isUnlocked = true,
+            onDismiss = { showDisasterDialog = false }
         )
     }
 

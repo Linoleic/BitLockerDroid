@@ -1,5 +1,6 @@
 package com.bitlockerdroid.ui.dialogs
 
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -10,18 +11,23 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.fragment.app.FragmentActivity
 import com.bitlockerdroid.R
 import com.bitlockerdroid.ui.theme.SuccessGreen
+import com.bitlockerdroid.util.BiometricAuthHelper
 import com.bitlockerdroid.util.PreferenceHelper
+import com.bitlockerdroid.util.findFragmentActivity
 
-/** Credentials Management Dialog (Dedicated Screen) */
+/** Credentials Management Dialog (Biometric KeyStore Vault) */
 @Composable
 fun CredentialsManagerDialog(
     credentials: List<PreferenceHelper.SavedCredential>,
@@ -31,6 +37,37 @@ fun CredentialsManagerDialog(
     onClearAllCredentials: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
+    val activity = (context as? FragmentActivity) ?: context.findFragmentActivity()
+
+    fun safeDelete(credId: String) {
+        if (PreferenceHelper.isBiometricVaultEnabled(context) && activity != null && BiometricAuthHelper.canAuthenticate(activity)) {
+            BiometricAuthHelper.authenticate(
+                activity = activity,
+                title = context.getString(R.string.auth_title),
+                subtitle = context.getString(R.string.creds_delete),
+                onSuccess = { onDeleteCredential(credId) },
+                onError = { err -> Toast.makeText(context, err, Toast.LENGTH_SHORT).show() }
+            )
+        } else {
+            onDeleteCredential(credId)
+        }
+    }
+
+    fun safeClearAll() {
+        if (PreferenceHelper.isBiometricVaultEnabled(context) && activity != null && BiometricAuthHelper.canAuthenticate(activity)) {
+            BiometricAuthHelper.authenticate(
+                activity = activity,
+                title = context.getString(R.string.auth_title),
+                subtitle = context.getString(R.string.settings_credentials_clear),
+                onSuccess = { onClearAllCredentials() },
+                onError = { err -> Toast.makeText(context, err, Toast.LENGTH_SHORT).show() }
+            )
+        } else {
+            onClearAllCredentials()
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
@@ -44,7 +81,7 @@ fun CredentialsManagerDialog(
         dismissButton = {
             if (credentials.size > 1) {
                 TextButton(
-                    onClick = onClearAllCredentials,
+                    onClick = { safeClearAll() },
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                 ) {
                     Icon(
@@ -89,20 +126,27 @@ fun CredentialsManagerDialog(
             }
         },
         text = {
-            if (credentials.isEmpty()) {
-                Text(
-                    text = stringResource(R.string.settings_credentials_empty),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 380.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 440.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (credentials.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = stringResource(R.string.settings_credentials_empty),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
                     for (cred in credentials) {
                         Surface(
                             shape = RoundedCornerShape(14.dp),
@@ -150,7 +194,7 @@ fun CredentialsManagerDialog(
                                     }
                                     Spacer(modifier = Modifier.width(6.dp))
                                     IconButton(
-                                        onClick = { onDeleteCredential(cred.id) },
+                                        onClick = { safeDelete(cred.id) },
                                         modifier = Modifier.size(32.dp)
                                     ) {
                                         Icon(

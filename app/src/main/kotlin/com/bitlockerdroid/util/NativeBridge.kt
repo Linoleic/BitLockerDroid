@@ -57,6 +57,8 @@ object NativeBridge {
 
     external fun nativeGetLastError(): String
 
+    fun getLastError(): String = nativeGetLastError()
+
     // ---------------- NTFS-3G Integration ----------------
 
     /** Mounts the NTFS volume over the dislocker session; returns native ntfs volume handle or 0. */
@@ -111,6 +113,41 @@ object NativeBridge {
 
     /** Returns long[2] { totalBytes, freeBytes } or null on error. */
     external fun nativeFatfsGetSpace(volHandle: Long): LongArray?
+
+    // ---------------- Disaster Recovery & Low-level Backup ----------------
+
+    /**
+     * Extracts .fvemeta disaster recovery package from a BitLocker partition.
+     * Can be invoked on locked volumes without password.
+     */
+    external fun nativeExtractFveMetadata(path: String, offset: Long): ByteArray?
+
+    /**
+     * Extracts .fvemeta disaster recovery package from an already open dislocker handle.
+     */
+    external fun nativeExtractFveMetadataFromHandle(handle: Long): ByteArray?
+
+    /**
+     * Restores .fvemeta disaster recovery package to target partition.
+     * Validates SHA-256 and strictly checks target partition size against backup header.
+     * Returns 0 on success, negative error code on failure.
+     */
+    external fun nativeRestoreFveMetadata(path: String, offset: Long, data: ByteArray, targetPartitionSize: Long): Int
+
+    /**
+     * Opens a raw device/partition session for raw sector access and imaging.
+     */
+    external fun nativeOpenRawDevice(path: String, offset: Long): Long
+
+    /**
+     * Reads raw (physical/encrypted) sectors via handle with resilient bad sector zero-fill fallback.
+     */
+    external fun nativeReadRaw(handle: Long, offset: Long, size: Int): ByteArray?
+
+    /**
+     * Gets the partition/device size in bytes.
+     */
+    external fun nativeGetDeviceSize(handle: Long): Long
 
     // ---------------- convenience wrappers ----------------
 

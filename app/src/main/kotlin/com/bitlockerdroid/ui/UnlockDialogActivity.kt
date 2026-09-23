@@ -3,7 +3,7 @@ package com.bitlockerdroid.ui
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -54,7 +54,7 @@ import java.util.regex.Pattern
  * Modern Jetpack Compose Material 3 Unlock Dialog.
  * Prompts for BitLocker password or 48-digit recovery key with background async unlock.
  */
-class UnlockDialogActivity : ComponentActivity() {
+class UnlockDialogActivity : FragmentActivity() {
 
     companion object {
         const val EXTRA_DEVICE_PATH = "device_path"
@@ -224,19 +224,26 @@ fun UnlockDialogScreen(
     var rememberPassword by remember { mutableStateOf(false) }
     var autoUnlockOnScan by remember { mutableStateOf(true) }
 
+    val isVaultProtected = remember { PreferenceHelper.isBiometricVaultEnabled(context) }
+
     // Fill in the saved credentials once the preflight arrives — but only if
-    // the user has not started typing yet.
+    // the user has not started typing yet and biometric vault is not locking it.
     LaunchedEffect(preflight) {
         val pf = preflight ?: return@LaunchedEffect
         if (inputValue.isEmpty()) {
             pf.savedPlain?.let { saved ->
-                if (saved.startsWith(UnlockManager.RECOVERY_PREFIX)) {
-                    isRecoveryKey = true
-                    inputValue = saved.removePrefix(UnlockManager.RECOVERY_PREFIX)
-                    rememberPassword = true
+                if (!isVaultProtected) {
+                    if (saved.startsWith(UnlockManager.RECOVERY_PREFIX)) {
+                        isRecoveryKey = true
+                        inputValue = saved.removePrefix(UnlockManager.RECOVERY_PREFIX)
+                        rememberPassword = true
+                    } else {
+                        isRecoveryKey = false
+                        inputValue = saved
+                        rememberPassword = true
+                    }
                 } else {
-                    isRecoveryKey = false
-                    inputValue = saved
+                    // Biometric vault protection active: keep password masked until biometric auth
                     rememberPassword = true
                 }
             }
@@ -250,18 +257,18 @@ fun UnlockDialogScreen(
 
     val recoveryPattern = remember { Pattern.compile("^(\\d{6}-){7}\\d{6}$") }
 
-    val triggerUnlock: () -> Unit = {
-        val trimmed = if (isRecoveryKey) normalizeRecoveryKey(inputValue) else inputValue.trim()
+    val triggerUnlockWithValue: (String, Boolean) -> Unit = { rawVal, recovery ->
+        val trimmed = if (recovery) normalizeRecoveryKey(rawVal) else rawVal.trim()
         if (trimmed.isEmpty()) {
             errorMessage = context.getString(R.string.password_required)
-        } else if (isRecoveryKey && !recoveryPattern.matcher(trimmed).matches()) {
+        } else if (recovery && !recoveryPattern.matcher(trimmed).matches()) {
             errorMessage = context.getString(R.string.invalid_recovery_key)
         } else {
             isUnlocking = true
             errorMessage = null
             onUnlock(
                 trimmed,
-                isRecoveryKey,
+                recovery,
                 rememberPassword,
                 autoUnlockOnScan,
                 { err ->
@@ -270,6 +277,35 @@ fun UnlockDialogScreen(
                 },
                 {
                     isUnlocking = false
+                }
+            )
+        }
+    }
+
+    val triggerUnlock: () -> Unit = {
+        triggerUnlockWithValue(inputValue, isRecoveryKey)
+    }
+
+    val triggerBiometricUnlock: () -> Unit = {
+        val pf = preflight
+        val saved = pf?.savedPlain
+        val activity = context as? androidx.fragment.app.FragmentActivity
+        if (pf != null && saved != null && activity != null && com.bitlockerdroid.util.BiometricAuthHelper.canAuthenticate(activity)) {
+            val devName = pf.devInfo?.friendlyName?.ifBlank { pf.guid ?: "" } ?: pf.guid ?: ""
+            com.bitlockerdroid.util.BiometricAuthHelper.authenticate(
+                activity = activity,
+                title = context.getString(R.string.biometric_unlock_prompt_title),
+                subtitle = context.getString(R.string.biometric_unlock_prompt_subtitle, devName),
+                onSuccess = {
+                    val isRec = saved.startsWith(UnlockManager.RECOVERY_PREFIX)
+                    val cleanKey = if (isRec) saved.removePrefix(UnlockManager.RECOVERY_PREFIX) else saved
+                    isRecoveryKey = isRec
+                    inputValue = cleanKey
+                    rememberPassword = true
+                    triggerUnlockWithValue(cleanKey, isRec)
+                },
+                onError = { err ->
+                    errorMessage = err
                 }
             )
         }
@@ -499,6 +535,70 @@ fun UnlockDialogScreen(
                                         modifier = Modifier.size(16.dp)
                                     )
                                 }
+                            }
+                        }
+                    }
+                }
+
+                // Biometric Vault Quick Unlock Card
+                if (savedPlain != null && com.bitlockerdroid.util.BiometricAuthHelper.canAuthenticate(context)) {
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = !isUnlocking) { triggerBiometricUnlock() }
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        painter = androidx.compose.ui.res.painterResource(id = R.drawable.ic_fingerprint),
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.biometric_unlock_button),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = stringResource(R.string.biometric_quick_unlock_banner),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            FilledTonalButton(
+                                onClick = { triggerBiometricUnlock() },
+                                enabled = !isUnlocking,
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.biometric_quick_unlock_action),
+                                    style = MaterialTheme.typography.labelSmall
+                                )
                             }
                         }
                     }

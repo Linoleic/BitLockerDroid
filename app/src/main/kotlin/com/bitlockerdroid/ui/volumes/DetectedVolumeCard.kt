@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bitlockerdroid.R
 import com.bitlockerdroid.service.DetectedVolume
+import com.bitlockerdroid.ui.dialogs.DisasterRecoveryDialog
 import com.bitlockerdroid.ui.theme.WarningAmber
 import com.bitlockerdroid.util.DeviceIdentity
 import com.bitlockerdroid.util.PreferenceHelper
@@ -35,12 +36,21 @@ import com.bitlockerdroid.util.PreferenceHelper
 fun DetectedVolumeCard(
     volume: DetectedVolume,
     onMountReadOnlyChange: (Boolean) -> Unit,
-    onUnlock: () -> Unit
+    onUnlock: () -> Unit,
+    onBiometricUnlock: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     var isReadOnly by remember(volume.devicePath, volume.guid) {
         mutableStateOf(PreferenceHelper.isVolumeReadOnly(context, volume.guid, volume.devicePath))
     }
+    val hasSavedCredential = remember(volume.guid) {
+        !volume.guid.isNullOrBlank() && PreferenceHelper.getRememberedPassword(context, volume.guid) != null
+    }
+    val canBiometric = remember {
+        com.bitlockerdroid.util.BiometricAuthHelper.canAuthenticate(context)
+    }
+    var showDisasterDialog by remember { mutableStateOf(false) }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -94,12 +104,40 @@ fun DetectedVolumeCard(
                     )
                 }
 
-                Button(
-                    onClick = onUnlock,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = WarningAmber)
-                ) {
-                    Text(text = stringResource(R.string.detected_unlock), color = Color.White)
+                if (hasSavedCredential && canBiometric && onBiometricUnlock != null) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = onBiometricUnlock,
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_fingerprint),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(text = stringResource(R.string.biometric_unlock_button), fontSize = 12.sp)
+                        }
+                        OutlinedButton(
+                            onClick = onUnlock,
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(text = stringResource(R.string.detected_unlock), fontSize = 12.sp)
+                        }
+                    }
+                } else {
+                    Button(
+                        onClick = onUnlock,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = WarningAmber)
+                    ) {
+                        Text(text = stringResource(R.string.detected_unlock), color = Color.White)
+                    }
                 }
             }
 
@@ -244,11 +282,51 @@ fun DetectedVolumeCard(
             }
 
             Spacer(modifier = Modifier.height(10.dp))
+
+            // Disaster Recovery & Low-level Protection Action
+            OutlinedButton(
+                onClick = { showDisasterDialog = true },
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(vertical = 6.dp)
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_shield_check),
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = stringResource(R.string.disaster_recovery_title),
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
             Text(
                 text = stringResource(R.string.detected_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+
+    if (showDisasterDialog) {
+        val displayName = if (volume.deviceName.isNotBlank()) {
+            volume.deviceName
+        } else {
+            stringResource(R.string.encrypted_storage_device)
+        }
+        DisasterRecoveryDialog(
+            volumeGuid = volume.guid ?: "",
+            devicePath = volume.devicePath,
+            partitionOffset = 0L,
+            totalVolumeSize = volume.capacity,
+            volumeLabel = displayName,
+            sessionHandle = 0L,
+            isUnlocked = false,
+            onDismiss = { showDisasterDialog = false }
+        )
     }
 }

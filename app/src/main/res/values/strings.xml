@@ -305,4 +305,56 @@
     <string name="switch_mode_confirm_eject_restart">Eject &amp; Restart</string>
     <string name="switch_mode_confirm_restart">Restart Now</string>
     <string name="switch_mode_progress">Safely ejecting volumes and restarting…</string>
+
+    <!-- Biometric Credential Vault -->
+    <string name="biometric_vault_title">Biometric Credential Vault</string>
+    <string name="biometric_vault_desc">Hardware TEE KeyStore &amp; Biometric Protection</string>
+    <string name="biometric_protection_enabled">Biometric Protection Active</string>
+    <string name="biometric_protection_switch">Require Biometrics</string>
+    <string name="biometric_protection_switch_desc">Require fingerprint/face authentication before accessing, viewing, or unlocking with saved credentials</string>
+    <string name="biometric_unlock_button">Biometric Unlock</string>
+    <string name="biometric_unlock_prompt_title">Unlock BitLocker Drive</string>
+    <string name="biometric_unlock_prompt_subtitle">Verify identity to decrypt volume \"%1$s\"</string>
+    <string name="biometric_auth_for_view">Verify identity to view or copy BitLocker credentials</string>
+    <string name="biometric_auth_for_vault_toggle">Verify identity to change vault security settings</string>
+    <string name="biometric_auth_failed">Biometric authentication failed</string>
+    <string name="biometric_not_supported">Biometrics not supported or not enrolled on this device</string>
+    <string name="biometric_badge_hardware_tee">TEE Hardware Encrypted</string>
+    <string name="biometric_badge_active">Biometrics Active</string>
+    <string name="biometric_badge_inactive">Standard Mode</string>
+    <string name="biometric_quick_unlock_banner">Credential found in vault. Tap to unlock with biometrics.</string>
+    <string name="biometric_quick_unlock_action">Verify &amp; Unlock</string>
+    <string name="biometric_unlocking">Authenticating and unlocking…</string>
+    <string name="biometric_vault_settings_changed">Vault security setting updated</string>
+
+    <!-- Metadata Backup & Image Export -->
+    <string name="disaster_recovery_title">Metadata Backup &amp; Image Export</string>
+    <string name="disaster_backup_meta">Backup Volume Metadata</string>
+    <string name="disaster_restore_meta">Emergency Restore Metadata</string>
+    <string name="disaster_dump_image">Export Disk Image</string>
+    <string name="disaster_backup_meta_desc">Back up Sector 0 VBR and 3 FVE metadata regions into a .fvemeta file. Critical for recovery if disk headers are corrupted.</string>
+    <string name="disaster_restore_meta_desc">Select a .fvemeta file to emergency-repair corrupted BitLocker headers.</string>
+    <string name="disaster_meta_backup_success">Metadata backup created successfully (%1$s)</string>
+    <string name="disaster_meta_backup_failed">Failed to backup metadata: %1$s</string>
+    <string name="disaster_meta_restore_title">Emergency Metadata Restore</string>
+    <string name="disaster_meta_restore_confirm">This will directly overwrite Sector 0 and all FVE metadata blocks on the target partition with the backup.\n\nBackup GUID: %1$s\nBackup Size: %2$s\nTarget Device: %3$s\n\nDo you want to proceed?</string>
+    <string name="disaster_meta_restore_success">Volume metadata successfully restored! Please reconnect or refresh the drive.</string>
+    <string name="disaster_meta_restore_failed">Restore failed: %1$s</string>
+    <string name="disaster_meta_restore_size_mismatch">Safety Violation: Target partition size (%1$s) does not match backup volume size (%2$s)! Restoration is strictly blocked to protect other drives.</string>
+    <string name="disaster_meta_restore_invalid">Invalid or corrupted backup file (SHA-256 verification failed).</string>
+    <string name="disaster_dump_title">Export Disk Image</string>
+    <string name="disaster_dump_mode_decrypted">Decrypted Virtual Volume (.img) - Recommended</string>
+    <string name="disaster_dump_mode_decrypted_desc">Pure plaintext filesystem image. Can be mounted and accessed directly on any PC/Mac without passwords.</string>
+    <string name="disaster_dump_mode_raw">Raw Encrypted Partition (.img)</string>
+    <string name="disaster_dump_mode_raw_desc">Exact bit-for-bit copy of the encrypted physical sectors. Suitable for full forensic backup and bad-sector recovery.</string>
+    <string name="disaster_dump_size_label">Estimated Image Size: %1$s</string>
+    <string name="disaster_dump_start">Start Export</string>
+    <string name="dump_notification_channel_name">Volume Image Export</string>
+    <string name="dump_notification_channel_desc">Shows progress of BitLocker volume image export</string>
+    <string name="dump_in_progress">Exporting: %1$s</string>
+    <string name="dump_completed_title">Image Export Completed</string>
+    <string name="dump_completed_desc">%1$s successfully exported (%2$s)</string>
+    <string name="dump_failed_title">Image Export Failed</string>
+    <string name="dump_failed_desc">%1$s export failed: %2$s</string>
+    <string name="dump_cancelled">Export cancelled</string>
 </resources>

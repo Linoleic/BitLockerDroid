@@ -15,8 +15,8 @@ android {
         applicationId = "com.bitlockerdroid"
         minSdk = 33
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.0.2"
+        versionCode = 6
+        versionName = "1.0.3"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -178,10 +178,14 @@ dependencies {
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
 
-    // Keystore-based key protection
+    // Keystore-based key protection and Biometric Vault
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("androidx.biometric:biometric:1.2.0-alpha05")
 
     // Non-root USB Mass Storage support
     implementation("me.jahnen.libaums:core:0.10.0")
+
+    // Unit testing
+    testImplementation("junit:junit:4.13.2")
 }
 

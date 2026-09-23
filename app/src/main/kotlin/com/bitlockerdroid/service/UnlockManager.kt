@@ -754,6 +754,13 @@ object UnlockManager {
             return
         }
 
+        // Biometric Vault check: when vault protection is enabled, require user presence/auth
+        if (PreferenceHelper.isBiometricVaultEnabled(context)) {
+            LogFile.write("app", "onDeviceDetected: biometric vault protection enabled, requiring user authentication for $volumeId")
+            notifyVolumeLocked(context, devicePath, offset, volumeId, rkId)
+            return
+        }
+
         val rememberBlob = PreferenceHelper.getRememberedPassword(context, volumeId)
         if (rememberBlob != null) {
             val raw = KeyGuardService.decrypt(rememberBlob)

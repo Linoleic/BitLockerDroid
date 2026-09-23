@@ -30,7 +30,8 @@ fun VolumesTabContent(
     onRefreshAndScan: () -> Unit,
     onOpenVolume: (String) -> Unit,
     onLockVolume: (String) -> Unit,
-    onUnlockDetected: (String) -> Unit
+    onUnlockDetected: (String) -> Unit,
+    onBiometricUnlockDetected: ((String) -> Unit)? = null
 ) {
     val activeMounts by VirtualStorageMountManager.activeMountsFlow.collectAsState()
 
@@ -78,6 +79,9 @@ fun VolumesTabContent(
                         contentType = { "detected_volume" }
                     ) { detected ->
                         val onUnlock = remember(detected.devicePath) { { onUnlockDetected(detected.devicePath) } }
+                        val onBiometricUnlock = remember(detected.devicePath, onBiometricUnlockDetected) {
+                            if (onBiometricUnlockDetected != null) { { onBiometricUnlockDetected(detected.devicePath) } } else null
+                        }
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -86,7 +90,8 @@ fun VolumesTabContent(
                             DetectedVolumeCard(
                                 volume = detected,
                                 onMountReadOnlyChange = onMountReadOnlyChange,
-                                onUnlock = onUnlock
+                                onUnlock = onUnlock,
+                                onBiometricUnlock = onBiometricUnlock
                             )
                         }
                     }

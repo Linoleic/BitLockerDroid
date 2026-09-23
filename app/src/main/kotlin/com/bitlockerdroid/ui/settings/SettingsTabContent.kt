@@ -14,14 +14,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import android.widget.Toast
 import com.bitlockerdroid.R
 import com.bitlockerdroid.service.BitLockerCoreService
 import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.ui.dialogs.SingleChoiceDialog
 import com.bitlockerdroid.ui.theme.SuccessGreen
 import com.bitlockerdroid.ui.theme.ThemeMode
+import com.bitlockerdroid.util.BiometricAuthHelper
 import com.bitlockerdroid.util.PreferenceHelper
 import com.bitlockerdroid.util.RootAccess
+import com.bitlockerdroid.util.findFragmentActivity
 
 /** Content for Tab 1: Comprehensive standardized settings */
 @Composable
@@ -49,8 +52,9 @@ fun SettingsTabContent(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            // Group 1: Device Credentials & Auto-Unlock Summary Entry
+            // Group 1: Device Credentials & Biometric Protection
             SettingsGroup(title = stringResource(R.string.settings_header_unlock)) {
+                val context = LocalContext.current
                 val totalCount = rememberedCredentials.size
                 val autoUnlockCount = rememberedCredentials.count { it.autoUnlock }
                 val subtitleText = when {
@@ -65,6 +69,48 @@ fun SettingsTabContent(
                     badgeText = if (totalCount > 0) stringResource(R.string.settings_creds_badge_devices, totalCount) else stringResource(R.string.settings_creds_badge_empty),
                     badgeColor = if (totalCount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                     onClick = onOpenCredentialsManager
+                )
+
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                )
+
+                var biometricVaultEnabled by remember {
+                    mutableStateOf(PreferenceHelper.isBiometricVaultEnabled(context))
+                }
+                SettingsSwitchItem(
+                    title = stringResource(R.string.biometric_protection_switch),
+                    description = stringResource(R.string.biometric_protection_switch_desc),
+                    checked = biometricVaultEnabled,
+                    onCheckedChange = { targetChecked ->
+                        val activity = context.findFragmentActivity()
+                        if (activity != null && BiometricAuthHelper.canAuthenticate(activity)) {
+                            BiometricAuthHelper.authenticate(
+                                activity = activity,
+                                title = context.getString(R.string.auth_title),
+                                subtitle = context.getString(R.string.biometric_auth_for_vault_toggle),
+                                onSuccess = {
+                                    biometricVaultEnabled = targetChecked
+                                    PreferenceHelper.setBiometricVaultEnabled(context, targetChecked)
+                                    Toast.makeText(
+                                        context,
+                                        R.string.biometric_vault_settings_changed,
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                },
+                                onError = { err ->
+                                    Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        } else {
+                            Toast.makeText(
+                                context,
+                                R.string.biometric_not_supported,
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
                 )
             }
 

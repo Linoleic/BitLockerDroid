@@ -79,11 +79,13 @@ int  dis_encrypt_sector(dis_ctx_t *ctx, uint8_t *sector, off_t sector_address);
 int  dis_sector_write(dis_ctx_t *ctx, const uint8_t *sector, off_t sector_address);
 
 /* io.c -- root-based block device I/O via persistent daemon or direct fd */
-int  dis_io_init(dis_ctx_t *ctx);
-void dis_io_destroy(dis_ctx_t *ctx);
-int  dis_blk_read(dis_ctx_t *ctx, uint8_t *buf, off_t offset, size_t len);
-int  dis_blk_write(dis_ctx_t *ctx, const uint8_t *buf, off_t offset, size_t len);
-int  dis_blk_sync(dis_ctx_t *ctx);
+int      dis_io_init(dis_ctx_t *ctx);
+void     dis_io_destroy(dis_ctx_t *ctx);
+int      dis_blk_read(dis_ctx_t *ctx, uint8_t *buf, off_t offset, size_t len);
+int      dis_blk_write(dis_ctx_t *ctx, const uint8_t *buf, off_t offset, size_t len);
+int      dis_blk_write_raw(dis_ctx_t *ctx, const uint8_t *buf, off_t offset, size_t len);
+int      dis_blk_sync(dis_ctx_t *ctx);
+uint64_t dis_blk_get_size(dis_ctx_t *ctx);
 
 /* error.c */
 void dis_set_error(const char *fmt, ...);

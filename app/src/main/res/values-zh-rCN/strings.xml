@@ -305,4 +305,56 @@
     <string name="switch_mode_confirm_eject_restart">安全弹出并重启</string>
     <string name="switch_mode_confirm_restart">立即重启</string>
     <string name="switch_mode_progress">正在安全弹出并重启应用…</string>
+
+    <!-- 生物识别凭据保险箱 -->
+    <string name="biometric_vault_title">生物识别凭据保险箱</string>
+    <string name="biometric_vault_desc">硬件 TEE 密钥库与生物识别防护</string>
+    <string name="biometric_protection_enabled">生物识别安全防护已开启</string>
+    <string name="biometric_protection_switch">启用生物识别防护</string>
+    <string name="biometric_protection_switch_desc">在查看、复制或使用已存凭据解锁时需通过指纹或面容身份验证</string>
+    <string name="biometric_unlock_button">生物识别解锁</string>
+    <string name="biometric_unlock_prompt_title">解锁 BitLocker 卷</string>
+    <string name="biometric_unlock_prompt_subtitle">请验证身份以解密卷「%1$s」</string>
+    <string name="biometric_auth_for_view">请验证身份以查看或复制 BitLocker 凭据</string>
+    <string name="biometric_auth_for_vault_toggle">请验证身份以更改凭据保险箱安全设置</string>
+    <string name="biometric_auth_failed">生物识别验证未通过</string>
+    <string name="biometric_not_supported">此设备不支持或未录入生物识别</string>
+    <string name="biometric_badge_hardware_tee">TEE 硬件芯片加密</string>
+    <string name="biometric_badge_active">生物识别保护中</string>
+    <string name="biometric_badge_inactive">普通模式</string>
+    <string name="biometric_quick_unlock_banner">保险箱中存在已存凭据，点击进行生物识别快速解锁</string>
+    <string name="biometric_quick_unlock_action">验证并解锁</string>
+    <string name="biometric_unlocking">正在验证并解锁…</string>
+    <string name="biometric_vault_settings_changed">保险箱安全设置已更新</string>
+
+    <!-- 元数据备份与镜像导出 -->
+    <string name="disaster_recovery_title">元数据备份与镜像导出</string>
+    <string name="disaster_backup_meta">备份卷头元数据</string>
+    <string name="disaster_restore_meta">从备份恢复卷头</string>
+    <string name="disaster_dump_image">导出分区镜像</string>
+    <string name="disaster_backup_meta_desc">将引导扇区 VBR 与 3 处 FVE 元数据块导出为 .fvemeta 文件。当卷头损坏导致无法识别时用于应急急救。</string>
+    <string name="disaster_restore_meta_desc">选择 .fvemeta 备份文件回写恢复损坏的 BitLocker 卷头。</string>
+    <string name="disaster_meta_backup_success">卷头元数据已成功备份 (%1$s)</string>
+    <string name="disaster_meta_backup_failed">备份卷头元数据失败: %1$s</string>
+    <string name="disaster_meta_restore_title">卷头元数据急救回写</string>
+    <string name="disaster_meta_restore_confirm">此操作将直接使用备份数据覆写目标分区的扇区 0 及全部 FVE 元数据区域。\n\n备份 GUID: %1$s\n备份容量: %2$s\n目标设备: %3$s\n\n确定执行急救回写恢复？</string>
+    <string name="disaster_meta_restore_success">卷头元数据已成功恢复！请重新插拔或刷新驱动器。</string>
+    <string name="disaster_meta_restore_failed">恢复失败: %1$s</string>
+    <string name="disaster_meta_restore_size_mismatch">严重安全拦截: 目标设备容量 (%1$s) 与备份文件 (%2$s) 不匹配！为防止破坏其他磁盘，系统已严格禁止回写！</string>
+    <string name="disaster_meta_restore_invalid">备份文件无效或已损坏 (SHA-256 完整性校验失败)。</string>
+    <string name="disaster_dump_title">导出卷镜像</string>
+    <string name="disaster_dump_mode_decrypted">解密虚拟卷镜像 (.img) - 推荐</string>
+    <string name="disaster_dump_mode_decrypted_desc">导出解密后的纯明文文件系统镜像，可在任何 PC/Mac 免密直接挂载提取文件。</string>
+    <string name="disaster_dump_mode_raw">原始加密分区镜像 (.img)</string>
+    <string name="disaster_dump_mode_raw_desc">完整备份底层物理加密扇区，用于物理取证与坏道抢救。</string>
+    <string name="disaster_dump_size_label">预计镜像大小: %1$s</string>
+    <string name="disaster_dump_start">开始导出</string>
+    <string name="dump_notification_channel_name">卷镜像导出</string>
+    <string name="dump_notification_channel_desc">显示 BitLocker 卷镜像导出进度</string>
+    <string name="dump_in_progress">正在导出: %1$s</string>
+    <string name="dump_completed_title">镜像导出完成</string>
+    <string name="dump_completed_desc">【%1$s】已成功导出 (%2$s)</string>
+    <string name="dump_failed_title">镜像导出失败</string>
+    <string name="dump_failed_desc">【%1$s】导出失败: %2$s</string>
+    <string name="dump_cancelled">已取消导出</string>
 </resources>

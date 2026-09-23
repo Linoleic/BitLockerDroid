@@ -6,7 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.DocumentsContract
 import android.widget.Toast
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -25,6 +25,7 @@ import com.bitlockerdroid.R
 import com.bitlockerdroid.provider.BitLockerDocumentsProvider
 import com.bitlockerdroid.service.BitLockerDetector
 import com.bitlockerdroid.service.DetectedVolume
+import com.bitlockerdroid.service.KeyGuardService
 import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.service.UnlockedVolume
 import com.bitlockerdroid.service.VirtualStorageMountManager
@@ -37,6 +38,7 @@ import com.bitlockerdroid.ui.settings.SettingsTabContent
 import com.bitlockerdroid.ui.theme.BitLockerTheme
 import com.bitlockerdroid.ui.theme.ThemeMode
 import com.bitlockerdroid.ui.volumes.VolumesTabContent
+import com.bitlockerdroid.util.BiometricAuthHelper
 import com.bitlockerdroid.util.LogFile
 import com.bitlockerdroid.util.PreferenceHelper
 import com.bitlockerdroid.util.RootAccess
@@ -51,7 +53,7 @@ import kotlinx.coroutines.withContext
  * - Comprehensive Standardized Settings Tab (auto-unlock, credentials, read-only mode, system diagnostics).
  * - Live reactivity to device plug/unplug events.
  */
-class BitLockerSettingsActivity : ComponentActivity() {
+class BitLockerSettingsActivity : FragmentActivity() {
 
     private var unlockedVolumesState = mutableStateListOf<UnlockedVolume>()
     private var detectedVolumesState = mutableStateListOf<DetectedVolume>()
@@ -201,6 +203,7 @@ class BitLockerSettingsActivity : ComponentActivity() {
                     onOpenVolume = { path -> openVolumeInFiles(path) },
                     onLockVolume = { path -> lockVolume(path) },
                     onUnlockDetected = { path -> promptUnlock(path) },
+                    onBiometricUnlockDetected = { path -> biometricUnlock(path) },
                     ejectingPaths = ejectingPathsState.toSet()
                 )
             }
@@ -324,6 +327,61 @@ class BitLockerSettingsActivity : ComponentActivity() {
         val recoveryKeyId = detectedVol?.recoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
         LogFile.write("app", "manual unlock requested for $devicePath (guid=$guid, rkId=$recoveryKeyId)")
         UnlockManager.showUnlockDialog(this, devicePath, 0, guid, recoveryKeyId)
+    }
+
+    private fun biometricUnlock(devicePath: String) {
+        val detectedVol = UnlockManager.detectedVolumes.firstOrNull { it.devicePath == devicePath }
+        val guid = detectedVol?.guid ?: BitLockerDetector.getVolumeGuid(devicePath)
+        if (guid.isNullOrBlank()) {
+            promptUnlock(devicePath)
+            return
+        }
+        val rememberBlob = PreferenceHelper.getRememberedPassword(this, guid)
+        if (rememberBlob == null) {
+            promptUnlock(devicePath)
+            return
+        }
+        val friendlyName = detectedVol?.deviceName?.ifBlank { guid } ?: guid
+
+        BiometricAuthHelper.authenticate(
+            activity = this,
+            title = getString(R.string.biometric_unlock_prompt_title),
+            subtitle = getString(R.string.biometric_unlock_prompt_subtitle, friendlyName),
+            onSuccess = {
+                val raw = KeyGuardService.decrypt(rememberBlob)
+                if (raw == null) {
+                    Toast.makeText(this, R.string.credential_corrupted, Toast.LENGTH_SHORT).show()
+                    promptUnlock(devicePath)
+                    return@authenticate
+                }
+                val isRecovery = raw.startsWith(UnlockManager.RECOVERY_PREFIX)
+                val cleanKey = if (isRecovery) raw.removePrefix(UnlockManager.RECOVERY_PREFIX) else raw
+                Toast.makeText(this, R.string.biometric_unlocking, Toast.LENGTH_SHORT).show()
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val result = UnlockManager.unlockWithCredential(
+                        this@BitLockerSettingsActivity,
+                        devicePath,
+                        0L,
+                        cleanKey,
+                        isRecovery,
+                        remember = true,
+                        expectedGuid = guid
+                    )
+                    withContext(Dispatchers.Main) {
+                        if (result.isSuccess) {
+                            Toast.makeText(this@BitLockerSettingsActivity, R.string.unlock_success, Toast.LENGTH_SHORT).show()
+                            refreshData()
+                        } else {
+                            val err = result.exceptionOrNull()?.message ?: getString(R.string.unlock_failed)
+                            Toast.makeText(this@BitLockerSettingsActivity, err, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            },
+            onError = { err ->
+                Toast.makeText(this, err, Toast.LENGTH_SHORT).show()
+            }
+        )
     }
 
     private fun lockVolume(devicePath: String) {
@@ -476,6 +534,7 @@ fun MainAppScreen(
     onOpenVolume: (String) -> Unit,
     onLockVolume: (String) -> Unit,
     onUnlockDetected: (String) -> Unit,
+    onBiometricUnlockDetected: ((String) -> Unit)? = null,
     ejectingPaths: Set<String> = emptySet(),
     initialTab: Int = 0
 ) {
@@ -588,7 +647,8 @@ fun MainAppScreen(
                     onRefreshAndScan = onRefreshAndScan,
                     onOpenVolume = onOpenVolume,
                     onLockVolume = onLockVolume,
-                    onUnlockDetected = onUnlockDetected
+                    onUnlockDetected = onUnlockDetected,
+                    onBiometricUnlockDetected = onBiometricUnlockDetected
                 )
             } else {
                 SettingsTabContent(

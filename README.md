@@ -89,7 +89,13 @@ The following benchmarks were collected from 6 independent BitLocker partitions 
 - **Data Safety & Eject Protection**: Hardware-level read-only protection toggle intercepts all write operations at driver level. Safe eject forces two-level cache flush and clears filesystem Dirty Bits to prevent Windows from prompting "Scan and fix drive". Warns on unclean unmounted volumes.
 - **Global POSIX Virtual Mount**: In Root mode, injects a FUSE mount into the PID 1 mount namespace (`/storage/XXXX-XXXX`), enabling direct access via standard Linux paths in MT Manager, Termux, media players, and terminal utilities.
 - **Non-Destructive Drive Benchmark**: Built-in read-only benchmark tool to measure sequential read throughput (MB/s), 4K random read latency (IOPS), and negotiated USB bus speed (USB 2.0 / USB 3.0 5Gbps / USB 3.1+ 10Gbps).
-- **Hardware-Backed Credentials & False Alert Filter**: Credentials encrypted via Android Keystore hardware root of trust, guarded by biometric verification. Automatically filters system notifications falsely claiming the encrypted drive is corrupted.
+- **Biometric Credential Vault**: Safeguards BitLocker passwords and recovery keys using Android Keystore hardware-backed encryption. Features an independent toggle in Settings, requiring biometric (fingerprint/face) or lockscreen credentials to inspect saved credentials. Dynamically enforces window `FLAG_SECURE` to prevent sensitive key leakage in screenshots, screen recordings, or recent apps overview.
+- **Metadata Backup & Image Export**:
+  - **Precise FVE Metadata Backup & Emergency Restore (`.fvemeta`)**: Extracts Sector 0 (VBR) and all three 64KB FVE metadata blocks into an integrity-verified container (SHA-256 and CRC-32). Allows emergency low-level sector writeback if volume headers become corrupted.
+  - **Strict Capacity Safety Barrier**: During metadata restoration, the engine strictly compares the physical partition capacity and sector size against the backup header. If any mismatch is detected, writes are unconditionally blocked to protect other drives and partitions.
+  - **Dual-Mode Volume Dump Service**: Streams either a decrypted virtual volume image (`.img`) directly mountable on PC without BitLocker, or a raw encrypted block partition (`.raw`) for forensic backup. Equipped with an Android Foreground Service (`dataSync`), partial WakeLock, real-time throughput monitoring (MB/s), ETA calculation, and clean cancellation.
+  - **Bad-Sector Degradation Fallback**: In the native C I/O engine, read failures automatically trigger sector-by-sector zero-fill degradation instead of crashing, preserving operational continuity even on physically deteriorating storage media.
+- **False Alert Filter**: Automatically filters Android system notifications falsely claiming the encrypted drive is corrupted or needs formatting.
 
 ---
 

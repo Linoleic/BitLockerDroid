@@ -54,8 +54,7 @@ fun ShowPasswordDialog(
     }
     var visible by remember { mutableStateOf(false) }
 
-    // Reveal / copy require proving device ownership: whoever holds the phone
-    // must pass the lock-screen credential first.
+    // Reveal / copy require proving device ownership via Biometrics or device lock screen credentials
     val keyguard = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
     val deviceSecure = keyguard?.isDeviceSecure == true
     var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -73,6 +72,20 @@ fun ShowPasswordDialog(
     }
 
     fun requireAuth(action: () -> Unit) {
+        val activity = context as? androidx.fragment.app.FragmentActivity
+        if (activity != null && com.bitlockerdroid.util.BiometricAuthHelper.canAuthenticate(activity)) {
+            com.bitlockerdroid.util.BiometricAuthHelper.authenticate(
+                activity = activity,
+                title = context.getString(R.string.auth_title),
+                subtitle = context.getString(R.string.biometric_auth_for_view),
+                onSuccess = action,
+                onError = { err ->
+                    Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                }
+            )
+            return
+        }
+
         if (!deviceSecure) {
             action()
             return

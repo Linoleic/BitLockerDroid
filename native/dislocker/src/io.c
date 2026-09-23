@@ -24,6 +24,8 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/ioctl.h>
+#include <linux/fs.h>
 #include <dirent.h>
 
 #ifdef __ANDROID__
@@ -429,16 +431,8 @@ static int dis_blk_write_dd(dis_ctx_t *ctx, const uint8_t *buf, off_t offset, si
 	return (written == len && WIFEXITED(status) && WEXITSTATUS(status) == 0) ? (int)written : -1;
 }
 
-int dis_blk_read(dis_ctx_t *ctx, uint8_t *buf, off_t offset, size_t len)
+static int dis_blk_read_internal(dis_ctx_t *ctx, uint8_t *buf, off_t offset, size_t len)
 {
-	if (!ctx || !buf || len == 0 || !ctx->device_path[0])
-		return -1;
-
-	if (!is_safe_device_path(ctx->device_path)) {
-		dis_set_error("Security error: unsafe device path %s", ctx->device_path);
-		return -1;
-	}
-
 	// 1. Direct fd
 	if (ctx->fd >= 0) {
 		ssize_t n = pread(ctx->fd, buf, len, (off_t)(ctx->offset + offset));
@@ -491,29 +485,70 @@ int dis_blk_read(dis_ctx_t *ctx, uint8_t *buf, off_t offset, size_t len)
 	return dis_blk_read_dd(ctx, buf, offset, len);
 }
 
-int dis_blk_write(dis_ctx_t *ctx, const uint8_t *buf, off_t offset, size_t len)
+int dis_blk_read(dis_ctx_t *ctx, uint8_t *buf, off_t offset, size_t len)
 {
 	if (!ctx || !buf || len == 0 || !ctx->device_path[0])
 		return -1;
 
-	/* Write barrier: protect BitLocker volume header (sectors 0..15) and metadata blocks */
-	size_t header_bytes = 8192;
-	if (ctx->information && ctx->information->nb_backup_sectors > 0) {
-		header_bytes = (size_t)ctx->information->nb_backup_sectors * ctx->sector_size;
-	}
-	off_t abs_off = ctx->offset + offset;
-	if (abs_off < (off_t)header_bytes) {
-		dis_set_error("Write barrier violation: offset %lld is in protected BitLocker header area",
-			(long long)abs_off);
+	if (!is_safe_device_path(ctx->device_path)) {
+		dis_set_error("Security error: unsafe device path %s", ctx->device_path);
 		return -1;
 	}
-	if (ctx->information) {
-		for (int i = 0; i < 3; i++) {
-			off_t info_off = (off_t)ctx->information->information_off[i];
-			if (info_off != 0 && abs_off >= info_off && abs_off < info_off + 0x10000) {
-				dis_set_error("Write barrier violation: offset %lld is in protected FVE metadata block %d",
-					(long long)abs_off, i);
-				return -1;
+
+	int ret = dis_blk_read_internal(ctx, buf, offset, len);
+	if (ret >= 0) return ret;
+
+	// Resilient fallback for bad sectors on larger reads
+	if (len > 512) {
+		size_t sec_sz = (ctx->sector_size > 0) ? ctx->sector_size : 512;
+		size_t done = 0;
+		int has_salvaged = 0;
+		while (done < len) {
+			size_t chunk = (len - done >= sec_sz) ? sec_sz : (len - done);
+			int sr = dis_blk_read_internal(ctx, buf + done, offset + done, chunk);
+			if (sr >= 0) {
+				has_salvaged = 1;
+			} else {
+				// Zero-fill damaged sector to prevent crash
+				memset(buf + done, 0, chunk);
+			}
+			done += chunk;
+		}
+		if (has_salvaged) {
+			DLOG("dis_blk_read: salvaged bad sectors with zero-fill at offset %lld len %zu",
+				(long long)offset, len);
+			return (int)len;
+		}
+	}
+
+	return -1;
+}
+
+static int dis_blk_write_internal(dis_ctx_t *ctx, const uint8_t *buf, off_t offset, size_t len, int check_barrier)
+{
+	if (!ctx || !buf || len == 0 || !ctx->device_path[0])
+		return -1;
+
+	if (check_barrier) {
+		/* Write barrier: protect BitLocker volume header (sectors 0..15) and metadata blocks */
+		size_t header_bytes = 8192;
+		if (ctx->information && ctx->information->nb_backup_sectors > 0) {
+			header_bytes = (size_t)ctx->information->nb_backup_sectors * ctx->sector_size;
+		}
+		off_t abs_off = ctx->offset + offset;
+		if (abs_off < (off_t)header_bytes) {
+			dis_set_error("Write barrier violation: offset %lld is in protected BitLocker header area",
+				(long long)abs_off);
+			return -1;
+		}
+		if (ctx->information) {
+			for (int i = 0; i < 3; i++) {
+				off_t info_off = (off_t)ctx->information->information_off[i];
+				if (info_off != 0 && abs_off >= info_off && abs_off < info_off + 0x10000) {
+					dis_set_error("Write barrier violation: offset %lld is in protected FVE metadata block %d",
+						(long long)abs_off, i);
+					return -1;
+				}
 			}
 		}
 	}
@@ -567,6 +602,51 @@ int dis_blk_write(dis_ctx_t *ctx, const uint8_t *buf, off_t offset, size_t len)
 
 	// 3. Fallback to su -c dd
 	return dis_blk_write_dd(ctx, buf, offset, len);
+}
+
+int dis_blk_write(dis_ctx_t *ctx, const uint8_t *buf, off_t offset, size_t len)
+{
+	return dis_blk_write_internal(ctx, buf, offset, len, 1);
+}
+
+int dis_blk_write_raw(dis_ctx_t *ctx, const uint8_t *buf, off_t offset, size_t len)
+{
+	return dis_blk_write_internal(ctx, buf, offset, len, 0);
+}
+
+uint64_t dis_blk_get_size(dis_ctx_t *ctx)
+{
+	if (!ctx || !ctx->device_path[0]) return 0;
+
+	// 1. Direct fd
+	if (ctx->fd >= 0) {
+		uint64_t size = 0;
+#ifdef BLKGETSIZE64
+		if (ioctl(ctx->fd, BLKGETSIZE64, &size) == 0 && size > 0)
+			return size;
+#endif
+		off_t end = lseek(ctx->fd, 0, SEEK_END);
+		if (end > 0) return (uint64_t)end;
+	}
+
+	// 2. Persistent daemon
+	if (ctx->io_in_fd >= 0) {
+		pthread_mutex_lock(&ctx->io_lock);
+		uint8_t cmd = CMD_SIZE;
+		if (pipe_write_exact(ctx->io_in_fd, &cmd, 1, 3000) != 1) {
+			pthread_mutex_unlock(&ctx->io_lock);
+			return 0;
+		}
+		uint64_t size = 0;
+		if (pipe_read_exact(ctx->io_out_fd, &size, sizeof(size), 3000) != sizeof(size)) {
+			pthread_mutex_unlock(&ctx->io_lock);
+			return 0;
+		}
+		pthread_mutex_unlock(&ctx->io_lock);
+		return size;
+	}
+
+	return 0;
 }
 
 int dis_blk_sync(dis_ctx_t *ctx)

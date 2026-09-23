@@ -26,6 +26,8 @@ extern "C" {
 #define DIS_RET_ERROR_CRYPTO_INIT               -40
 #define DIS_RET_ERROR_CRYPTO_ALGORITHM_UNSUPPORTED -41
 #define DIS_RET_ERROR_VOLUME_STATE_NOT_SAFE     -14
+#define DIS_RET_ERROR_RESTORE_SIZE_MISMATCH     -101
+#define DIS_RET_ERROR_RESTORE_IO                -102
 #define DIS_RET_ERROR_DISLOCKER_INVAL           -103
 
 /* Opaque context */
@@ -89,6 +91,10 @@ uint64_t dis_volume_size(dis_ctx_t *ctx);
 uint16_t dis_algorithm(dis_ctx_t *ctx);
 int      dis_fvek_len(dis_ctx_t *ctx);
 int      dis_get_recovery_key_id(dis_ctx_t *ctx, uint8_t guid_out[16]);
+
+/* FVE Metadata Package Export & Disaster Recovery */
+int      dis_metadata_extract_package(dis_ctx_t *ctx, uint8_t **out_pkg, size_t *out_pkg_len);
+int      dis_metadata_restore_package(dis_ctx_t *ctx, const uint8_t *pkg, size_t pkg_len, uint64_t target_partition_size);
 
 /* Last error string (thread-local). */
 const char *dis_get_last_error(void);
