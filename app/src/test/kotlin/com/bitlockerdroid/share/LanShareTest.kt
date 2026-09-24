@@ -334,6 +334,365 @@ class LanShareTest {
         assertTrue(LanShareManager.shareStates.value.isEmpty())
     }
 
+    // ---------------- Security regression tests ----------------
+
+    @Test
+    fun testParseByteRange() {
+        // RFC 7233 suffix form: bytes=-N means the LAST N bytes
+        assertEquals(
+            ByteRangeRequest.Satisfiable(500L, 999L),
+            LanWebServer.parseByteRange("bytes=-500", 1000L)
+        )
+        // Suffix longer than the file -> the whole file, still 206
+        assertEquals(
+            ByteRangeRequest.Satisfiable(0L, 999L),
+            LanWebServer.parseByteRange("bytes=-5000", 1000L)
+        )
+        // Suffix length 0 is unsatisfiable
+        assertEquals(ByteRangeRequest.Unsatisfiable, LanWebServer.parseByteRange("bytes=-0", 1000L))
+
+        // Prefix / closed ranges
+        assertEquals(
+            ByteRangeRequest.Satisfiable(0L, 9L),
+            LanWebServer.parseByteRange("bytes=0-9", 1000L)
+        )
+        assertEquals(
+            ByteRangeRequest.Satisfiable(500L, 999L),
+            LanWebServer.parseByteRange("bytes=500-", 1000L)
+        )
+        // End clamped to EOF
+        assertEquals(
+            ByteRangeRequest.Satisfiable(0L, 999L),
+            LanWebServer.parseByteRange("bytes=0-99999", 1000L)
+        )
+        // Start beyond EOF -> 416
+        assertEquals(ByteRangeRequest.Unsatisfiable, LanWebServer.parseByteRange("bytes=1500-", 1000L))
+
+        // Malformed / unsupported -> ignore header (full 200 response)
+        assertEquals(ByteRangeRequest.Ignore, LanWebServer.parseByteRange("bytes=0-1,5-6", 1000L))
+        assertEquals(ByteRangeRequest.Ignore, LanWebServer.parseByteRange("bytes=abc-", 1000L))
+        assertEquals(ByteRangeRequest.Ignore, LanWebServer.parseByteRange("bytes=99-50", 1000L))
+        assertEquals(ByteRangeRequest.Ignore, LanWebServer.parseByteRange("chunks=0-1", 1000L))
+        assertEquals(ByteRangeRequest.Ignore, LanWebServer.parseByteRange("bytes=", 1000L))
+    }
+
+    @Test
+    fun testHostHeaderValidation() {
+        // Pure logic, machine-independent
+        assertTrue(LanWebServer.isAllowedHost(null))
+        assertTrue(LanWebServer.isAllowedHost(""))
+        assertTrue(LanWebServer.isAllowedHost("localhost"))
+        assertTrue(LanWebServer.isAllowedHost("localhost:8080"))
+        assertTrue(LanWebServer.isAllowedHost("127.0.0.1:19199"))
+        assertTrue(LanWebServer.isAllowedHost("[::1]:8080"))
+        assertTrue(LanWebServer.isAllowedHost("192.168.1.50:8080"))
+        assertTrue(LanWebServer.isAllowedHost("10.0.0.7"))
+        assertTrue(LanWebServer.isAllowedHost("172.16.0.9"))
+        assertTrue(LanWebServer.isAllowedHost("172.31.255.255"))
+        assertTrue(LanWebServer.isAllowedHost("169.254.1.2"))
+        // Foreign hostnames and addresses are refused (DNS-rebinding defense)
+        assertFalse(LanWebServer.isAllowedHost("evil.com"))
+        assertFalse(LanWebServer.isAllowedHost("evil.com:8080"))
+        assertFalse(LanWebServer.isAllowedHost("attacker.example.net"))
+        assertFalse(LanWebServer.isAllowedHost("8.8.8.8"))
+        assertFalse(LanWebServer.isAllowedHost("172.32.0.1"))
+        assertFalse(LanWebServer.isAllowedHost("999.1.1.1"))
+    }
+
+    @Test
+    fun testRootPathDestructiveOperationsRejected() {
+        val tempDir = java.io.File.createTempFile("root_guard_test_", "").apply {
+            delete()
+            mkdir()
+        }
+        var server: LanWebServer? = null
+        try {
+            java.io.File(tempDir, "existing.txt").writeText("Precious Content")
+            java.io.File(tempDir, "Folder").apply { mkdir() }
+            java.io.File(tempDir, "Folder/child.txt").writeText("child")
+
+            val adapter = PosixFileShareAdapter(tempDir, "GuardDisk", isReadOnly = false)
+            val config = LanShareConfig(
+                volumeLabel = "GuardDisk",
+                isReadOnly = false,
+                port = 19184,
+                authEnabled = false
+            )
+            server = LanWebServer(config, adapter)
+            val port = server.start()
+
+            // DELETE / must be refused and leave the volume intact
+            val (delCode, _) = sendRawRequest(port, "DELETE / HTTP/1.1\r\nHost: 127.0.0.1:$port\r\n\r\n")
+            assertEquals(403, delCode)
+            assertTrue(java.io.File(tempDir, "existing.txt").exists())
+            assertTrue(java.io.File(tempDir, "Folder").exists())
+
+            // PUT / must be refused as well
+            val (putCode, _) = sendRawRequest(port, "PUT / HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nContent-Length: 4\r\n\r\ntest")
+            assertEquals(403, putCode)
+
+            // COPY into its own subtree -> 409 (would recurse without bound)
+            val (copyCycle, _) = sendRawRequest(
+                port,
+                "COPY /Folder HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nDestination: http://127.0.0.1:$port/Folder/inside\r\n\r\n"
+            )
+            assertEquals(409, copyCycle)
+
+            // MOVE onto itself -> 403 (overwrite path would delete the source)
+            val (moveSelf, _) = sendRawRequest(
+                port,
+                "MOVE /Folder HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nDestination: http://127.0.0.1:$port/Folder\r\n\r\n"
+            )
+            assertEquals(403, moveSelf)
+
+            // Adapter-level defense in depth: the root itself is never deletable
+            assertFalse(adapter.delete("/"))
+            assertTrue(java.io.File(tempDir, "Folder/child.txt").exists())
+        } finally {
+            server?.stop()
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun testRangeSuffixNegativeOffsetContent() {
+        val tempDir = java.io.File.createTempFile("range_test_", "").apply {
+            delete()
+            mkdir()
+        }
+        var server: LanWebServer? = null
+        try {
+            val content = "0123456789".repeat(100) // 1000 bytes
+            java.io.File(tempDir, "data.bin").writeText(content)
+
+            val adapter = PosixFileShareAdapter(tempDir, "RangeDisk", isReadOnly = true)
+            val config = LanShareConfig(
+                volumeLabel = "RangeDisk",
+                isReadOnly = true,
+                port = 19185,
+                authEnabled = false
+            )
+            server = LanWebServer(config, adapter)
+            val port = server.start()
+
+            // bytes=-500 -> exactly the last 500 bytes
+            val (code, headers, body) = sendRawRequestWithBody(
+                port,
+                "GET /data.bin HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nRange: bytes=-500\r\n\r\n"
+            )
+            assertEquals(206, code)
+            assertEquals("bytes 500-999/1000", headers["content-range"])
+            assertEquals(500, body.length)
+            assertEquals(content.substring(500), body)
+
+            // bytes=-5000 (N >= fileSize) -> complete file as 206, not 416
+            val (fullCode, fullHeaders, fullBody) = sendRawRequestWithBody(
+                port,
+                "GET /data.bin HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nRange: bytes=-5000\r\n\r\n"
+            )
+            assertEquals(206, fullCode)
+            assertEquals("bytes 0-999/1000", fullHeaders["content-range"])
+            assertEquals(content, fullBody)
+
+            // bytes=-0 -> 416
+            val (zeroCode, _) = sendRawRequest(
+                port,
+                "GET /data.bin HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nRange: bytes=-0\r\n\r\n"
+            )
+            assertEquals(416, zeroCode)
+
+            // Closed range still correct
+            val (headCode, headHeaders, headBody) = sendRawRequestWithBody(
+                port,
+                "GET /data.bin HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nRange: bytes=0-9\r\n\r\n"
+            )
+            assertEquals(206, headCode)
+            assertEquals("bytes 0-9/1000", headHeaders["content-range"])
+            assertEquals("0123456789", headBody)
+
+            // Multi-range unsupported -> full 200 fallback
+            val (multiCode, _) = sendRawRequest(
+                port,
+                "GET /data.bin HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nRange: bytes=0-1,5-6\r\n\r\n"
+            )
+            assertEquals(200, multiCode)
+        } finally {
+            server?.stop()
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun testOversizedHeadersRejected431() {
+        val tempDir = java.io.File.createTempFile("hdr_limit_test_", "").apply {
+            delete()
+            mkdir()
+        }
+        var server: LanWebServer? = null
+        try {
+            java.io.File(tempDir, "existing.txt").writeText("ok")
+            val adapter = PosixFileShareAdapter(tempDir, "HdrDisk", isReadOnly = true)
+            val config = LanShareConfig(
+                volumeLabel = "HdrDisk",
+                isReadOnly = true,
+                port = 19186,
+                authEnabled = false
+            )
+            server = LanWebServer(config, adapter)
+            val port = server.start()
+
+            // A 20 KB single header line blows the 16 KB cap -> 431, not OOM
+            val hugeHeader = "X-Bloat: " + "A".repeat(20_000)
+            val (code, _) = sendRawRequest(
+                port,
+                "GET /existing.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\n$hugeHeader\r\n\r\n"
+            )
+            assertEquals(431, code)
+
+            // Many medium lines accumulating past the block cap -> 431 too
+            val manyHeaders = (1..40).joinToString("") { "X-Pad-$it: " + "B".repeat(700) + "\r\n" }
+            val (code2, _) = sendRawRequest(
+                port,
+                "GET /existing.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\n$manyHeaders\r\n\r\n"
+            )
+            assertEquals(431, code2)
+        } finally {
+            server?.stop()
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun testBasicAuthEnforcement() {
+        val tempDir = java.io.File.createTempFile("auth_test_", "").apply {
+            delete()
+            mkdir()
+        }
+        var server: LanWebServer? = null
+        try {
+            java.io.File(tempDir, "secret.txt").writeText("secret content")
+            val adapter = PosixFileShareAdapter(tempDir, "AuthDisk", isReadOnly = true)
+            val config = LanShareConfig(
+                volumeLabel = "AuthDisk",
+                isReadOnly = true,
+                port = 19187,
+                authEnabled = true,
+                username = "admin",
+                password = "s3cret"
+            )
+            server = LanWebServer(config, adapter)
+            val port = server.start()
+
+            // No credentials -> 401 with a WWW-Authenticate challenge
+            val (noAuthCode, noAuthHeaders) = sendRawRequest(
+                port,
+                "GET /secret.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\n\r\n"
+            )
+            assertEquals(401, noAuthCode)
+            assertTrue(noAuthHeaders.containsKey("www-authenticate"))
+
+            // Wrong password -> 401
+            val badAuth = "Basic " + java.util.Base64.getEncoder()
+                .encodeToString("admin:wrongpass".toByteArray())
+            val (badCode, _) = sendRawRequest(
+                port,
+                "GET /secret.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nAuthorization: $badAuth\r\n\r\n"
+            )
+            assertEquals(401, badCode)
+
+            // Correct credentials -> 200 with the file body
+            val goodAuth = "Basic " + java.util.Base64.getEncoder()
+                .encodeToString("admin:s3cret".toByteArray())
+            val (goodCode, _, goodBody) = sendRawRequestWithBody(
+                port,
+                "GET /secret.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nAuthorization: $goodAuth\r\n\r\n"
+            )
+            assertEquals(200, goodCode)
+            assertEquals("secret content", goodBody)
+
+            // WebDAV write methods must be equally protected: DELETE without auth -> 401
+            val (delCode, _) = sendRawRequest(
+                port,
+                "DELETE /secret.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\n\r\n"
+            )
+            assertEquals(401, delCode)
+            assertTrue(java.io.File(tempDir, "secret.txt").exists())
+        } finally {
+            server?.stop()
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun testEmptyPasswordAuthRejectsEverything() {
+        val tempDir = java.io.File.createTempFile("auth_empty_test_", "").apply {
+            delete()
+            mkdir()
+        }
+        var server: LanWebServer? = null
+        try {
+            java.io.File(tempDir, "data.txt").writeText("data")
+            val adapter = PosixFileShareAdapter(tempDir, "EmptyAuthDisk", isReadOnly = true)
+            val config = LanShareConfig(
+                volumeLabel = "EmptyAuthDisk",
+                isReadOnly = true,
+                port = 19188,
+                authEnabled = true,
+                username = "admin",
+                password = ""
+            )
+            server = LanWebServer(config, adapter)
+            val port = server.start()
+
+            // Anonymous -> 401
+            val (noAuthCode, _) = sendRawRequest(
+                port,
+                "GET /data.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\n\r\n"
+            )
+            assertEquals(401, noAuthCode)
+
+            // The classic footgun "admin:" (empty password) must ALSO be rejected
+            val emptyAuth = "Basic " + java.util.Base64.getEncoder()
+                .encodeToString("admin:".toByteArray())
+            val (emptyCode, _) = sendRawRequest(
+                port,
+                "GET /data.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nAuthorization: $emptyAuth\r\n\r\n"
+            )
+            assertEquals(401, emptyCode)
+        } finally {
+            server?.stop()
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun testWebPortalXssEscaping() {
+        val children = listOf(
+            ShareNode("<script>alert(1)</script>.mp4", "/<script>alert(1)</script>.mp4", false, 10L, 0L),
+            ShareNode("it's \"quoted\" & <tagged>.jpg", "/it's \"quoted\" & <tagged>.jpg", false, 10L, 0L)
+        )
+        val html = WebPortalGenerator.generateDirectoryHtml(
+            volumeLabel = "XssDrive",
+            currentPath = "/",
+            children = children,
+            isReadOnly = true
+        )
+
+        // Raw markup from file names must never reach the HTML...
+        assertFalse(html.contains("<script>alert"))
+        assertFalse(html.contains("it's \"quoted\""))
+        // ...only the escaped forms do
+        assertTrue(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;.mp4"))
+        assertTrue(html.contains("it&#39;s &quot;quoted&quot; &amp; &lt;tagged&gt;.jpg"))
+
+        // Inline JS handlers are gone entirely
+        assertFalse(html.contains("onclick="))
+        // Media items expose escaped data attributes consumed by the delegated listener
+        assertTrue(html.contains("data-preview=\"1\""))
+        assertTrue(html.contains("data-name=\"&lt;script&gt;alert(1)&lt;/script&gt;.mp4\""))
+        assertTrue(html.contains("data-ext=\"mp4\""))
+    }
+
     private fun sendRawRequest(port: Int, request: String): Pair<Int, Map<String, String>> {
         java.net.Socket("127.0.0.1", port).use { socket ->
             socket.soTimeout = 5000
@@ -356,6 +715,43 @@ class LanShareTest {
                 }
             }
             return Pair(statusCode, headers)
+        }
+    }
+
+    private fun sendRawRequestWithBody(port: Int, request: String): Triple<Int, Map<String, String>, String> {
+        java.net.Socket("127.0.0.1", port).use { socket ->
+            socket.soTimeout = 5000
+            val out = socket.getOutputStream()
+            val inp = socket.getInputStream().bufferedReader(Charsets.UTF_8)
+            out.write(request.toByteArray(Charsets.UTF_8))
+            out.flush()
+
+            val statusLine = inp.readLine() ?: return Triple(-1, emptyMap(), "")
+            val parts = statusLine.split(' ')
+            val statusCode = if (parts.size >= 2) parts[1].toIntOrNull() ?: -1 else -1
+
+            val headers = mutableMapOf<String, String>()
+            while (true) {
+                val line = inp.readLine() ?: break
+                if (line.isEmpty()) break
+                val colon = line.indexOf(':')
+                if (colon > 0) {
+                    headers[line.substring(0, colon).trim().lowercase()] = line.substring(colon + 1).trim()
+                }
+            }
+
+            val contentLength = headers["content-length"]?.toIntOrNull() ?: 0
+            val body = if (contentLength > 0) {
+                val buf = CharArray(contentLength)
+                var read = 0
+                while (read < contentLength) {
+                    val n = inp.read(buf, read, contentLength - read)
+                    if (n <= 0) break
+                    read += n
+                }
+                String(buf, 0, read)
+            } else ""
+            return Triple(statusCode, headers, body)
         }
     }
 }

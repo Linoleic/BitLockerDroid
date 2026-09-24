@@ -182,8 +182,8 @@ dependencies {
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
 
-    // Keystore-based key protection and Biometric Vault
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    // Biometric Vault (credential encryption uses Android Keystore directly
+    // in KeyGuardService; security-crypto was removed as unused)
     implementation("androidx.biometric:biometric:1.2.0-alpha05")
 
     // Non-root USB Mass Storage support
