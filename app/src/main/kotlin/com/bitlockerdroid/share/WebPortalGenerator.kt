@@ -149,6 +149,10 @@ object WebPortalGenerator {
             .modal-close { background: none; border: none; font-size: 1.5rem; color: var(--text); cursor: pointer; }
             .modal-body { display: flex; align-items: center; justify-content: center; padding: 16px; overflow: auto; }
             .modal-body video, .modal-body audio, .modal-body img { max-width: 100%; max-height: 70vh; }
+            .sec-warn { background: #fff3cd; color: #664d03; border: 1px solid #ffe69c; border-radius: 8px; padding: 9px 13px; font-size: 0.84rem; margin-bottom: 14px; line-height: 1.45; }
+            @media (prefers-color-scheme: dark) {
+                .sec-warn { background: #33270a; color: #ffe08a; border-color: #55430f; }
+            }
             @media (max-width: 640px) {
                 .date-col { display: none; }
                 .size-col { width: 80px; }
@@ -157,6 +161,9 @@ object WebPortalGenerator {
         """.trimIndent())
         sb.append("</style>\n</head>\n<body>\n")
         sb.append("<div class=\"container\">\n")
+
+        // Plaintext HTTP security notice
+        sb.append("    <div class=\"sec-warn\">⚠ Security notice: this portal is served over unencrypted HTTP — anyone on this network can observe the transferred files. Use only on trusted networks.</div>\n")
 
         // Header
         sb.append("<header>\n")
@@ -253,17 +260,22 @@ object WebPortalGenerator {
                 isTag(node.extension, "doc") -> "tag-doc"
                 else -> "tag-file"
             }
-            val tagLabel = if (node.isDirectory) "DIR" else node.extension.uppercase().take(4).ifEmpty { "FILE" }
+            val tagLabel = if (node.isDirectory) "DIR" else escapeHtml(node.extension.uppercase().take(4).ifEmpty { "FILE" })
 
             sb.append("    <tr class=\"file-row\" data-name=\"").append(escapeHtml(node.name.lowercase())).append("\">\n")
             sb.append("      <td>\n")
             if (node.isDirectory) {
                 sb.append("        <a class=\"item-link\" href=\"").append(itemUrl).append("\"><span class=\"tag ").append(tagClass).append("\">").append(tagLabel).append("</span> ").append(escapeHtml(node.name)).append("</a>\n")
             } else {
-                val previewAttr = if (isMedia) {
-                    " onclick=\"openPreview(event, '$itemUrl', '${node.extension.lowercase()}', '${escapeHtml(node.name)}')\""
+                // Media preview via data attributes + a single delegated listener:
+                // never embed dynamic values inside inline JavaScript
+                val previewAttrs = if (isMedia) {
+                    " data-preview=\"1\"" +
+                            " data-url=\"" + escapeHtml(itemUrl) + "\"" +
+                            " data-ext=\"" + escapeHtml(node.extension.lowercase()) + "\"" +
+                            " data-name=\"" + escapeHtml(node.name) + "\""
                 } else ""
-                sb.append("        <a class=\"item-link\" href=\"").append(itemUrl).append("\"").append(previewAttr).append("><span class=\"tag ").append(tagClass).append("\">").append(tagLabel).append("</span> ").append(escapeHtml(node.name)).append("</a>\n")
+                sb.append("        <a class=\"item-link\" href=\"").append(itemUrl).append("\"").append(previewAttrs).append("><span class=\"tag ").append(tagClass).append("\">").append(tagLabel).append("</span> ").append(escapeHtml(node.name)).append("</a>\n")
             }
             sb.append("      </td>\n")
             sb.append("      <td class=\"size-col\">").append(if (node.isDirectory) "-" else formatSize(node.size)).append("</td>\n")
@@ -302,30 +314,47 @@ object WebPortalGenerator {
                         row.style.display = (!q || name.indexOf(q) !== -1) ? '' : 'none';
                     });
                 });
+                // Delegated media-preview handler: values are read from data
+                // attributes via getAttribute, so no markup/script can be injected
+                // through file names
+                document.addEventListener('click', function(e) {
+                    var link = e.target && e.target.closest ? e.target.closest('a[data-preview]') : null;
+                    if (!link) return;
+                    openPreview(e, link.getAttribute('data-url'), link.getAttribute('data-ext'), link.getAttribute('data-name'));
+                });
                 function openPreview(e, url, ext, title) {
                     var videoExts = ['mp4','m4v','mkv','webm','mov','avi'];
                     var audioExts = ['mp3','flac','wav','ogg','m4a','aac'];
                     var imgExts = ['jpg','jpeg','png','gif','webp','svg','bmp'];
-                    var body = document.getElementById('modalBody');
-                    document.getElementById('modalTitle').textContent = title;
+                    var media = null;
                     if (videoExts.indexOf(ext) !== -1) {
-                        e.preventDefault();
-                        body.innerHTML = '<video controls autoplay src="' + url + '">Your browser does not support HTML5 video.</video>';
-                        document.getElementById('mediaModal').style.display = 'flex';
+                        media = document.createElement('video');
+                        media.controls = true;
+                        media.autoplay = true;
+                        media.textContent = 'Your browser does not support HTML5 video.';
                     } else if (audioExts.indexOf(ext) !== -1) {
-                        e.preventDefault();
-                        body.innerHTML = '<audio controls autoplay src="' + url + '">Your browser does not support HTML5 audio.</audio>';
-                        document.getElementById('mediaModal').style.display = 'flex';
+                        media = document.createElement('audio');
+                        media.controls = true;
+                        media.autoplay = true;
+                        media.textContent = 'Your browser does not support HTML5 audio.';
                     } else if (imgExts.indexOf(ext) !== -1) {
-                        e.preventDefault();
-                        body.innerHTML = '<img src="' + url + '" alt="' + title + '">';
-                        document.getElementById('mediaModal').style.display = 'flex';
+                        media = document.createElement('img');
+                        media.alt = title;
                     }
+                    if (!media) return;
+                    e.preventDefault();
+                    media.src = url;
+                    var body = document.getElementById('modalBody');
+                    body.textContent = '';
+                    body.appendChild(media);
+                    document.getElementById('modalTitle').textContent = title;
+                    document.getElementById('mediaModal').style.display = 'flex';
                 }
                 function closeModal(e) {
                     var modal = document.getElementById('mediaModal');
                     modal.style.display = 'none';
-                    document.getElementById('modalBody').innerHTML = '';
+                    var body = document.getElementById('modalBody');
+                    body.textContent = '';
                 }
             </script>
         """.trimIndent())

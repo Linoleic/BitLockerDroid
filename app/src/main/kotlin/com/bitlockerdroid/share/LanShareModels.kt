@@ -6,7 +6,9 @@ data class LanShareConfig(
     val volumeLabel: String = "",
     val port: Int = 8080,
     val isReadOnly: Boolean = true,
-    val authEnabled: Boolean = false,
+    // Secure default: sharing decrypted volume content requires authentication
+    // unless the user explicitly turns it off
+    val authEnabled: Boolean = true,
     val username: String = "admin",
     val password: String = ""
 )

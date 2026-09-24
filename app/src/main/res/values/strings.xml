@@ -392,4 +392,6 @@
     <string name="lan_share_bytes_served">Served: %1$s</string>
     <string name="lan_share_active_conns">Connections: %1$d</string>
     <string name="lan_share_no_ip_warning">No LAN IP detected. Please connect to Wi-Fi or turn on Mobile Hotspot</string>
+    <string name="lan_share_plaintext_warning">Unencrypted HTTP: anyone on this network can intercept the transferred files. Use only on trusted networks.</string>
+    <string name="lan_share_password_required">A non-empty password is required when access protection is enabled</string>
 </resources>

@@ -11,6 +11,7 @@ import java.net.Socket
 import java.net.SocketException
 import java.net.URLDecoder
 import java.net.URLEncoder
+import java.security.MessageDigest
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
@@ -22,6 +23,87 @@ class LanWebServer(
 ) {
     companion object {
         private const val TAG = "LanWebServer"
+        private const val LOCAL_IP_CACHE_MS = 5000L
+
+        @Volatile
+        private var cachedLocalIps: Set<String>? = null
+
+        @Volatile
+        private var localIpsFetchedAt = 0L
+
+        /** All IP addresses (v4/v6) currently assigned to this device, briefly cached. */
+        fun getLocalIpAddresses(): Set<String> {
+            val now = System.currentTimeMillis()
+            val cached = cachedLocalIps
+            if (cached != null && now - localIpsFetchedAt < LOCAL_IP_CACHE_MS) return cached
+            val ips = mutableSetOf<String>()
+            try {
+                val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+                for (intf in java.util.Collections.list(interfaces)) {
+                    for (addr in java.util.Collections.list(intf.inetAddresses)) {
+                        val host = addr.hostAddress ?: continue
+                        // IPv6 literals may carry a zone suffix such as fe80::1%wlan0
+                        ips.add(host.lowercase().substringBefore('%'))
+                    }
+                }
+            } catch (_: Throwable) {}
+            if (ips.isNotEmpty()) {
+                cachedLocalIps = ips
+                localIpsFetchedAt = now
+            }
+            return ips
+        }
+
+        /** Strips a trailing :port from a Host header value, keeping IPv6 literals intact. */
+        private fun stripPort(host: String): String {
+            val h = host.trim()
+            if (h.startsWith("[")) {
+                val end = h.indexOf(']')
+                return if (end > 0) h.substring(0, end + 1) else h
+            }
+            val first = h.indexOf(':')
+            val last = h.lastIndexOf(':')
+            // A single colon separates host and port; multiple colons mean a bare IPv6 literal
+            return if (first > 0 && first == last) h.substring(0, first) else h
+        }
+
+        /**
+         * DNS-rebinding defense: accept Host headers only when they point at this device
+         * (its own addresses, loopback) or at a private/link-local IP. Public hostnames
+         * and foreign addresses are rejected so a rebound domain cannot script this server.
+         */
+        fun isAllowedHost(hostHeader: String?): Boolean {
+            if (hostHeader.isNullOrBlank()) return true
+            val host = stripPort(hostHeader).lowercase().removePrefix("[").removeSuffix("]")
+            if (host.isEmpty()) return true
+            if (host == "localhost" || host == "127.0.0.1" || host == "::1") return true
+            if (getLocalIpAddresses().contains(host)) return true
+
+            val parts = host.split('.')
+            if (parts.size == 4 && parts.all { it.isNotEmpty() && it.length <= 3 && it.all { ch -> ch.isDigit() } }) {
+                val octets = parts.mapNotNull { it.toIntOrNull() }
+                if (octets.size == 4 && octets.all { it in 0..255 }) {
+                    val a = octets[0]
+                    val b = octets[1]
+                    return a == 127 || a == 10 ||
+                            (a == 172 && b in 16..31) || (a == 192 && b == 168) ||
+                            (a == 169 && b == 254) || (a == 100 && b in 64..127)
+                }
+                return false
+            }
+
+            if (host.contains(':')) {
+                // IPv6 literal: loopback was handled above; allow link-local (fe80::/10)
+                // and unique-local (fc00::/7) addresses
+                if (host.startsWith("fe8") || host.startsWith("fe9") ||
+                    host.startsWith("fea") || host.startsWith("feb")) return true
+                if (host.startsWith("fc") || host.startsWith("fd")) return true
+                return false
+            }
+
+            // Non-IP hostname: cannot be verified as targeting this device -> reject
+            return false
+        }
     }
 
     private fun logI(msg: String) {
@@ -136,6 +218,14 @@ class LanWebServer(
                 }
             }
 
+            // DNS-rebinding defense: verify the request targets this device before
+            // authentication and dispatch
+            if (!isAllowedHost(headers["host"])) {
+                logW("Rejected request with untrusted Host header: ${headers["host"]}")
+                sendError(output, 403, "Forbidden: Untrusted Host")
+                return
+            }
+
             // Authentication check
             if (config.authEnabled) {
                 val authHeader = headers["authorization"]
@@ -191,6 +281,8 @@ class LanWebServer(
 
     private fun isAuthorized(authHeader: String?): Boolean {
         if (authHeader == null || !authHeader.startsWith("Basic ", ignoreCase = true)) return false
+        // A server configured with an empty password must never authenticate anyone
+        if (config.password.isEmpty()) return false
         val base64Credentials = authHeader.substring(6).trim()
         val decoded = try {
             String(Base64.decode(base64Credentials, Base64.DEFAULT), Charsets.UTF_8)
@@ -201,7 +293,12 @@ class LanWebServer(
         if (colonIdx < 0) return false
         val user = decoded.substring(0, colonIdx)
         val pass = decoded.substring(colonIdx + 1)
-        return user == config.username && pass == config.password
+        // Constant-time comparison: don't leak credential content via timing
+        return MessageDigest.isEqual(
+            user.toByteArray(Charsets.UTF_8), config.username.toByteArray(Charsets.UTF_8)
+        ) && MessageDigest.isEqual(
+            pass.toByteArray(Charsets.UTF_8), config.password.toByteArray(Charsets.UTF_8)
+        )
     }
 
     private fun sanitizePath(path: String): String? {
@@ -214,6 +311,9 @@ class LanWebServer(
         if (p.length > 1 && p.endsWith('/')) p = p.dropLast(1)
         return p
     }
+
+    /** True when the (already sanitized) path refers to the volume root itself. */
+    private fun isVolumeRoot(path: String): Boolean = path.isEmpty() || path == "/"
 
     private fun handleOptions(output: OutputStream) {
         val sb = StringBuilder("HTTP/1.1 200 OK\r\n")
@@ -441,6 +541,10 @@ class LanWebServer(
             sendError(output, 403, "Read-Only Mode")
             return
         }
+        if (isVolumeRoot(path)) {
+            sendError(output, 403, "Forbidden: cannot write to the volume root")
+            return
+        }
 
         val existingNode = filesystem.resolveNode(path)
         val ifNoneMatch = headers["if-none-match"]
@@ -499,6 +603,10 @@ class LanWebServer(
             sendError(output, 403, "Read-Only Mode")
             return
         }
+        if (isVolumeRoot(path)) {
+            sendError(output, 403, "Forbidden: cannot delete the volume root")
+            return
+        }
         val ok = filesystem.delete(path)
         if (ok) {
             val resp = "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"
@@ -514,6 +622,10 @@ class LanWebServer(
             sendError(output, 403, "Read-Only Mode")
             return
         }
+        if (isVolumeRoot(path)) {
+            sendError(output, 403, "Forbidden: cannot move the volume root")
+            return
+        }
         val destinationUri = headers["destination"]
         if (destinationUri == null) {
             sendError(output, 400, "Bad Request: Missing Destination")
@@ -526,6 +638,10 @@ class LanWebServer(
         }
         val destPath = sanitizePath(destDecoded) ?: run {
             sendError(output, 400, "Invalid Destination")
+            return
+        }
+        if (isVolumeRoot(destPath)) {
+            sendError(output, 403, "Forbidden: invalid destination")
             return
         }
 
@@ -557,6 +673,10 @@ class LanWebServer(
             sendError(output, 403, "Read-Only Mode")
             return
         }
+        if (isVolumeRoot(path)) {
+            sendError(output, 403, "Forbidden: cannot copy the volume root")
+            return
+        }
         val destinationUri = headers["destination"]
         if (destinationUri == null) {
             sendError(output, 400, "Bad Request: Missing Destination")
@@ -569,6 +689,10 @@ class LanWebServer(
         }
         val destPath = sanitizePath(destDecoded) ?: run {
             sendError(output, 400, "Invalid Destination")
+            return
+        }
+        if (isVolumeRoot(destPath)) {
+            sendError(output, 403, "Forbidden: invalid destination")
             return
         }
 

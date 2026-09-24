@@ -280,6 +280,8 @@ class VolumeCoreShareAdapter(
 
     override fun delete(path: String): Boolean {
         if (isReadOnly) return false
+        // Never allow deleting the volume root itself
+        if (normalizePath(path) == "/") return false
         val writer = core.writer ?: return false
         val ok = try {
             writer.delete(path)
@@ -415,8 +417,12 @@ class PosixFileShareAdapter(
         val file = if (norm.isEmpty()) rootDir else File(rootDir, norm)
         val canonicalRoot = rootDir.canonicalPath
         val canonicalFile = file.canonicalPath
-        // Directory traversal protection:
-        if (!canonicalFile.startsWith(canonicalRoot)) return null
+        // Directory traversal protection. Compare against the root with a trailing
+        // separator so a sibling directory (/data/volx) cannot pass a /data/vol root
+        // check via plain string prefix; the root itself is still allowed through.
+        if (canonicalFile != canonicalRoot &&
+            !canonicalFile.startsWith(canonicalRoot + File.separator)
+        ) return null
         return file
     }
 
@@ -537,6 +543,8 @@ class PosixFileShareAdapter(
     override fun delete(path: String): Boolean {
         if (isReadOnly) return false
         val file = resolveFile(path) ?: return false
+        // Never allow deleting the volume root itself
+        if (file.canonicalPath == rootDir.canonicalPath) return false
         return if (file.isDirectory) file.deleteRecursively() else file.delete()
     }
 

@@ -57,9 +57,10 @@ fun LanShareDialog(
         }
     }
     var isReadOnly by remember { mutableStateOf(currentState?.isReadOnly ?: true) }
-    var authEnabled by remember { mutableStateOf(currentState?.authEnabled ?: false) }
+    var authEnabled by remember { mutableStateOf(currentState?.authEnabled ?: true) }
     var username by remember { mutableStateOf(currentState?.username?.ifEmpty { "admin" } ?: "admin") }
     var password by remember { mutableStateOf("") }
+    var showPasswordError by remember { mutableStateOf(false) }
 
     var guideExpanded by remember { mutableStateOf(false) }
 
@@ -206,6 +207,20 @@ fun LanShareDialog(
                                 )
                             }
                         }
+                    }
+
+                    // Unencrypted traffic warning (running state)
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = stringResource(R.string.lan_share_plaintext_warning),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.padding(10.dp)
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(14.dp))
@@ -422,9 +437,16 @@ fun LanShareDialog(
                                     Spacer(modifier = Modifier.height(8.dp))
                                     OutlinedTextField(
                                         value = password,
-                                        onValueChange = { password = it },
+                                        onValueChange = {
+                                            password = it
+                                            if (it.isNotBlank()) showPasswordError = false
+                                        },
                                         label = { Text(stringResource(R.string.lan_share_password)) },
                                         visualTransformation = PasswordVisualTransformation(),
+                                        isError = showPasswordError,
+                                        supportingText = if (showPasswordError) {
+                                            { Text(stringResource(R.string.lan_share_password_required)) }
+                                        } else null,
                                         singleLine = true,
                                         modifier = Modifier.fillMaxWidth()
                                     )
@@ -437,9 +459,33 @@ fun LanShareDialog(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     // Start Button
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = stringResource(R.string.lan_share_plaintext_warning),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     Button(
-                        onClick = {
+                        onClick = onClick@{
                             val port = portText.toIntOrNull() ?: 8080
+                            if (authEnabled && password.isBlank()) {
+                                showPasswordError = true
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.lan_share_password_required),
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                return@onClick
+                            }
                             val core = UnlockManager.get(volume.devicePath)
                             if (core != null) {
                                 val config = LanShareConfig(

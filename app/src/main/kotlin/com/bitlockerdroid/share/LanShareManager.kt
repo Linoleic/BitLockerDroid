@@ -56,6 +56,27 @@ object LanShareManager {
     @Synchronized
     fun startSharing(context: Context, config: LanShareConfig, core: DislockerCore): LanShareState {
         val guid = config.volumeGuid
+
+        // Security guard: an authenticated share must never run with an empty password
+        if (config.authEnabled && config.password.isEmpty()) {
+            Log.w(TAG, "Refusing to start LAN sharing for $guid: auth enabled but password is empty")
+            val failed = LanShareState(
+                isRunning = false,
+                volumeGuid = guid,
+                volumeLabel = config.volumeLabel,
+                devicePath = config.devicePath,
+                port = config.port,
+                isReadOnly = config.isReadOnly,
+                authEnabled = true,
+                username = config.username,
+                errorMessage = "Password required when access protection is enabled"
+            )
+            val updated = _shareStates.value.toMutableMap()
+            updated[guid] = failed
+            _shareStates.value = updated
+            return failed
+        }
+
         activeServers[guid]?.let { existing ->
             if (existing.isRunning) {
                 return getState(guid) ?: buildState(existing, config)
