@@ -20,6 +20,10 @@
     <string name="detected_unlock">解锁</string>
     <string name="detected_hint">检测到加密特征，点击解锁输入凭据。</string>
     <string name="no_detected_volumes">未检测到待解锁的 BitLocker 卷。</string>
+    <string name="unencrypted_volumes_header">未加密存储设备</string>
+    <string name="unencrypted_volume_status">系统已就绪 (未加密)</string>
+    <string name="open_in_file_manager">在文件管理器中打开</string>
+    <string name="unencrypted_hint">该存储设备未加密，由 Android 系统原生管理。</string>
     <string name="refresh">刷新</string>
     <string name="lock">安全锁定</string>
     <string name="open">打开</string>
@@ -357,4 +361,35 @@
     <string name="dump_failed_title">镜像导出失败</string>
     <string name="dump_failed_desc">【%1$s】导出失败: %2$s</string>
     <string name="dump_cancelled">已取消导出</string>
+
+    <!-- 局域网无线共享 -->
+    <string name="lan_share_title">局域网无线共享</string>
+    <string name="lan_share_channel_name">局域网文件共享服务</string>
+    <string name="lan_share_channel_desc">显示局域网共享服务的运行状态与快速停止操作</string>
+    <string name="lan_share_notif_title">正在共享: %1$s</string>
+    <string name="lan_share_notif_running">局域网共享服务运行中</string>
+    <string name="lan_share_stop_action">停止共享</string>
+    <string name="lan_share_start_action">开启共享</string>
+    <string name="lan_share_manage_action">管理</string>
+    <string name="lan_share_status_running">服务运行中</string>
+    <string name="lan_share_status_stopped">服务已停止</string>
+    <string name="lan_share_port_label">服务端口</string>
+    <string name="lan_share_readonly_label">只读保护 (推荐开启)</string>
+    <string name="lan_share_readonly_desc">禁止局域网客户端创建、修改或删除磁盘文件</string>
+    <string name="lan_share_auth_label">启用访问密码验证</string>
+    <string name="lan_share_auth_desc">客户端需输入账号密码才可访问 (HTTP Basic 认证)</string>
+    <string name="lan_share_username">用户名</string>
+    <string name="lan_share_password">密码</string>
+    <string name="lan_share_url_label">内网访问地址</string>
+    <string name="lan_share_copy_url">复制</string>
+    <string name="lan_share_copied">已复制访问地址到剪贴板</string>
+    <string name="lan_share_scan_qr">扫码直接打开网页门户</string>
+    <string name="lan_share_guide_title">全平台挂载与连接指南</string>
+    <string name="lan_share_guide_windows">Windows 资源管理器：打开“此电脑”->“映射网络驱动器”，输入：\n%1$s</string>
+    <string name="lan_share_guide_mac">macOS 访达：顶部“前往”->“连接服务器”，输入：\n%1$s</string>
+    <string name="lan_share_guide_ios">iOS / iPadOS 文件：右上角“…”->“连接服务器”，输入：\n%1$s</string>
+    <string name="lan_share_guide_browser">任意设备浏览器：输入上述 HTTP 链接即可网页极速互传与媒体点播</string>
+    <string name="lan_share_bytes_served">已传输: %1$s</string>
+    <string name="lan_share_active_conns">连接数: %1$d</string>
+    <string name="lan_share_no_ip_warning">未检测到可用局域网 IP，请先连接 Wi-Fi 或开启手机热点</string>
 </resources>

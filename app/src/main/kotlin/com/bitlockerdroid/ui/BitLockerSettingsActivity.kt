@@ -26,6 +26,7 @@ import com.bitlockerdroid.provider.BitLockerDocumentsProvider
 import com.bitlockerdroid.service.BitLockerDetector
 import com.bitlockerdroid.service.DetectedVolume
 import com.bitlockerdroid.service.KeyGuardService
+import com.bitlockerdroid.service.UnencryptedVolume
 import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.service.UnlockedVolume
 import com.bitlockerdroid.service.VirtualStorageMountManager
@@ -57,6 +58,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
 
     private var unlockedVolumesState = mutableStateListOf<UnlockedVolume>()
     private var detectedVolumesState = mutableStateListOf<DetectedVolume>()
+    private var unencryptedVolumesState = mutableStateListOf<UnencryptedVolume>()
     private var isRefreshingState = mutableStateOf(false)
     private var ejectingPathsState = mutableStateListOf<String>()
     private var showLogDialogState = mutableStateOf(false)
@@ -124,6 +126,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     initialTab = intent?.getIntExtra("tab", 0) ?: 0,
                     unlockedVolumes = unlockedVolumesState,
                     detectedVolumes = detectedVolumesState,
+                    unencryptedVolumes = unencryptedVolumesState,
                     isRefreshing = isRefreshingState.value,
                     showLogDialog = showLogDialogState.value,
                     logContent = logContentState.value,
@@ -201,6 +204,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
                         Toast.makeText(this, R.string.settings_credentials_cleared, Toast.LENGTH_SHORT).show()
                     },
                     onOpenVolume = { path -> openVolumeInFiles(path) },
+                    onOpenUnencrypted = { vol -> openUnencryptedVolumeInFiles(vol) },
                     onLockVolume = { path -> lockVolume(path) },
                     onUnlockDetected = { path -> promptUnlock(path) },
                     onBiometricUnlockDetected = { path -> biometricUnlock(path) },
@@ -266,11 +270,14 @@ class BitLockerSettingsActivity : FragmentActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             val currentUnlocked = UnlockManager.unlockedVolumes
             val currentDetected = UnlockManager.detectedVolumes
+            val currentUnencrypted = UnlockManager.unencryptedVolumes
             withContext(Dispatchers.Main) {
                 unlockedVolumesState.clear()
                 unlockedVolumesState.addAll(currentUnlocked)
                 detectedVolumesState.clear()
                 detectedVolumesState.addAll(currentDetected)
+                unencryptedVolumesState.clear()
+                unencryptedVolumesState.addAll(currentUnencrypted)
             }
         }
     }
@@ -428,6 +435,53 @@ class BitLockerSettingsActivity : FragmentActivity() {
         }
     }
 
+    private fun openUnencryptedVolumeInFiles(volume: UnencryptedVolume) {
+        LogFile.write("app", "open unencrypted volume requested for ${volume.mountPath} (uuid=${volume.uuid})")
+        val sm = getSystemService(Context.STORAGE_SERVICE) as? android.os.storage.StorageManager
+        val vol = sm?.storageVolumes?.firstOrNull { it.uuid == volume.uuid }
+        var launched = false
+        if (vol != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                val intent = vol.createOpenDocumentTreeIntent()
+                startActivity(intent)
+                launched = true
+            } catch (e: Exception) {
+                LogFile.write("app", "createOpenDocumentTreeIntent failed: ${e.message}")
+            }
+        }
+        if (!launched && volume.uuid != null) {
+            val rootUri = DocumentsContract.buildRootUri("com.android.externalstorage.documents", volume.uuid)
+            val knownPackages = listOf("com.google.android.documentsui", "com.android.documentsui")
+            for (pkg in knownPackages) {
+                val candidateIntent = Intent(Intent.ACTION_VIEW).apply {
+                    setPackage(pkg)
+                    setDataAndType(rootUri, DocumentsContract.Root.MIME_TYPE_ITEM)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                if (candidateIntent.resolveActivity(packageManager) != null) {
+                    startActivity(candidateIntent)
+                    launched = true
+                    break
+                }
+            }
+            if (!launched) {
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(rootUri, DocumentsContract.Root.MIME_TYPE_ITEM)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    startActivity(intent)
+                    launched = true
+                } catch (e: Exception) {
+                    LogFile.write("app", "open Root URI failed: ${e.message}")
+                }
+            }
+        }
+        if (!launched) {
+            Toast.makeText(this, R.string.open_failed, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun formatLogForDisplay(rawText: String): String {
         if (rawText.isBlank()) return ""
         val lines = rawText.lines()
@@ -503,6 +557,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
 fun MainAppScreen(
     unlockedVolumes: List<UnlockedVolume>,
     detectedVolumes: List<DetectedVolume>,
+    unencryptedVolumes: List<UnencryptedVolume> = emptyList(),
     isRefreshing: Boolean,
     showLogDialog: Boolean,
     logContent: String,
@@ -532,6 +587,7 @@ fun MainAppScreen(
     onDeleteCredential: (String) -> Unit,
     onClearAllCredentials: () -> Unit,
     onOpenVolume: (String) -> Unit,
+    onOpenUnencrypted: (UnencryptedVolume) -> Unit = {},
     onLockVolume: (String) -> Unit,
     onUnlockDetected: (String) -> Unit,
     onBiometricUnlockDetected: ((String) -> Unit)? = null,
@@ -640,12 +696,14 @@ fun MainAppScreen(
                 VolumesTabContent(
                     unlockedVolumes = unlockedVolumes,
                     detectedVolumes = detectedVolumes,
+                    unencryptedVolumes = unencryptedVolumes,
                     isRefreshing = isRefreshing,
                     ejectingPaths = ejectingPaths,
                     isVirtualMountSupported = useRootAccess && (rootSolution.isDeviceRooted || RootAccess.cachedHasSu == true),
                     onMountReadOnlyChange = onMountReadOnlyChange,
                     onRefreshAndScan = onRefreshAndScan,
                     onOpenVolume = onOpenVolume,
+                    onOpenUnencrypted = onOpenUnencrypted,
                     onLockVolume = onLockVolume,
                     onUnlockDetected = onUnlockDetected,
                     onBiometricUnlockDetected = onBiometricUnlockDetected

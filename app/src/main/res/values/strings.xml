@@ -18,6 +18,10 @@
     <string name="detected_unlock">Unlock</string>
     <string name="detected_hint">BitLocker drive detected. Tap Unlock to enter credentials.</string>
     <string name="no_detected_volumes">No locked BitLocker volumes detected.</string>
+    <string name="unencrypted_volumes_header">Unencrypted storage devices</string>
+    <string name="unencrypted_volume_status">System Ready (Unencrypted)</string>
+    <string name="open_in_file_manager">Open in Files</string>
+    <string name="unencrypted_hint">This device is not encrypted and is managed natively by Android.</string>
     <string name="refresh">Refresh</string>
     <string name="lock">Lock</string>
     <string name="open">Open</string>
@@ -357,4 +361,35 @@
     <string name="dump_failed_title">Image Export Failed</string>
     <string name="dump_failed_desc">%1$s export failed: %2$s</string>
     <string name="dump_cancelled">Export cancelled</string>
+
+    <!-- LAN Wireless Sharing -->
+    <string name="lan_share_title">LAN Wireless Sharing</string>
+    <string name="lan_share_channel_name">LAN File Sharing Service</string>
+    <string name="lan_share_channel_desc">Shows status and quick stop action for LAN file sharing</string>
+    <string name="lan_share_notif_title">Sharing: %1$s</string>
+    <string name="lan_share_notif_running">LAN file sharing active</string>
+    <string name="lan_share_stop_action">Stop Sharing</string>
+    <string name="lan_share_start_action">Start Sharing</string>
+    <string name="lan_share_manage_action">Manage</string>
+    <string name="lan_share_status_running">Server Running</string>
+    <string name="lan_share_status_stopped">Server Stopped</string>
+    <string name="lan_share_port_label">Port</string>
+    <string name="lan_share_readonly_label">Read-Only Protection (Recommended)</string>
+    <string name="lan_share_readonly_desc">Disallow creating, modifying, or deleting files over LAN</string>
+    <string name="lan_share_auth_label">Require Access Password</string>
+    <string name="lan_share_auth_desc">Clients must authenticate with username &amp; password (HTTP Basic Auth)</string>
+    <string name="lan_share_username">Username</string>
+    <string name="lan_share_password">Password</string>
+    <string name="lan_share_url_label">Local Access Addresses</string>
+    <string name="lan_share_copy_url">Copy</string>
+    <string name="lan_share_copied">Address copied to clipboard</string>
+    <string name="lan_share_scan_qr">Scan to open Web Portal</string>
+    <string name="lan_share_guide_title">Platform Mounting &amp; Connection Guide</string>
+    <string name="lan_share_guide_windows">Windows Explorer: Open This PC -> Map Network Drive, enter:\n%1$s</string>
+    <string name="lan_share_guide_mac">macOS Finder: Menu Go -> Connect to Server, enter:\n%1$s</string>
+    <string name="lan_share_guide_ios">iOS / iPadOS Files: Tap \'...\' -> Connect to Server, enter:\n%1$s</string>
+    <string name="lan_share_guide_browser">Any Browser: Enter the HTTP address above to browse, download, and stream media</string>
+    <string name="lan_share_bytes_served">Served: %1$s</string>
+    <string name="lan_share_active_conns">Connections: %1$d</string>
+    <string name="lan_share_no_ip_warning">No LAN IP detected. Please connect to Wi-Fi or turn on Mobile Hotspot</string>
 </resources>

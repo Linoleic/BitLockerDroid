@@ -15,6 +15,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.bitlockerdroid.R
 import com.bitlockerdroid.service.DetectedVolume
+import com.bitlockerdroid.service.UnencryptedVolume
 import com.bitlockerdroid.service.UnlockedVolume
 import com.bitlockerdroid.service.VirtualStorageMountManager
 
@@ -23,12 +24,14 @@ import com.bitlockerdroid.service.VirtualStorageMountManager
 fun VolumesTabContent(
     unlockedVolumes: List<UnlockedVolume>,
     detectedVolumes: List<DetectedVolume>,
+    unencryptedVolumes: List<UnencryptedVolume> = emptyList(),
     isRefreshing: Boolean,
     ejectingPaths: Set<String> = emptySet(),
     isVirtualMountSupported: Boolean = false,
     onMountReadOnlyChange: (Boolean) -> Unit,
     onRefreshAndScan: () -> Unit,
     onOpenVolume: (String) -> Unit,
+    onOpenUnencrypted: (UnencryptedVolume) -> Unit = {},
     onLockVolume: (String) -> Unit,
     onUnlockDetected: (String) -> Unit,
     onBiometricUnlockDetected: ((String) -> Unit)? = null
@@ -40,7 +43,7 @@ fun VolumesTabContent(
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
 
-        val hasContent = unlockedVolumes.isNotEmpty() || detectedVolumes.isNotEmpty()
+        val hasContent = unlockedVolumes.isNotEmpty() || detectedVolumes.isNotEmpty() || unencryptedVolumes.isNotEmpty()
 
         if (!hasContent) {
             EmptyStateView(
@@ -134,6 +137,40 @@ fun VolumesTabContent(
                                 onOpen = onOpen,
                                 onLock = onLock,
                                 isEjecting = ejectingPaths.contains(volume.devicePath)
+                            )
+                        }
+                    }
+                }
+
+                // Section 3: Unencrypted Volumes
+                if (unencryptedVolumes.isNotEmpty()) {
+                    item(key = "header_unencrypted", contentType = "header") {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .widthIn(max = 720.dp)
+                        ) {
+                            SectionHeader(
+                                title = stringResource(R.string.unencrypted_volumes_header),
+                                count = unencryptedVolumes.size,
+                                isWarning = false
+                            )
+                        }
+                    }
+                    items(
+                        items = unencryptedVolumes,
+                        key = { "unencrypted_${it.id}" },
+                        contentType = { "unencrypted_volume" }
+                    ) { unenc ->
+                        val onOpen = remember(unenc.id) { { onOpenUnencrypted(unenc) } }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .widthIn(max = 720.dp)
+                        ) {
+                            UnencryptedVolumeCard(
+                                volume = unenc,
+                                onOpen = onOpen
                             )
                         }
                     }

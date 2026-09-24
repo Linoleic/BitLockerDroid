@@ -180,6 +180,20 @@ object UnlockManager {
             result
         }
 
+    private val unencrypted = mutableListOf<UnencryptedVolume>()
+
+    val unencryptedVolumes: List<UnencryptedVolume>
+        get() = synchronized(lock) {
+            unencrypted.toList()
+        }
+
+    fun updateUnencryptedVolumes(volumes: List<UnencryptedVolume>) {
+        synchronized(lock) {
+            unencrypted.clear()
+            unencrypted.addAll(volumes)
+        }
+    }
+
     val activeSessions: List<DislockerCore>
         get() = synchronized(lock) {
             sessions.values.toList()
@@ -194,6 +208,36 @@ object UnlockManager {
         return false
     }
 
+    /** True if an active decrypted session exists for this volume GUID or device path and hardware is still connected. */
+    fun isVolumeSessionActive(guidOrDevicePath: String?): Boolean {
+        if (guidOrDevicePath.isNullOrBlank()) return false
+        val session: DislockerCore? = synchronized(lock) {
+            sessions[guidOrDevicePath] ?: sessions.values.firstOrNull {
+                it.volumeGuid.equals(guidOrDevicePath, ignoreCase = true) ||
+                it.devicePath == guidOrDevicePath
+            }
+        }
+        if (session == null) return false
+
+        // For non-root USB Host mode, check physical USB connection directly
+        if (session.devicePath.startsWith("usb://")) {
+            val parts = session.devicePath.removePrefix("usb://").split('/')
+            val deviceId = parts.firstOrNull()?.toIntOrNull()
+            if (deviceId != null) {
+                val app = com.bitlockerdroid.util.ContextProvider.app
+                val usbManager = app?.getSystemService(android.hardware.usb.UsbManager::class.java)
+                val deviceStillAttached = usbManager?.deviceList?.values?.any { it.deviceId == deviceId } == true
+                if (!deviceStillAttached) {
+                    Log.i(TAG, "isVolumeSessionActive: UsbDevice $deviceId physically disconnected")
+                    closeSessionIfPresent(session.devicePath)
+                    return false
+                }
+            }
+        }
+
+        return true
+    }
+
     fun closeSessionIfPresent(devicePath: String) {
         val app = com.bitlockerdroid.util.ContextProvider.app
         // Remove under the lock, but close outside it: close() flushes and
@@ -203,6 +247,7 @@ object UnlockManager {
         removed?.close()
         if (removed != null) {
             app?.let {
+                com.bitlockerdroid.share.LanShareManager.stopSharingForDevice(it, devicePath, removed.volumeGuid)
                 BitLockerCoreService.updateForegroundState(it)
                 com.bitlockerdroid.provider.BitLockerDocumentsProvider.notifyRootsChanged(it)
             }
@@ -483,6 +528,15 @@ object UnlockManager {
         }
         sessionCredentials.remove(devicePath)
 
+        // 0. Stop any active LAN sharing for this volume
+        try {
+            app?.let { appCtx ->
+                com.bitlockerdroid.share.LanShareManager.stopSharingForDevice(appCtx, devicePath, stale?.volumeGuid)
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "LAN share stop warning for $devicePath", e)
+        }
+
         // 1. Unmount POSIX FUSE mount first so external apps can no longer issue IO
         try {
             VirtualStorageMountManager.unmount(devicePath)
@@ -560,6 +614,9 @@ object UnlockManager {
         try {
             VirtualStorageMountManager.unmountAll()
         } catch (_: Throwable) {}
+        com.bitlockerdroid.util.ContextProvider.app?.let { app ->
+            com.bitlockerdroid.share.LanShareManager.stopAll(app)
+        }
         return results
     }
 
@@ -607,6 +664,9 @@ object UnlockManager {
         toClose.forEach { (path, core) ->
             core.close()
             VirtualStorageMountManager.unmount(path)
+            com.bitlockerdroid.util.ContextProvider.app?.let { app ->
+                com.bitlockerdroid.share.LanShareManager.stopSharingForDevice(app, path, core.volumeGuid)
+            }
         }
         val closedAny = toClose.isNotEmpty()
         com.bitlockerdroid.util.ContextProvider.app?.let { app ->
@@ -624,16 +684,25 @@ object UnlockManager {
 
     /** Reset state when a USB detachment is reported. */
     fun onUsbDetached() {
+        Log.i(TAG, "onUsbDetached: USB detachment reported, cleaning up sessions and share states")
         VirtualStorageMountManager.unmountAll()
         com.bitlockerdroid.util.DeviceIdentity.clearCache()
-        com.bitlockerdroid.util.ContextProvider.app?.let { app ->
-            val nm = app.getSystemService(NotificationManager::class.java)
-            nm?.cancelAll()
-        }
+        val app = com.bitlockerdroid.util.ContextProvider.app
         try {
             val nodes = BitLockerDetector.enumerateVoldNodes()
             forgetDetectedMissing(nodes)
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.w(TAG, "forgetDetectedMissing error during onUsbDetached", e)
+        }
+        app?.let {
+            val hasActiveSessions = synchronized(lock) { sessions.isNotEmpty() }
+            if (!hasActiveSessions) {
+                com.bitlockerdroid.share.LanShareManager.stopAll(it)
+            }
+            val nm = it.getSystemService(NotificationManager::class.java)
+            nm?.cancelAll()
+            BitLockerCoreService.updateForegroundState(it)
+        }
     }
 
     /** Registers an already-opened core session (recovery-key path). */
@@ -946,4 +1015,15 @@ data class DetectedVolume(
     val recoveryKeyId: String? = null,
     val deviceName: String = "",
     val capacity: Long = 0L
+)
+
+/** An unencrypted storage volume (e.g. FAT32, exFAT) managed natively by Android OS. */
+data class UnencryptedVolume(
+    val id: String,
+    val label: String,
+    val fsType: String = "",
+    val mountPath: String = "",
+    val totalBytes: Long = 0L,
+    val freeBytes: Long = 0L,
+    val uuid: String? = null
 )

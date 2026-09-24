@@ -21,6 +21,7 @@ import com.bitlockerdroid.util.LogFile
 import me.jahnen.libaums.core.driver.scsi.ScsiBlockDevice
 import me.jahnen.libaums.core.usb.UsbCommunication
 import me.jahnen.libaums.core.usb.UsbCommunicationFactory
+import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
@@ -89,7 +90,127 @@ object UsbStorageManager {
     /** Active worker sessions by devicePath */
     private val activeSessions = ConcurrentHashMap<String, UsbSession>()
 
+    /** Devices probed or system-mounted and confirmed to contain NO BitLocker partitions. Keyed by "vid:pid" */
+    private val nonBitLockerDeviceKeys = ConcurrentHashMap.newKeySet<String>()
+
+    /** Devices where USB permission was denied by the user. Keyed by "vid:pid" */
+    private val deniedDeviceKeys = ConcurrentHashMap.newKeySet<String>()
+
     private val scanLock = Any()
+
+    /**
+     * Checks whether this UsbDevice is currently mounted by Android system (vold)
+     * as an unencrypted volume (e.g. FAT32, exFAT, etc.).
+     * If mounted by system, it is guaranteed to be an unencrypted drive, and we must
+     * NOT request USB host permission or claim the interface.
+     */
+    fun isDeviceMountedBySystem(context: Context, device: UsbDevice): Boolean {
+        val sm = context.getSystemService(Context.STORAGE_SERVICE) as? android.os.storage.StorageManager ?: return false
+        val mountedRemovableVolumes = sm.storageVolumes.filter {
+            it.isRemovable && (it.state == android.os.Environment.MEDIA_MOUNTED || it.state == android.os.Environment.MEDIA_MOUNTED_READ_ONLY)
+        }
+        if (mountedRemovableVolumes.isEmpty()) {
+            return false
+        }
+
+        val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
+        val massStorageDevices = usbManager?.deviceList?.values?.filter { isMassStorageDevice(it) } ?: emptyList()
+
+        if (massStorageDevices.size <= 1) {
+            LogFile.write("app", "isDeviceMountedBySystem: single USB mass storage device matches mounted volume (${device.deviceName})")
+            return true
+        }
+
+        // Multiple USB devices connected: correlate via sysfs
+        try {
+            val devParts = device.deviceName.split('/')
+            if (devParts.size >= 2) {
+                val targetBus = devParts[devParts.size - 2].toIntOrNull()
+                val targetDev = devParts.last().toIntOrNull()
+
+                val sysUsbDir = File("/sys/bus/usb/devices")
+                if (sysUsbDir.exists() && sysUsbDir.isDirectory) {
+                    val entries = sysUsbDir.listFiles() ?: emptyArray()
+                    for (entry in entries) {
+                        val busFile = File(entry, "busnum")
+                        val devFile = File(entry, "devnum")
+                        if (busFile.exists() && devFile.exists()) {
+                            val b = busFile.readText().trim().toIntOrNull()
+                            val d = devFile.readText().trim().toIntOrNull()
+                            if (b == targetBus && d == targetDev) {
+                                if (hasMountedBlockUnderSysfs(entry)) {
+                                    LogFile.write("app", "isDeviceMountedBySystem: sysfs matched mounted block device for ${device.deviceName}")
+                                    return true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            LogFile.write("app", "isDeviceMountedBySystem sysfs check error: ${e.message}")
+        }
+
+        val devDesc = "${device.manufacturerName.orEmpty()} ${device.productName.orEmpty()}".trim().lowercase()
+        for (vol in mountedRemovableVolumes) {
+            val vDesc = vol.getDescription(context)?.trim()?.lowercase().orEmpty()
+            if (vDesc.isNotEmpty() && devDesc.isNotEmpty() && (devDesc.contains(vDesc) || vDesc.contains(devDesc))) {
+                LogFile.write("app", "isDeviceMountedBySystem: description matched '$vDesc' with '$devDesc'")
+                return true
+            }
+        }
+
+        return true
+    }
+
+    private fun hasMountedBlockUnderSysfs(usbDir: File): Boolean {
+        val mountedMinors = mutableSetOf<String>()
+        try {
+            File("/proc/mounts").forEachLine { line ->
+                if (line.contains("/mnt/media_rw/") || line.contains("/storage/")) {
+                    val first = line.substringBefore(' ').trim()
+                    if (first.contains("public:")) {
+                        val minor = first.substringAfter("public:").replace(',', ':')
+                        mountedMinors.add(minor)
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        fun checkDir(dir: File, depth: Int): Boolean {
+            if (depth > 6) return false
+            val files = dir.listFiles() ?: return false
+            for (f in files) {
+                if (f.name == "block" && f.isDirectory) {
+                    val blockDirs = f.listFiles() ?: continue
+                    for (b in blockDirs) {
+                        val devFile = File(b, "dev")
+                        if (devFile.exists() && mountedMinors.contains(devFile.readText().trim())) {
+                            return true
+                        }
+                        val subFiles = b.listFiles() ?: continue
+                        for (sub in subFiles) {
+                            val subDev = File(sub, "dev")
+                            if (subDev.exists() && mountedMinors.contains(subDev.readText().trim())) {
+                                return true
+                            }
+                        }
+                    }
+                } else if (f.isDirectory && !f.name.startsWith("ep_")) {
+                    if (checkDir(f, depth + 1)) return true
+                }
+            }
+            return false
+        }
+
+        return checkDir(usbDir, 0)
+    }
+
+    fun onPermissionDenied(device: UsbDevice) {
+        val devKey = "${device.vendorId}:${device.productId}"
+        LogFile.write("app", "UsbStorageManager: USB permission denied by user for $devKey (${device.deviceName})")
+        deniedDeviceKeys.add(devKey)
+    }
 
     /**
      * Checks if a UsbDevice implements USB Mass Storage Class (BOT).
@@ -169,21 +290,43 @@ object UsbStorageManager {
         }
 
         val results = mutableListOf<UsbPartitionInfo>()
+        val currentKeys = deviceList.values.filter { isMassStorageDevice(it) }.map { "${it.vendorId}:${it.productId}" }.toSet()
         val currentDeviceIds = deviceList.values.filter { isMassStorageDevice(it) }.map { it.deviceId }.toSet()
 
         // Clean up detached devices
-        for ((devId, holder) in activeDevices) {
+        for ((devId, _) in activeDevices) {
             if (!currentDeviceIds.contains(devId)) {
                 LogFile.write("app", "UsbStorageManager: device $devId detached, cleaning up")
                 closeDevice(devId)
             }
         }
+        nonBitLockerDeviceKeys.retainAll(currentKeys)
+        deniedDeviceKeys.retainAll(currentKeys)
 
         for (device in deviceList.values) {
             if (!isMassStorageDevice(device)) continue
 
+            val devKey = "${device.vendorId}:${device.productId}"
+
+            // If already verified to be an unencrypted/non-BitLocker drive, leave it to the Android OS
+            if (nonBitLockerDeviceKeys.contains(devKey)) {
+                continue
+            }
+
+            // If user previously denied USB permission for this drive, do not ask again
+            if (deniedDeviceKeys.contains(devKey)) {
+                continue
+            }
+
+            // Check if Android OS has already mounted this device as an unencrypted volume
+            if (isDeviceMountedBySystem(context, device)) {
+                LogFile.write("app", "UsbStorageManager: device ${device.deviceName} ($devKey) is mounted by system as unencrypted volume. Leaving to OS.")
+                nonBitLockerDeviceKeys.add(devKey)
+                continue
+            }
+
             if (!usbManager.hasPermission(device)) {
-                LogFile.write("app", "UsbStorageManager: device ${device.deviceName} has no permission, requesting...")
+                LogFile.write("app", "UsbStorageManager: device ${device.deviceName} ($devKey) has no permission, requesting...")
                 requestPermission(context, device)
                 continue
             }
@@ -198,6 +341,14 @@ object UsbStorageManager {
 
                     // Discover partitions on this USB drive
                     val partitions = discoverPartitions(holder)
+
+                    if (partitions.isEmpty()) {
+                        LogFile.write("app", "UsbStorageManager: device ${device.deviceName} ($devKey) has NO BitLocker partitions. Releasing interface so Android OS can mount it.")
+                        nonBitLockerDeviceKeys.add(devKey)
+                        closeDevice(device.deviceId)
+                        return@synchronized
+                    }
+
                     holder.partitions.clear()
                     holder.partitions.addAll(partitions)
 
@@ -509,15 +660,24 @@ object UsbStorageManager {
      * Handles physical detachment of a USB device.
      */
     fun onDeviceDetached(device: UsbDevice) {
+        val devKey = "${device.vendorId}:${device.productId}"
+        LogFile.write("app", "UsbStorageManager: onDeviceDetached $devKey (${device.deviceName})")
+        nonBitLockerDeviceKeys.remove(devKey)
+        deniedDeviceKeys.remove(devKey)
         closeDevice(device.deviceId)
     }
 
     private fun closeDevice(deviceId: Int) {
+        val app = com.bitlockerdroid.util.ContextProvider.app
         // Close sessions for this device
         val toRemoveSessions = activeSessions.filter { it.key.startsWith("usb://$deviceId/") }
         for ((path, session) in toRemoveSessions) {
             session.close()
             activeSessions.remove(path)
+            app?.let {
+                com.bitlockerdroid.share.LanShareManager.stopSharingForDevice(it, path, null)
+            }
+            UnlockManager.closeSessionIfPresent(path)
         }
 
         // Forget partitions

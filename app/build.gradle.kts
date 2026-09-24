@@ -15,8 +15,8 @@ android {
         applicationId = "com.bitlockerdroid"
         minSdk = 33
         targetSdk = 34
-        versionCode = 6
-        versionName = "1.0.3"
+        versionCode = 7
+        versionName = "1.0.4"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -133,6 +133,10 @@ android {
         jvmTarget = "17"
     }
 
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     buildFeatures {
         compose = true
         viewBinding = true
@@ -184,6 +188,9 @@ dependencies {
 
     // Non-root USB Mass Storage support
     implementation("me.jahnen.libaums:core:0.10.0")
+
+    // QR Code generation for LAN Wireless Sharing
+    implementation("com.google.zxing:core:3.5.3")
 
     // Unit testing
     testImplementation("junit:junit:4.13.2")

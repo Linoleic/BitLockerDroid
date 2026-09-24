@@ -73,9 +73,9 @@ object BitLockerDetector {
             LogFile.write("app", "scanAndDetect: running in non-root USB Host mode (useRoot=$useRoot)")
         }
 
-        // Only scan USB devices via non-root USB Host stack if Root is disabled or found 0 block devices
+        // Only scan USB devices via non-root USB Host stack if Root is disabled
         val presentUsbNodes = mutableListOf<String>()
-        if (!useRoot || presentBlockNodes.isEmpty()) {
+        if (!useRoot) {
             try {
                 val usbParts = com.bitlockerdroid.usb.UsbStorageManager.scanUsbDevices(context)
                 for (p in usbParts) {
@@ -97,7 +97,11 @@ object BitLockerDetector {
         val allPresentNodes = presentBlockNodes + presentUsbNodes
         UnlockManager.forgetDetectedMissing(allPresentNodes)
 
-        LogFile.write("app", "scanAndDetect done, BitLocker found=$found")
+        // Scan for unencrypted volumes mounted natively by Android OS
+        val unencryptedVols = scanUnencryptedVolumes(context)
+        UnlockManager.updateUnencryptedVolumes(unencryptedVols)
+
+        LogFile.write("app", "scanAndDetect done, BitLocker found=$found, unencrypted found=${unencryptedVols.size}")
         return found
     }
 
@@ -352,5 +356,63 @@ object BitLockerDetector {
         if (sector0.size < 11) return false
         val sig = String(sector0, 3, 8, Charsets.US_ASCII)
         return sig == "-FVE-FS-" || sig == "MSWIN4.1"
+    }
+
+    /**
+     * Scans for standard unencrypted removable volumes mounted natively by Android OS.
+     */
+    fun scanUnencryptedVolumes(context: android.content.Context): List<UnencryptedVolume> {
+        val results = mutableListOf<UnencryptedVolume>()
+        val sm = context.getSystemService(android.content.Context.STORAGE_SERVICE) as? android.os.storage.StorageManager ?: return emptyList()
+
+        val mountsMap = mutableMapOf<String, String>()
+        try {
+            java.io.File("/proc/mounts").forEachLine { line ->
+                val parts = line.split("\\s+".toRegex())
+                if (parts.size >= 3) {
+                    val mountPoint = parts[1]
+                    val fs = parts[2]
+                    if (mountPoint.startsWith("/storage/") || mountPoint.startsWith("/mnt/media_rw/")) {
+                        mountsMap[mountPoint] = fs
+                        val uuid = mountPoint.substringAfterLast('/')
+                        mountsMap["/storage/$uuid"] = fs
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        for (vol in sm.storageVolumes) {
+            if (!vol.isRemovable) continue
+            if (vol.state != android.os.Environment.MEDIA_MOUNTED && vol.state != android.os.Environment.MEDIA_MOUNTED_READ_ONLY) continue
+
+            val uuid = vol.uuid ?: continue
+            val dir = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                vol.directory
+            } else {
+                java.io.File("/storage/$uuid")
+            } ?: java.io.File("/storage/$uuid")
+
+            val mountPath = dir.absolutePath
+            val desc = vol.getDescription(context)
+            val label = if (!desc.isNullOrBlank()) desc else "U盘 ($uuid)"
+            val fsType = mountsMap[mountPath] ?: mountsMap["/storage/$uuid"] ?: ""
+
+            val total = try { dir.totalSpace } catch (_: Exception) { 0L }
+            val free = try { dir.freeSpace } catch (_: Exception) { 0L }
+
+            results.add(
+                UnencryptedVolume(
+                    id = uuid,
+                    label = label,
+                    fsType = fsType.uppercase(),
+                    mountPath = mountPath,
+                    totalBytes = total,
+                    freeBytes = free,
+                    uuid = uuid
+                )
+            )
+            LogFile.write("app", "scanUnencryptedVolumes: found unencrypted volume -> $label ($fsType) at $mountPath, total=$total, free=$free")
+        }
+        return results
     }
 }

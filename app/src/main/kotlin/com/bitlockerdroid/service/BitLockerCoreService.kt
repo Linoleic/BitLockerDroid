@@ -21,9 +21,17 @@ class BitLockerCoreService : Service() {
         override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
             val action = intent?.action ?: return
             LogFile.write("app", "usbReceiver triggered: action=$action")
-            if (action == android.hardware.usb.UsbManager.ACTION_USB_DEVICE_DETACHED) {
-                @Suppress("DEPRECATION")
-                val dev = intent.getParcelableExtra<android.hardware.usb.UsbDevice>(android.hardware.usb.UsbManager.EXTRA_DEVICE)
+            if (action == android.hardware.usb.UsbManager.ACTION_USB_DEVICE_DETACHED ||
+                action == Intent.ACTION_MEDIA_BAD_REMOVAL ||
+                action == Intent.ACTION_MEDIA_UNMOUNTED ||
+                action == Intent.ACTION_MEDIA_REMOVED ||
+                action == Intent.ACTION_MEDIA_EJECT) {
+                val dev = if (android.os.Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_DEVICE, android.hardware.usb.UsbDevice::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_DEVICE)
+                }
                 if (dev != null) {
                     com.bitlockerdroid.usb.UsbStorageManager.onDeviceDetached(dev)
                 }
@@ -31,11 +39,24 @@ class BitLockerCoreService : Service() {
             } else if (action == com.bitlockerdroid.usb.UsbStorageManager.ACTION_USB_PERMISSION) {
                 val granted = intent.getBooleanExtra(android.hardware.usb.UsbManager.EXTRA_PERMISSION_GRANTED, false)
                 LogFile.write("app", "usbReceiver: USB permission granted=$granted")
+                val dev = if (android.os.Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_DEVICE, android.hardware.usb.UsbDevice::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_DEVICE)
+                }
+                if (!granted) {
+                    if (dev != null) {
+                        com.bitlockerdroid.usb.UsbStorageManager.onPermissionDenied(dev)
+                    }
+                    return
+                }
             }
+            val delayMs = if (action == android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED) 1200L else 500L
             Thread({
                 try {
                     android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-                    Thread.sleep(800)
+                    Thread.sleep(delayMs)
                 } catch (_: Exception) {}
                 context?.let {
                     BitLockerDetector.scanAndDetect(it)
@@ -60,11 +81,22 @@ class BitLockerCoreService : Service() {
             addAction(android.hardware.usb.UsbManager.ACTION_USB_DEVICE_DETACHED)
             addAction(com.bitlockerdroid.usb.UsbStorageManager.ACTION_USB_PERMISSION)
         }
+        val mediaFilter = android.content.IntentFilter().apply {
+            addAction(Intent.ACTION_MEDIA_MOUNTED)
+            addAction(Intent.ACTION_MEDIA_CHECKING)
+            addAction(Intent.ACTION_MEDIA_BAD_REMOVAL)
+            addAction(Intent.ACTION_MEDIA_UNMOUNTED)
+            addAction(Intent.ACTION_MEDIA_REMOVED)
+            addAction(Intent.ACTION_MEDIA_EJECT)
+            addDataScheme("file")
+        }
         try {
             if (android.os.Build.VERSION.SDK_INT >= 33) {
                 registerReceiver(usbReceiver, filter, android.content.Context.RECEIVER_EXPORTED)
+                registerReceiver(usbReceiver, mediaFilter, android.content.Context.RECEIVER_EXPORTED)
             } else {
                 registerReceiver(usbReceiver, filter)
+                registerReceiver(usbReceiver, mediaFilter)
             }
         } catch (e: Exception) {
             LogFile.write("app", "failed to register usbReceiver: ${e.message}")

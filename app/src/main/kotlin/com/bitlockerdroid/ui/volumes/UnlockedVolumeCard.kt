@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,6 +62,8 @@ fun UnlockedVolumeCard(
     var detailsExpanded by remember { mutableStateOf(false) }
     var showBenchmarkDialog by remember { mutableStateOf(false) }
     var showDisasterDialog by remember { mutableStateOf(false) }
+    var showLanShareDialog by remember { mutableStateOf(false) }
+    val shareStates by com.bitlockerdroid.share.LanShareManager.shareStates.collectAsState()
     var showRepairConfirm by remember { mutableStateOf(false) }
     var showStandaloneDiagnostic by remember { mutableStateOf(false) }
     var isRepairing by remember { mutableStateOf(false) }
@@ -347,6 +350,102 @@ fun UnlockedVolumeCard(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(stringResource(R.string.virtual_mount_to_storage))
+                }
+            }
+
+            // LAN Wireless Sharing Section (Card-level, no need to expand)
+            val effectiveShareGuid = volume.guid ?: volume.devicePath
+            val shareState = shareStates[effectiveShareGuid]
+            val isVolumeSharing = shareState?.isRunning == true
+
+            Spacer(modifier = Modifier.height(8.dp))
+            if (isVolumeSharing) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.lan_share_title),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = shareState.primaryUrl,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp
+                                ),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        TextButton(
+                            onClick = { showLanShareDialog = true },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            modifier = Modifier.height(28.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.lan_share_manage_action),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        TextButton(
+                            onClick = {
+                                com.bitlockerdroid.share.LanShareManager.stopSharing(context, effectiveShareGuid)
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            modifier = Modifier.height(28.dp),
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.lan_share_stop_action),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        IconButton(
+                            onClick = {
+                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                cm?.setPrimaryClip(ClipData.newPlainText("Share URL", shareState.primaryUrl))
+                                Toast.makeText(context, R.string.lan_share_copied, Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_content_copy),
+                                contentDescription = stringResource(R.string.lan_share_copy_url),
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            } else {
+                OutlinedButton(
+                    onClick = { showLanShareDialog = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_lan_share),
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(stringResource(R.string.lan_share_title))
                 }
             }
 
@@ -871,6 +970,13 @@ fun UnlockedVolumeCard(
             sessionHandle = handle,
             isUnlocked = true,
             onDismiss = { showDisasterDialog = false }
+        )
+    }
+
+    if (showLanShareDialog) {
+        com.bitlockerdroid.ui.dialogs.LanShareDialog(
+            volume = volume,
+            onDismiss = { showLanShareDialog = false }
         )
     }
 
