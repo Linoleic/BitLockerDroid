@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL%20v2.0-blue.svg" alt="License: GPL-2.0"></a>
-  <img src="https://img.shields.io/badge/Android-8.0--17-blue.svg" alt="Android 8.0 ~ 17">
+  <img src="https://img.shields.io/badge/Android-13.0%2B_API_33--37-blue.svg" alt="Android 13.0+ (API 33 ~ 37)">
   <img src="https://img.shields.io/badge/Root-Optional%20(Non--Root%20USB%20Host%20%7C%20Root)-brightgreen.svg" alt="Root Optional">
   <img src="https://img.shields.io/badge/Language-Kotlin%20%7C%20C%20(NDK)-lightgrey.svg" alt="Kotlin & C">
 </p>
@@ -154,7 +154,7 @@ User-space SCSI/BOT Stack (UsbMassStorageDriver)         Direct I/O High-Perform
 
 | Dimension | Supported Range / Specification | Notes |
 |---|---|---|
-| **Operating System** | Android 8.0 ~ 17 (API 26 ~ 36) | Broad compatibility with current and future Android releases |
+| **Operating System** | Android 13.0+ (API 33 ~ 37) | Requires Android 13.0 or newer (`minSdk 33`); forward-compatible with current Android releases (verified through Android 17 / API 37) |
 | **CPU Architectures** | `arm64-v8a`, `armeabi-v7a` | Full 64-bit and 32-bit native ABI binaries |
 | **Root Schemes** | **Non-Root** / **KernelSU** / **Magisk** / **APatch** | Zero setup for non-root; higher performance with Root |
 | **Supported Filesystems** | **NTFS**, **exFAT**, **FAT32** | Full browse, create, modify, rename, and delete capabilities |

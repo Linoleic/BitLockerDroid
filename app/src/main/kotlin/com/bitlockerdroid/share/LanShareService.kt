@@ -43,9 +43,24 @@ class LanShareService : Service() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val action = intent?.action ?: return
             android.util.Log.i(TAG, "Hardware detachment broadcast received: $action")
-            @Suppress("DEPRECATION")
-            val dev = intent.getParcelableExtra<android.hardware.usb.UsbDevice>(android.hardware.usb.UsbManager.EXTRA_DEVICE)
-            if (dev != null) {
+
+            if (action == android.hardware.usb.UsbManager.ACTION_USB_DEVICE_DETACHED) {
+                // The receiver is registered RECEIVER_EXPORTED, so any app can
+                // send this broadcast. Before tearing down sessions, verify
+                // against UsbManager that the device really is gone: a spoofed
+                // or stale broadcast must not stop active sharing.
+                @Suppress("DEPRECATION")
+                val dev = intent.getParcelableExtra<android.hardware.usb.UsbDevice>(android.hardware.usb.UsbManager.EXTRA_DEVICE)
+                if (dev == null) {
+                    android.util.Log.w(TAG, "Detached broadcast without a device extra: ignored (possible spoof)")
+                    return
+                }
+                val usbManager = context?.getSystemService(Context.USB_SERVICE) as? android.hardware.usb.UsbManager
+                val stillAttached = usbManager?.deviceList?.values?.any { it.deviceId == dev.deviceId } == true
+                if (stillAttached) {
+                    android.util.Log.w(TAG, "Device ${dev.deviceId} still attached: ignoring stale/spoofed detach broadcast")
+                    return
+                }
                 com.bitlockerdroid.usb.UsbStorageManager.onDeviceDetached(dev)
             }
             com.bitlockerdroid.service.UnlockManager.onUsbDetached()

@@ -633,9 +633,19 @@ class LanWebServer(
             return
         }
 
+        val isChunked = headers["transfer-encoding"]?.lowercase()?.contains("chunked") == true
+        val contentLength = headers["content-length"]?.toLongOrNull()
+        // A missing Content-Length used to fall through as a 0-byte write followed
+        // by truncate(path, 0), silently wiping the existing file. RFC 7230 requires
+        // a determinable body length: accept chunked or an explicit Content-Length
+        // (explicit 0 is a valid empty PUT), reject everything else with 411.
+        if (!isChunked && (contentLength == null || contentLength < 0)) {
+            sendError(output, 411, "Length Required")
+            return
+        }
+
         val parentPath = path.substringBeforeLast('/').ifEmpty { "/" }
         val name = path.substringAfterLast('/')
-        val contentLength = headers["content-length"]?.toLongOrNull() ?: 0L
 
         if (existingNode == null) {
             val created = filesystem.createFile(parentPath, name)
@@ -647,24 +657,84 @@ class LanWebServer(
 
         // Write streaming content
         var offset = 0L
-        var remaining = contentLength
-        val buf = ByteArray(64 * 1024)
         var writeFailed = false
-        while (remaining > 0) {
-            val toRead = minOf(buf.size.toLong(), remaining).toInt()
-            val n = input.read(buf, 0, toRead)
-            if (n <= 0) break
-            val written = filesystem.writeData(path, offset, buf, n)
-            if (written < 0) {
-                writeFailed = true
-                break
+        var malformedBody = false
+        val buf = ByteArray(64 * 1024)
+
+        if (isChunked) {
+            // Basic RFC 7230 chunk decoding: size line (hex, chunk extensions
+            // after ';'), chunk data, terminating CRLF, until the 0-size chunk.
+            while (true) {
+                val sizeLine: String?
+                try {
+                    sizeLine = readLine(input, MAX_REQUEST_LINE_BYTES)
+                } catch (_: HeaderTooLargeException) {
+                    malformedBody = true
+                    break
+                }
+                if (sizeLine == null) {
+                    malformedBody = true
+                    break
+                }
+                val chunkSize = sizeLine.substringBefore(';').trim().toLongOrNull(16)
+                if (chunkSize == null || chunkSize < 0L) {
+                    malformedBody = true
+                    break
+                }
+                if (chunkSize == 0L) break
+                var remaining = chunkSize
+                while (remaining > 0) {
+                    val toRead = minOf(buf.size.toLong(), remaining).toInt()
+                    val n = input.read(buf, 0, toRead)
+                    if (n <= 0) {
+                        malformedBody = true
+                        break
+                    }
+                    val written = filesystem.writeData(path, offset, buf, n)
+                    if (written < 0) {
+                        writeFailed = true
+                        break
+                    }
+                    offset += n
+                    remaining -= n
+                }
+                if (malformedBody || writeFailed) break
+                // Consume the CRLF that terminates the chunk data
+                try {
+                    if (readLine(input, MAX_REQUEST_LINE_BYTES) == null) {
+                        malformedBody = true
+                        break
+                    }
+                } catch (_: HeaderTooLargeException) {
+                    malformedBody = true
+                    break
+                }
             }
-            offset += n
-            remaining -= n
+        } else {
+            var remaining = contentLength ?: 0L
+            while (remaining > 0) {
+                val toRead = minOf(buf.size.toLong(), remaining).toInt()
+                val n = input.read(buf, 0, toRead)
+                if (n <= 0) break
+                val written = filesystem.writeData(path, offset, buf, n)
+                if (written < 0) {
+                    writeFailed = true
+                    break
+                }
+                offset += n
+                remaining -= n
+            }
         }
 
         if (writeFailed) {
             sendError(output, 500, "Internal Server Error: Failed to write data")
+            return
+        }
+
+        if (malformedBody) {
+            // Keep what was successfully received, then reject the request
+            filesystem.truncate(path, offset)
+            sendError(output, 400, "Bad Request: Malformed chunked body")
             return
         }
 

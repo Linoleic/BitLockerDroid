@@ -394,4 +394,5 @@
     <string name="lan_share_no_ip_warning">No LAN IP detected. Please connect to Wi-Fi or turn on Mobile Hotspot</string>
     <string name="lan_share_plaintext_warning">Unencrypted HTTP: anyone on this network can intercept the transferred files. Use only on trusted networks.</string>
     <string name="lan_share_password_required">A non-empty password is required when access protection is enabled</string>
+    <string name="lan_share_bind_failed">Could not bind ports %1$d–%2$d. The range may already be in use — pick a different port and try again.</string>
 </resources>

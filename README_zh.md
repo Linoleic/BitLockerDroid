@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL%20v2.0-blue.svg" alt="License: GPL-2.0"></a>
-  <img src="https://img.shields.io/badge/Android-8.0--17-blue.svg" alt="Android 8.0 ~ 17">
+  <img src="https://img.shields.io/badge/Android-13.0%2B_API_33--37-blue.svg" alt="Android 13.0+ (API 33 ~ 37)">
   <img src="https://img.shields.io/badge/Root-Optional%20(Non--Root%20USB%20Host%20%7C%20Root)-brightgreen.svg" alt="Root Optional">
   <img src="https://img.shields.io/badge/Language-Kotlin%20%7C%20C%20(NDK)-lightgrey.svg" alt="Kotlin & C">
 </p>
@@ -154,7 +154,7 @@ Android 原生“文件”应用 (DocumentsUI)                系统全局绝对
 
 | 维度 | 规格要求 / 支持范围 | 说明 |
 |---|---|---|
-| **操作系统** | Android 8.0 ~ 17 (API 26 ~ 36) | 覆盖主流与最新 Android 版本 |
+| **操作系统** | Android 13.0+ (API 33 ~ 37) | 要求 Android 13.0 及以上（`minSdk 33`），实测兼容至 Android 17 (API 37) |
 | **处理器架构** | `arm64-v8a`, `armeabi-v7a` | 提供 64 位与 32 位原生 ABI 支持 |
 | **Root 方案** | **免 Root** / **KernelSU** / **Magisk** / **APatch** | 免 Root 零门槛；Root 模式性能更优 |
 | **受支持文件系统** | **NTFS**, **exFAT**, **FAT32** | 完整增删改查、重命名与大文件读写 |

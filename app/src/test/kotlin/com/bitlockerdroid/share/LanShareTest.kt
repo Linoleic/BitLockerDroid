@@ -693,6 +693,171 @@ class LanShareTest {
         assertTrue(html.contains("data-ext=\"mp4\""))
     }
 
+    @Test
+    fun testPutWithoutLengthRejected411() {
+        val tempDir = java.io.File.createTempFile("put_411_test_", "").apply {
+            delete()
+            mkdir()
+        }
+        var server: LanWebServer? = null
+        try {
+            java.io.File(tempDir, "report.txt").writeText("Important Data")
+            val adapter = PosixFileShareAdapter(tempDir, "PutDisk", isReadOnly = false)
+            val config = LanShareConfig(
+                volumeLabel = "PutDisk",
+                isReadOnly = false,
+                port = 19189,
+                authEnabled = false
+            )
+            server = LanWebServer(config, adapter)
+            val port = server.start()
+
+            // PUT without Content-Length and without chunked encoding used to be
+            // treated as a 0-byte write followed by truncate(path, 0), wiping the
+            // file. It must now be refused with 411 and leave the file intact.
+            val (noLenCode, _) = sendRawRequest(
+                port,
+                "PUT /report.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\n\r\n"
+            )
+            assertEquals(411, noLenCode)
+            assertEquals("Important Data", java.io.File(tempDir, "report.txt").readText())
+
+            // An unparseable Content-Length value is equally rejected
+            val (badLenCode, _) = sendRawRequest(
+                port,
+                "PUT /report.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nContent-Length: abc\r\n\r\nx"
+            )
+            assertEquals(411, badLenCode)
+            assertEquals("Important Data", java.io.File(tempDir, "report.txt").readText())
+
+            // An explicit Content-Length: 0 is an intentional empty PUT -> 204
+            val (zeroCode, _) = sendRawRequest(
+                port,
+                "PUT /report.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nContent-Length: 0\r\n\r\n"
+            )
+            assertEquals(204, zeroCode)
+            assertEquals("", java.io.File(tempDir, "report.txt").readText())
+        } finally {
+            server?.stop()
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun testPutChunkedEncoding() {
+        val tempDir = java.io.File.createTempFile("put_chunked_test_", "").apply {
+            delete()
+            mkdir()
+        }
+        var server: LanWebServer? = null
+        try {
+            val adapter = PosixFileShareAdapter(tempDir, "ChunkDisk", isReadOnly = false)
+            val config = LanShareConfig(
+                volumeLabel = "ChunkDisk",
+                isReadOnly = false,
+                port = 19190,
+                authEnabled = false
+            )
+            server = LanWebServer(config, adapter)
+            val port = server.start()
+
+            // Chunked PUT creating a new file: 5+4+2 bytes across three chunks
+            val (createCode, _, createBody) = sendRawRequestWithBody(
+                port,
+                "PUT /chunked.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nTransfer-Encoding: chunked\r\n\r\n" +
+                        "5\r\nHello\r\n4\r\n,wor\r\n2\r\nld\r\n0\r\n\r\n"
+            )
+            assertEquals(201, createCode)
+            assertEquals("Hello,world", java.io.File(tempDir, "chunked.txt").readText())
+
+            // Chunked PUT overwriting a longer existing file truncates exactly
+            // to the received bytes
+            java.io.File(tempDir, "existing.txt")
+                .writeText("Old Content That Is Much Longer Than The New Data")
+            val (overCode, _) = sendRawRequest(
+                port,
+                "PUT /existing.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nTransfer-Encoding: chunked\r\n\r\n" +
+                        "2\r\nHi\r\n0\r\n\r\n"
+            )
+            assertEquals(204, overCode)
+            assertEquals("Hi", java.io.File(tempDir, "existing.txt").readText())
+
+            // Malformed chunk size -> 400 Bad Request
+            val (badCode, _) = sendRawRequest(
+                port,
+                "PUT /broken.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nTransfer-Encoding: chunked\r\n\r\n" +
+                        "ZZ\r\nabcd"
+            )
+            assertEquals(400, badCode)
+        } finally {
+            server?.stop()
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun testPortExhaustionAndFailureState() {
+        // Bind the entire fallback range the server would scan so start() must fail
+        var base: Int? = null
+        var blockers: List<java.net.ServerSocket> = emptyList()
+        for (candidate in intArrayOf(19200, 19500, 19800)) {
+            val sockets = (candidate..candidate + 10).mapNotNull { p ->
+                try { java.net.ServerSocket(p) } catch (_: Exception) { null }
+            }
+            if (sockets.size == 11) {
+                base = candidate
+                blockers = sockets
+                break
+            } else {
+                sockets.forEach { try { it.close() } catch (_: Exception) {} }
+            }
+        }
+        // Requires a free 11-port window to set up the exhaustion scenario
+        org.junit.Assume.assumeTrue(base != null)
+
+        val tempDir = java.io.File.createTempFile("port_exhaust_test_", "").apply {
+            delete()
+            mkdir()
+        }
+        try {
+            val config = LanShareConfig(
+                volumeLabel = "ExhaustDisk",
+                isReadOnly = true,
+                port = base!!,
+                authEnabled = false
+            )
+            val adapter = PosixFileShareAdapter(tempDir, "ExhaustDisk", isReadOnly = true)
+            val server = LanWebServer(config, adapter)
+
+            // Exhausted range -> a catchable IllegalStateException, server not running
+            var thrown: Throwable? = null
+            try {
+                server.start()
+            } catch (t: Throwable) {
+                thrown = t
+            }
+            assertNotNull("start() must throw when the whole port range is occupied", thrown)
+            assertTrue(thrown is IllegalStateException)
+            assertFalse(server.isRunning)
+            // A stop() after a failed start must be safe and side-effect free
+            server.stop()
+
+            // Manager-level failure contract: a failed start is reported as a
+            // non-running state carrying the message, which the Compose dialog
+            // surfaces as a toast instead of crashing
+            val failed = LanShareManager.buildFailureState(config, "bind failed")
+            assertFalse(failed.isRunning)
+            assertEquals("bind failed", failed.errorMessage)
+            assertEquals("ExhaustDisk", failed.volumeLabel)
+            assertEquals(base!!, failed.port)
+            assertEquals(config.isReadOnly, failed.isReadOnly)
+            assertEquals(config.authEnabled, failed.authEnabled)
+        } finally {
+            blockers.forEach { try { it.close() } catch (_: Exception) {} }
+            tempDir.deleteRecursively()
+        }
+    }
+
     private fun sendRawRequest(port: Int, request: String): Pair<Int, Map<String, String>> {
         java.net.Socket("127.0.0.1", port).use { socket ->
             socket.soTimeout = 5000

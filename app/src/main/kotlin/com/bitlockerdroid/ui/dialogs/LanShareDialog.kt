@@ -498,7 +498,12 @@ fun LanShareDialog(
                                     username = username.trim().ifEmpty { "admin" },
                                     password = password
                                 )
-                                LanShareManager.startSharing(context, config, core)
+                                val state = LanShareManager.startSharing(context, config, core)
+                                // Surface bind failures (port exhaustion, occupied
+                                // range) as a toast instead of crashing the dialog
+                                if (!state.isRunning && state.errorMessage != null) {
+                                    Toast.makeText(context, state.errorMessage, Toast.LENGTH_LONG).show()
+                                }
                             } else {
                                 Toast.makeText(context, "Volume session unavailable", Toast.LENGTH_SHORT).show()
                             }

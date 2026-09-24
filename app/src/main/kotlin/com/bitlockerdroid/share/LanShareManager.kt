@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Log
+import com.bitlockerdroid.R
 import com.bitlockerdroid.service.DislockerCore
 import com.bitlockerdroid.service.VirtualStorageMountManager
 import kotlinx.coroutines.CoroutineScope
@@ -53,6 +54,31 @@ object LanShareManager {
         return _shareStates.value[volumeGuid]
     }
 
+    /**
+     * Builds a non-running state carrying [message] so callers (Compose UI)
+     * get a clean failure signal instead of an escaping exception. Internal so
+     * unit tests can assert the failure contract.
+     */
+    internal fun buildFailureState(config: LanShareConfig, message: String?): LanShareState {
+        return LanShareState(
+            isRunning = false,
+            volumeGuid = config.volumeGuid,
+            volumeLabel = config.volumeLabel,
+            devicePath = config.devicePath,
+            port = config.port,
+            isReadOnly = config.isReadOnly,
+            authEnabled = config.authEnabled,
+            username = config.username,
+            errorMessage = message
+        )
+    }
+
+    private fun publishState(guid: String, state: LanShareState) {
+        val updated = _shareStates.value.toMutableMap()
+        updated[guid] = state
+        _shareStates.value = updated
+    }
+
     @Synchronized
     fun startSharing(context: Context, config: LanShareConfig, core: DislockerCore): LanShareState {
         val guid = config.volumeGuid
@@ -60,20 +86,11 @@ object LanShareManager {
         // Security guard: an authenticated share must never run with an empty password
         if (config.authEnabled && config.password.isEmpty()) {
             Log.w(TAG, "Refusing to start LAN sharing for $guid: auth enabled but password is empty")
-            val failed = LanShareState(
-                isRunning = false,
-                volumeGuid = guid,
-                volumeLabel = config.volumeLabel,
-                devicePath = config.devicePath,
-                port = config.port,
-                isReadOnly = config.isReadOnly,
-                authEnabled = true,
-                username = config.username,
-                errorMessage = "Password required when access protection is enabled"
+            val failed = buildFailureState(
+                config,
+                context.getString(R.string.lan_share_password_required)
             )
-            val updated = _shareStates.value.toMutableMap()
-            updated[guid] = failed
-            _shareStates.value = updated
+            publishState(guid, failed)
             return failed
         }
 
@@ -90,14 +107,26 @@ object LanShareManager {
         val adapter = findPosixMountAdapter(config) ?: VolumeCoreShareAdapter(core, config.isReadOnly)
 
         val server = LanWebServer(config, adapter)
-        val actualPort = server.start()
+        val actualPort = try {
+            server.start()
+        } catch (t: Throwable) {
+            // Port exhaustion / bind failures must surface as a failed state,
+            // never as an exception that crashes the Compose caller
+            Log.e(TAG, "Failed to start LAN sharing for $guid", t)
+            val message = try {
+                context.getString(R.string.lan_share_bind_failed, config.port, config.port + 10)
+            } catch (_: Throwable) {
+                t.message ?: "Failed to bind a port"
+            }
+            val failed = buildFailureState(config, message)
+            publishState(guid, failed)
+            return failed
+        }
 
         activeServers[guid] = server
 
         val state = buildState(server, config.copy(port = actualPort))
-        val updated = _shareStates.value.toMutableMap()
-        updated[guid] = state
-        _shareStates.value = updated
+        publishState(guid, state)
 
         // Start Foreground Service
         val serviceIntent = Intent(context, LanShareService::class.java).apply {
@@ -107,10 +136,16 @@ object LanShareManager {
             putExtra(LanShareService.EXTRA_PORT, actualPort)
             putExtra(LanShareService.EXTRA_PRIMARY_URL, state.primaryUrl)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(serviceIntent)
-        } else {
-            context.startService(serviceIntent)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
+            } else {
+                context.startService(serviceIntent)
+            }
+        } catch (t: Throwable) {
+            // Sharing itself is running; a rejected foreground service start must
+            // not crash the caller (the notification will simply be missing)
+            Log.w(TAG, "Foreground service start rejected for $guid", t)
         }
 
         Log.i(TAG, "Started sharing for volume $guid (${config.volumeLabel}) at port $actualPort")
