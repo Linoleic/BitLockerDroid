@@ -296,11 +296,11 @@ object WebPortalGenerator {
 
         // Modal for media preview
         sb.append("""
-            <div id="mediaModal" class="modal-bg" onclick="closeModal(event)">
-                <div class="modal-content" onclick="event.stopPropagation()">
+            <div id="mediaModal" class="modal-bg">
+                <div class="modal-content">
                     <div class="modal-header">
                         <span id="modalTitle">Preview</span>
-                        <button class="modal-close" onclick="closeModal()">&times;</button>
+                        <button class="modal-close" aria-label="Close">&times;</button>
                     </div>
                     <div id="modalBody" class="modal-body"></div>
                 </div>
@@ -313,6 +313,19 @@ object WebPortalGenerator {
                         var name = row.getAttribute('data-name');
                         row.style.display = (!q || name.indexOf(q) !== -1) ? '' : 'none';
                     });
+                });
+                // Modal wiring: registered here instead of inline onclick attributes
+                // so the generated page contains no inline JavaScript at all
+                var mediaModal = document.getElementById('mediaModal');
+                mediaModal.addEventListener('click', function(e) {
+                    closeModal(e);
+                });
+                mediaModal.querySelector('.modal-content').addEventListener('click', function(e) {
+                    e.stopPropagation();
+                });
+                mediaModal.querySelector('.modal-close').addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    closeModal();
                 });
                 // Delegated media-preview handler: values are read from data
                 // attributes via getAttribute, so no markup/script can be injected

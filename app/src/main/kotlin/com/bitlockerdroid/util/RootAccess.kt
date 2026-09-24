@@ -388,6 +388,36 @@ object RootAccess {
         }
     }
 
+    /** SHA-256 digest of [file], hex-encoded, or null when the file is unreadable. */
+    private fun sha256Hex(file: java.io.File): String? {
+        return try {
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buf = ByteArray(64 * 1024)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n <= 0) break
+                    md.update(buf, 0, n)
+                }
+            }
+            md.digest().joinToString("") { "%02x".format(it) }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /**
+     * True when [target] matches [source] in both size and SHA-256 digest.
+     * /data/local/tmp is a world-writable directory: a length-only check would
+     * accept a tampered binary of the same size, so the digest is verified too.
+     */
+    private fun binariesMatch(source: java.io.File, target: java.io.File): Boolean {
+        if (!target.exists() || target.length() != source.length()) return false
+        val sourceHash = sha256Hex(source) ?: return false
+        val targetHash = sha256Hex(target) ?: return false
+        return sourceHash == targetHash
+    }
+
     /**
      * Ensures the high-performance bitlocker_io root helper binary is installed
      * to /data/local/tmp and app files directory with executable permissions.
@@ -398,12 +428,12 @@ object RootAccess {
             val nativeBin = java.io.File(libDir, "libbitlocker_io.so")
             if (nativeBin.exists()) {
                 val appFilesBin = java.io.File(context.filesDir, "bitlocker_io")
-                if (!appFilesBin.exists() || appFilesBin.length() != nativeBin.length()) {
+                if (!binariesMatch(nativeBin, appFilesBin)) {
                     nativeBin.copyTo(appFilesBin, overwrite = true)
                     appFilesBin.setExecutable(true, false)
                 }
                 val tmpBin = java.io.File("/data/local/tmp/bitlocker_io")
-                if (!tmpBin.exists() || tmpBin.length() != nativeBin.length()) {
+                if (!binariesMatch(nativeBin, tmpBin)) {
                     exec("cp '${nativeBin.absolutePath}' /data/local/tmp/bitlocker_io && chmod 755 /data/local/tmp/bitlocker_io")
                 }
             }
@@ -422,7 +452,7 @@ object RootAccess {
             val nativeBin = java.io.File(libDir, "libbitlocker_fuse.so")
             val targetBin = java.io.File("/data/local/tmp/bitlocker_fuse")
             if (nativeBin.exists()) {
-                if (!targetBin.exists() || targetBin.length() != nativeBin.length()) {
+                if (!binariesMatch(nativeBin, targetBin)) {
                     exec("cp '${nativeBin.absolutePath}' /data/local/tmp/bitlocker_fuse && chmod 755 /data/local/tmp/bitlocker_fuse")
                 }
                 return targetBin.absolutePath

@@ -143,12 +143,12 @@ static jboolean native_hasBitLockerHeader(JNIEnv *env, jobject thiz, jstring pat
 
 	int ret = dis_has_bitlocker_header(cpath);
 
-	(*env)->ReleaseStringUTFChars(env, path, cpath);
-
 	if (ret < 0) {
 		LOGE("hasBitLockerHeader(%s) failed: %s", cpath, dis_get_last_error());
-		return JNI_FALSE;
 	}
+
+	(*env)->ReleaseStringUTFChars(env, path, cpath);
+
 	return ret == 1 ? JNI_TRUE : JNI_FALSE;
 }
 
@@ -211,6 +211,11 @@ static jlong native_openVolumeRecovery(JNIEnv *env, jobject thiz,
 	dis_session_info_t info;
 	dis_ctx_t *ctx = dis_open_volume_recovery(cpath, (off_t)offset,
 		(const uint8_t *)ckey, strlen(ckey), &info);
+
+	/* Securely wipe the recovery key held in the JNI string buffer before
+	 * releasing it: GetStringUTFChars hands out a JNI-owned copy, so clearing
+	 * it here removes the last plaintext copy from native memory. */
+	memset((void *)ckey, 0, strlen(ckey));
 
 	(*env)->ReleaseStringUTFChars(env, recoveryKey, ckey);
 	(*env)->ReleaseStringUTFChars(env, path, cpath);

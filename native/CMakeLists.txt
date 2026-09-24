@@ -5,6 +5,15 @@ project(dislocker LANGUAGES C)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+# Hardening for every native target (JNI lib and both root daemons):
+# - 64-bit off_t on 32-bit ABIs so block offsets > 2 GiB do not truncate
+# - _FORTIFY_SOURCE=2 bounds-checked libc hardened variants (Release -O2+)
+# - stack protector pinned explicitly rather than relying on NDK defaults
+# - full RELRO + BIND_NOW so the GOT of privileged binaries is read-only
+add_compile_definitions(_FILE_OFFSET_BITS=64 _FORTIFY_SOURCE=2)
+add_compile_options(-fstack-protector-strong)
+add_link_options("-Wl,-z,relro" "-Wl,-z,now")
+
 add_subdirectory(dislocker)
 
 add_library(dislocker_jni SHARED

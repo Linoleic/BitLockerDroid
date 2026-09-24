@@ -931,6 +931,14 @@ static void cleanup_mount(void) {
 
 /* ---------------- Main Entry Point ---------------- */
 
+/* Dead-store elimination-proof memory wipe for key material. */
+static void secure_zero(void *p, size_t n) {
+    volatile unsigned char *v = (volatile unsigned char *)p;
+    while (n--) {
+        *v++ = 0;
+    }
+}
+
 int main(int argc, char **argv) {
     signal(SIGTERM, sig_handler);
     signal(SIGINT, sig_handler);
@@ -978,6 +986,15 @@ int main(int argc, char **argv) {
         g_dis_ctx = dis_open_volume_recovery(dev_path, offset, (const uint8_t *)key, strlen(key), &info);
     } else {
         g_dis_ctx = dis_open_volume(dev_path, offset, (const uint8_t *)key, strlen(key), &info);
+    }
+
+    /* The plaintext key is no longer needed once the VMK/FVEK has been derived.
+     * Wipe both the stdin buffer and the argv copy right away so every exit
+     * path below (unlock failure, mount failure, SIGTERM during the event
+     * loop) leaves no key material behind in memory. */
+    secure_zero(key_buf, sizeof(key_buf));
+    if (argv[4][0] != '\0') {
+        secure_zero((void *)argv[4], strlen(argv[4]));
     }
 
     if (!g_dis_ctx) {

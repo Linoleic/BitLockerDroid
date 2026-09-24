@@ -1,6 +1,5 @@
 package com.bitlockerdroid.share
 
-import android.util.Base64
 import android.util.Log
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
@@ -17,6 +16,21 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
+/** Outcome of RFC 7233 byte-range parsing for a GET request. */
+sealed class ByteRangeRequest {
+    /** Malformed or unsupported header: ignore it and serve a full 200 response. */
+    object Ignore : ByteRangeRequest()
+
+    /** Syntactically valid but not satisfiable: respond 416. */
+    object Unsatisfiable : ByteRangeRequest()
+
+    /** Inclusive byte window to serve as 206 Partial Content. */
+    data class Satisfiable(val start: Long, val end: Long) : ByteRangeRequest()
+}
+
+/** Raised when request headers exceed the configured size limits. */
+private class HeaderTooLargeException : Exception("request headers exceed size limit")
+
 class LanWebServer(
     val config: LanShareConfig,
     val filesystem: ShareFilesystemAdapter
@@ -24,6 +38,10 @@ class LanWebServer(
     companion object {
         private const val TAG = "LanWebServer"
         private const val LOCAL_IP_CACHE_MS = 5000L
+
+        /** Per-line and cumulative caps defending against oversized request headers. */
+        private const val MAX_REQUEST_LINE_BYTES = 8 * 1024
+        private const val MAX_HEADER_BLOCK_BYTES = 16 * 1024
 
         @Volatile
         private var cachedLocalIps: Set<String>? = null
@@ -103,6 +121,55 @@ class LanWebServer(
 
             // Non-IP hostname: cannot be verified as targeting this device -> reject
             return false
+        }
+
+        /**
+         * RFC 7233 byte-range parsing.
+         * Returns [ByteRangeRequest.Unsatisfiable] for a valid-but-impossible range
+         * (416), [ByteRangeRequest.Ignore] for malformed or multi-range headers
+         * (fall back to a full 200 response), or [ByteRangeRequest.Satisfiable]
+         * with the inclusive [start, end] byte window.
+         */
+        fun parseByteRange(header: String, fileSize: Long): ByteRangeRequest {
+            val spec = header.trim()
+            if (!spec.startsWith("bytes=")) return ByteRangeRequest.Ignore
+            val rangeSpec = spec.removePrefix("bytes=").trim()
+
+            if (rangeSpec.isEmpty() || rangeSpec.contains(',')) {
+                // Multi-range requests are not supported: ignore the header entirely
+                return ByteRangeRequest.Ignore
+            }
+
+            if (rangeSpec.startsWith('-')) {
+                // Suffix form "bytes=-N": the last N bytes of the file
+                val suffixLen = rangeSpec.substring(1).toLongOrNull()
+                    ?: return ByteRangeRequest.Ignore
+                if (suffixLen <= 0 || fileSize <= 0) return ByteRangeRequest.Unsatisfiable
+                return ByteRangeRequest.Satisfiable(
+                    start = (fileSize - suffixLen).coerceAtLeast(0L),
+                    end = fileSize - 1
+                )
+            }
+
+            val dashIdx = rangeSpec.indexOf('-')
+            if (dashIdx < 0) return ByteRangeRequest.Ignore
+            val firstSpec = rangeSpec.substring(0, dashIdx)
+            val lastSpec = if (dashIdx < rangeSpec.length - 1) rangeSpec.substring(dashIdx + 1) else ""
+
+            val first = firstSpec.toLongOrNull() ?: return ByteRangeRequest.Ignore
+            if (first < 0) return ByteRangeRequest.Ignore
+            val last = if (lastSpec.isEmpty()) {
+                fileSize - 1
+            } else {
+                lastSpec.toLongOrNull()?.let { minOf(fileSize - 1, it) }
+                    ?: return ByteRangeRequest.Ignore
+            }
+            // Invalid spec (last-byte-pos < first-byte-pos) -> ignore per RFC 7233.
+            // Only applies when a last-byte-pos was given: an open-ended range
+            // beyond EOF is valid but unsatisfiable (416 below).
+            if (lastSpec.isNotEmpty() && last < first) return ByteRangeRequest.Ignore
+            if (fileSize <= 0 || first >= fileSize) return ByteRangeRequest.Unsatisfiable
+            return ByteRangeRequest.Satisfiable(start = first, end = last)
         }
     }
 
@@ -198,24 +265,39 @@ class LanWebServer(
             val input = BufferedInputStream(socket.getInputStream())
             val output = BufferedOutputStream(socket.getOutputStream())
 
-            val requestLine = readLine(input) ?: return
+            val requestLine = try {
+                readLine(input, MAX_REQUEST_LINE_BYTES) ?: return
+            } catch (_: HeaderTooLargeException) {
+                sendError(output, 431, "Request Header Fields Too Large")
+                return
+            }
             val parts = requestLine.split(' ')
             if (parts.size < 2) return
 
             val method = parts[0].uppercase()
             val rawUri = parts[1]
 
-            // Parse HTTP headers
-            val headers = mutableMapOf<String, String>()
-            while (true) {
-                val line = readLine(input) ?: break
-                if (line.isEmpty()) break
-                val colonIdx = line.indexOf(':')
-                if (colonIdx > 0) {
-                    val key = line.substring(0, colonIdx).trim().lowercase()
-                    val value = line.substring(colonIdx + 1).trim()
-                    headers[key] = value
+            // Parse HTTP headers with per-line and cumulative size caps so an
+            // oversized header block cannot exhaust the heap (431 + disconnect)
+            val headers = try {
+                mutableMapOf<String, String>().also { map ->
+                    var totalHeaderBytes = 0
+                    while (true) {
+                        val line = readLine(input, MAX_HEADER_BLOCK_BYTES) ?: break
+                        if (line.isEmpty()) break
+                        totalHeaderBytes += line.length + 2
+                        if (totalHeaderBytes > MAX_HEADER_BLOCK_BYTES) throw HeaderTooLargeException()
+                        val colonIdx = line.indexOf(':')
+                        if (colonIdx > 0) {
+                            val key = line.substring(0, colonIdx).trim().lowercase()
+                            val value = line.substring(colonIdx + 1).trim()
+                            map[key] = value
+                        }
+                    }
                 }
+            } catch (_: HeaderTooLargeException) {
+                sendError(output, 431, "Request Header Fields Too Large")
+                return
             }
 
             // DNS-rebinding defense: verify the request targets this device before
@@ -285,7 +367,9 @@ class LanWebServer(
         if (config.password.isEmpty()) return false
         val base64Credentials = authHeader.substring(6).trim()
         val decoded = try {
-            String(Base64.decode(base64Credentials, Base64.DEFAULT), Charsets.UTF_8)
+            // java.util.Base64 instead of android.util.Base64: same leniency for
+            // Basic auth payloads, and the parser stays unit-testable on the JVM
+            String(java.util.Base64.getMimeDecoder().decode(base64Credentials), Charsets.UTF_8)
         } catch (_: Exception) {
             return false
         }
@@ -422,22 +506,10 @@ class LanWebServer(
         // Regular file streaming with HTTP Range support
         val fileSize = target.size
         val mimeType = target.mimeType
-        val rangeHeader = headers["range"]
+        val rangeRequest = headers["range"]?.let { parseByteRange(it, fileSize) }
 
-        if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
-            val rangeStr = rangeHeader.removePrefix("bytes=").trim()
-            val parts = rangeStr.split('-')
-            var start = 0L
-            var end = fileSize - 1
-
-            if (parts.size >= 2) {
-                if (parts[0].isNotEmpty()) start = parts[0].toLongOrNull() ?: 0L
-                if (parts[1].isNotEmpty()) end = minOf(fileSize - 1, parts[1].toLongOrNull() ?: (fileSize - 1))
-            } else if (parts.size == 1 && parts[0].isNotEmpty()) {
-                start = parts[0].toLongOrNull() ?: 0L
-            }
-
-            if (start > end || start >= fileSize) {
+        when (rangeRequest) {
+            is ByteRangeRequest.Unsatisfiable -> {
                 val resp = "HTTP/1.1 416 Range Not Satisfiable\r\n" +
                         "Content-Range: bytes */$fileSize\r\n" +
                         "Content-Length: 0\r\n\r\n"
@@ -446,56 +518,63 @@ class LanWebServer(
                 return
             }
 
-            val chunkLen = end - start + 1
-            val encodedFilename = try {
-                URLEncoder.encode(target.name, "UTF-8").replace("+", "%20")
-            } catch (_: Exception) {
-                target.name
-            }
-            val asciiFallback = target.name.replace("\"", "")
-            val etag = "\"${target.lastModified.toString(16)}-${target.size.toString(16)}\""
-            val lastMod = WebDavHandler.formatHttpDate(target.lastModified)
-            val resp = "HTTP/1.1 206 Partial Content\r\n" +
-                    "Content-Type: $mimeType\r\n" +
-                    "Content-Length: $chunkLen\r\n" +
-                    "Content-Range: bytes $start-$end/$fileSize\r\n" +
-                    "ETag: $etag\r\n" +
-                    "Last-Modified: $lastMod\r\n" +
-                    "Cache-Control: no-cache\r\n" +
-                    "Content-Disposition: inline; filename*=UTF-8''$encodedFilename; filename=\"$asciiFallback\"\r\n" +
-                    "Accept-Ranges: bytes\r\n" +
-                    "Connection: close\r\n\r\n"
-            output.write(resp.toByteArray())
+            is ByteRangeRequest.Satisfiable -> {
+                val start = rangeRequest.start
+                val end = rangeRequest.end
+                val chunkLen = end - start + 1
+                val encodedFilename = try {
+                    URLEncoder.encode(target.name, "UTF-8").replace("+", "%20")
+                } catch (_: Exception) {
+                    target.name
+                }
+                val asciiFallback = target.name.replace("\"", "")
+                val etag = "\"${target.lastModified.toString(16)}-${target.size.toString(16)}\""
+                val lastMod = WebDavHandler.formatHttpDate(target.lastModified)
+                val resp = "HTTP/1.1 206 Partial Content\r\n" +
+                        "Content-Type: $mimeType\r\n" +
+                        "Content-Length: $chunkLen\r\n" +
+                        "Content-Range: bytes $start-$end/$fileSize\r\n" +
+                        "ETag: $etag\r\n" +
+                        "Last-Modified: $lastMod\r\n" +
+                        "Cache-Control: no-cache\r\n" +
+                        "Content-Disposition: inline; filename*=UTF-8''$encodedFilename; filename=\"$asciiFallback\"\r\n" +
+                        "Accept-Ranges: bytes\r\n" +
+                        "Connection: close\r\n\r\n"
+                output.write(resp.toByteArray())
 
-            if (method == "GET" && chunkLen > 0L) {
-                streamRange(target, start, chunkLen, output)
+                if (method == "GET" && chunkLen > 0L) {
+                    streamRange(target, start, chunkLen, output)
+                }
+                output.flush()
+                return
             }
-            output.flush()
-        } else {
-            // Full file download
-            val encodedFilename = try {
-                URLEncoder.encode(target.name, "UTF-8").replace("+", "%20")
-            } catch (_: Exception) {
-                target.name
-            }
-            val asciiFallback = target.name.replace("\"", "")
-            val etag = "\"${target.lastModified.toString(16)}-${target.size.toString(16)}\""
-            val lastMod = WebDavHandler.formatHttpDate(target.lastModified)
-            val resp = "HTTP/1.1 200 OK\r\n" +
-                    "Content-Type: $mimeType\r\n" +
-                    "Content-Length: $fileSize\r\n" +
-                    "ETag: $etag\r\n" +
-                    "Last-Modified: $lastMod\r\n" +
-                    "Cache-Control: no-cache\r\n" +
-                    "Content-Disposition: inline; filename*=UTF-8''$encodedFilename; filename=\"$asciiFallback\"\r\n" +
-                    "Accept-Ranges: bytes\r\n" +
-                    "Connection: close\r\n\r\n"
-            output.write(resp.toByteArray())
 
-            if (method == "GET" && fileSize > 0L) {
-                streamRange(target, 0L, fileSize, output)
+            else -> {
+                // No header, malformed header, or multi-range: serve the full file
+                val encodedFilename = try {
+                    URLEncoder.encode(target.name, "UTF-8").replace("+", "%20")
+                } catch (_: Exception) {
+                    target.name
+                }
+                val asciiFallback = target.name.replace("\"", "")
+                val etag = "\"${target.lastModified.toString(16)}-${target.size.toString(16)}\""
+                val lastMod = WebDavHandler.formatHttpDate(target.lastModified)
+                val resp = "HTTP/1.1 200 OK\r\n" +
+                        "Content-Type: $mimeType\r\n" +
+                        "Content-Length: $fileSize\r\n" +
+                        "ETag: $etag\r\n" +
+                        "Last-Modified: $lastMod\r\n" +
+                        "Cache-Control: no-cache\r\n" +
+                        "Content-Disposition: inline; filename*=UTF-8''$encodedFilename; filename=\"$asciiFallback\"\r\n" +
+                        "Accept-Ranges: bytes\r\n" +
+                        "Connection: close\r\n\r\n"
+                output.write(resp.toByteArray())
+
+                if (method == "GET" && fileSize > 0L) {
+                    streamRange(target, 0L, fileSize, output)
+                }
+                output.flush()
             }
-            output.flush()
         }
     }
 
@@ -644,6 +723,16 @@ class LanWebServer(
             sendError(output, 403, "Forbidden: invalid destination")
             return
         }
+        // Cycle detection: moving onto itself or into its own subtree would
+        // recurse without bound
+        if (destPath == path) {
+            sendError(output, 403, "Forbidden: source and destination are identical")
+            return
+        }
+        if (destPath.startsWith("$path/")) {
+            sendError(output, 409, "Conflict: destination lies inside the source")
+            return
+        }
 
         val overwriteHeader = headers["overwrite"]?.trim()?.uppercase() ?: "T"
         val destExists = filesystem.resolveNode(destPath) != null
@@ -693,6 +782,16 @@ class LanWebServer(
         }
         if (isVolumeRoot(destPath)) {
             sendError(output, 403, "Forbidden: invalid destination")
+            return
+        }
+        // Cycle detection: copying onto itself or into its own subtree would
+        // recurse without bound and exhaust the volume
+        if (destPath == path) {
+            sendError(output, 403, "Forbidden: source and destination are identical")
+            return
+        }
+        if (destPath.startsWith("$path/")) {
+            sendError(output, 409, "Conflict: destination lies inside the source")
             return
         }
 
@@ -793,8 +892,9 @@ class LanWebServer(
         output.flush()
     }
 
-    private fun readLine(input: InputStream): String? {
+    private fun readLine(input: InputStream, maxBytes: Int): String? {
         val sb = StringBuilder()
+        var count = 0
         while (true) {
             val b = input.read()
             if (b == -1) {
@@ -804,6 +904,7 @@ class LanWebServer(
                 break
             }
             if (b != '\r'.code) {
+                if (++count > maxBytes) throw HeaderTooLargeException()
                 sb.append(b.toChar())
             }
         }
