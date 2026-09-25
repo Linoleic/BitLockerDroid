@@ -10,6 +10,7 @@ plugins {
 android {
     namespace = "com.bitlockerdroid"
     compileSdk = 34
+    buildToolsVersion = "35.0.0"
 
     defaultConfig {
         applicationId = "com.bitlockerdroid"
@@ -145,11 +146,8 @@ android {
 
     packaging {
         jniLibs {
-            // Extract .so files to disk (extractNativeLibs=1). Some ROMs
-            // (MIUI/HyperOS, etc.) have bugs loading uncompressed native libs
-            // directly from the APK, which manifests as an instant crash with
-            // no Java stack. Legacy packaging avoids that.
-            useLegacyPackaging = true
+            // Uncompressed native libs aligned to 16 KB page boundaries (Android 15+ standard).
+            useLegacyPackaging = false
         }
         resources {
             // Avoid common duplicate META-INF entries from dependencies.

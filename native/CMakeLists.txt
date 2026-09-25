@@ -92,3 +92,21 @@ set_target_properties(bitlocker_fuse_daemon PROPERTIES
     SUFFIX ".so"
 )
 
+# 16 KB page-aligned replacements for libaums dependencies
+add_library(errno-lib SHARED
+    libaums_compat/errno.c
+)
+target_link_options(errno-lib PRIVATE
+    "-Wl,-z,max-page-size=16384"
+)
+
+add_library(usb-lib SHARED
+    libaums_compat/usb.c
+)
+target_link_libraries(usb-lib PRIVATE
+    log
+)
+target_link_options(usb-lib PRIVATE
+    "-Wl,-z,max-page-size=16384"
+)
+
