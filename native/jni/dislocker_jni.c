@@ -567,22 +567,29 @@ static jlong native_ntfsWrite(JNIEnv *env, jobject thiz, jlong volHandle,
 	if (!volHandle || !path || !data || count <= 0 || offset < 0)
 		return -1;
 
-	const char *cpath = (*env)->GetStringUTFChars(env, path, NULL);
 	jsize dlen = (*env)->GetArrayLength(env, data);
 	if (count > dlen) count = dlen;
 
-	uint8_t *buf = (uint8_t *)malloc((size_t)count);
+	const char *cpath = (*env)->GetStringUTFChars(env, path, NULL);
+	if (!cpath) return -1;
+
+	void *buf = (*env)->GetPrimitiveArrayCritical(env, data, NULL);
 	if (!buf) {
 		(*env)->ReleaseStringUTFChars(env, path, cpath);
 		return -1;
 	}
-	(*env)->GetByteArrayRegion(env, data, 0, count, (jbyte *)buf);
 
-	int64_t ret = dis_ntfs_write((dis_ntfs_handle_t)(intptr_t)volHandle, cpath, (int64_t)offset, buf, (int64_t)count);
+	int64_t ret = dis_ntfs_write((dis_ntfs_handle_t)(intptr_t)volHandle, cpath, (int64_t)offset, (const uint8_t *)buf, (int64_t)count);
 
-	free(buf);
+	(*env)->ReleasePrimitiveArrayCritical(env, data, buf, JNI_ABORT);
 	(*env)->ReleaseStringUTFChars(env, path, cpath);
 	return (jlong)ret;
+}
+
+static jint native_ntfsSync(JNIEnv *env, jobject thiz, jlong volHandle)
+{
+	if (!volHandle) return -1;
+	return (jint)dis_ntfs_sync((dis_ntfs_handle_t)(intptr_t)volHandle);
 }
 
 static jlong native_ntfsTruncate(JNIEnv *env, jobject thiz, jlong volHandle,
@@ -674,22 +681,29 @@ static jlong native_fatfsWrite(JNIEnv *env, jobject thiz, jlong volHandle,
 	if (!volHandle || !path || !data || count <= 0 || offset < 0)
 		return -1;
 
-	const char *cpath = (*env)->GetStringUTFChars(env, path, NULL);
 	jsize dlen = (*env)->GetArrayLength(env, data);
 	if (count > dlen) count = dlen;
 
-	uint8_t *buf = (uint8_t *)malloc((size_t)count);
+	const char *cpath = (*env)->GetStringUTFChars(env, path, NULL);
+	if (!cpath) return -1;
+
+	void *buf = (*env)->GetPrimitiveArrayCritical(env, data, NULL);
 	if (!buf) {
 		(*env)->ReleaseStringUTFChars(env, path, cpath);
 		return -1;
 	}
-	(*env)->GetByteArrayRegion(env, data, 0, count, (jbyte *)buf);
 
-	int64_t ret = dis_fatfs_write((dis_fatfs_handle_t)(intptr_t)volHandle, cpath, (int64_t)offset, buf, (int64_t)count);
+	int64_t ret = dis_fatfs_write((dis_fatfs_handle_t)(intptr_t)volHandle, cpath, (int64_t)offset, (const uint8_t *)buf, (int64_t)count);
 
-	free(buf);
+	(*env)->ReleasePrimitiveArrayCritical(env, data, buf, JNI_ABORT);
 	(*env)->ReleaseStringUTFChars(env, path, cpath);
 	return (jlong)ret;
+}
+
+static jint native_fatfsSync(JNIEnv *env, jobject thiz, jlong volHandle)
+{
+	if (!volHandle) return -1;
+	return (jint)dis_fatfs_sync((dis_fatfs_handle_t)(intptr_t)volHandle);
 }
 
 static jlong native_fatfsTruncate(JNIEnv *env, jobject thiz, jlong volHandle,
@@ -1032,6 +1046,7 @@ static const JNINativeMethod methods[] = {
 	NATIVE_METHOD(env, cls, "nativeNtfsTruncate", "(JLjava/lang/String;J)J", native_ntfsTruncate),
 	NATIVE_METHOD(env, cls, "nativeNtfsGetSpace", "(J)[J", native_ntfsGetSpace),
 	NATIVE_METHOD(env, cls, "nativeNtfsRepairDirty", "(J)I", native_ntfsRepairDirty),
+	NATIVE_METHOD(env, cls, "nativeNtfsSync", "(J)I", native_ntfsSync),
 
 	/* FatFs bridge (FAT32 & exFAT) */
 	NATIVE_METHOD(env, cls, "nativeFatfsMount", "(JZ)J", native_fatfsMount),
@@ -1042,6 +1057,7 @@ static const JNINativeMethod methods[] = {
 	NATIVE_METHOD(env, cls, "nativeFatfsWrite", "(JLjava/lang/String;J[BI)J", native_fatfsWrite),
 	NATIVE_METHOD(env, cls, "nativeFatfsTruncate", "(JLjava/lang/String;J)J", native_fatfsTruncate),
 	NATIVE_METHOD(env, cls, "nativeFatfsGetSpace", "(J)[J", native_fatfsGetSpace),
+	NATIVE_METHOD(env, cls, "nativeFatfsSync", "(J)I", native_fatfsSync),
 };
 
 jint JNI_OnLoad(JavaVM *vm, void *reserved)

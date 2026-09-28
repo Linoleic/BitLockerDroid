@@ -11,5 +11,6 @@ interface VolumeWriter : AutoCloseable {
     fun rename(oldPath: String, newPath: String): Boolean
     fun write(path: String, offset: Long, data: ByteArray, count: Int = data.size): Long
     fun truncate(path: String, newSize: Long): Boolean
+    fun sync(): Boolean = true
     fun getSpace(): Pair<Long, Long>? = null
 }

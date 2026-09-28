@@ -31,6 +31,9 @@ typedef struct {
     int pdrv;
     int read_only;
     uint16_t sector_size;
+    FIL write_fil;
+    char write_path[1024];
+    int write_fil_open;
 } fatfs_slot_t;
 
 static fatfs_slot_t g_fatfs_slots[FF_VOLUMES];
@@ -265,6 +268,8 @@ dis_fatfs_handle_t dis_fatfs_mount(dis_ctx_t *ctx, int read_only) {
     }
 
     ctx->fatfs_vol = (void *)slot;
+    slot->write_fil_open = 0;
+    slot->write_path[0] = '\0';
     DLOG("Successfully mounted FatFs volume on '%s'", slot->drive_str);
     return (dis_fatfs_handle_t)slot;
 }
@@ -277,6 +282,11 @@ int dis_fatfs_umount(dis_fatfs_handle_t vol_handle) {
     if (!slot->in_use) {
         pthread_mutex_unlock(&g_slot_lock);
         return 0;
+    }
+    if (slot->write_fil_open) {
+        f_close(&slot->write_fil);
+        slot->write_fil_open = 0;
+        slot->write_path[0] = '\0';
     }
     if (slot->ctx && slot->ctx->fatfs_vol == (void *)slot) {
         slot->ctx->fatfs_vol = NULL;
@@ -366,6 +376,12 @@ int dis_fatfs_delete(dis_fatfs_handle_t vol_handle, const char *path) {
     fatfs_slot_t *slot = (fatfs_slot_t *)vol_handle;
     if (slot->read_only) return -EROFS;
 
+    if (slot->write_fil_open) {
+        f_close(&slot->write_fil);
+        slot->write_fil_open = 0;
+        slot->write_path[0] = '\0';
+    }
+
     char full_path[1024];
     make_ff_path(slot, path, full_path, sizeof(full_path));
 
@@ -386,6 +402,12 @@ int dis_fatfs_rename(dis_fatfs_handle_t vol_handle, const char *old_path, const 
     if (!vol_handle || !old_path || !new_path) return -EINVAL;
     fatfs_slot_t *slot = (fatfs_slot_t *)vol_handle;
     if (slot->read_only) return -EROFS;
+
+    if (slot->write_fil_open) {
+        f_close(&slot->write_fil);
+        slot->write_fil_open = 0;
+        slot->write_path[0] = '\0';
+    }
 
     char full_old[1024];
     char full_new[1024];
@@ -409,26 +431,38 @@ int64_t dis_fatfs_write(dis_fatfs_handle_t vol_handle, const char *path, int64_t
     char full_path[1024];
     make_ff_path(slot, path, full_path, sizeof(full_path));
 
-    FIL fil;
-    FRESULT res = f_open(&fil, full_path, FA_WRITE | FA_OPEN_ALWAYS);
-    if (res != FR_OK) {
-        DLOG("f_open write failed for '%s' (res=%d)", full_path, (int)res);
-        return -((int64_t)res);
+    if (!slot->write_fil_open || strcmp(slot->write_path, full_path) != 0) {
+        if (slot->write_fil_open) {
+            f_close(&slot->write_fil);
+            slot->write_fil_open = 0;
+            slot->write_path[0] = '\0';
+        }
+        FRESULT res = f_open(&slot->write_fil, full_path, FA_WRITE | FA_OPEN_ALWAYS);
+        if (res != FR_OK) {
+            DLOG("f_open write failed for '%s' (res=%d)", full_path, (int)res);
+            return -((int64_t)res);
+        }
+        slot->write_fil_open = 1;
+        strncpy(slot->write_path, full_path, sizeof(slot->write_path) - 1);
+        slot->write_path[sizeof(slot->write_path) - 1] = '\0';
     }
 
-    res = f_lseek(&fil, (FSIZE_t)offset);
+    FRESULT res = f_lseek(&slot->write_fil, (FSIZE_t)offset);
     if (res != FR_OK) {
         DLOG("f_lseek failed for '%s' at %lld (res=%d)", full_path, (long long)offset, (int)res);
-        f_close(&fil);
+        f_close(&slot->write_fil);
+        slot->write_fil_open = 0;
+        slot->write_path[0] = '\0';
         return -((int64_t)res);
     }
 
     UINT bw = 0;
-    res = f_write(&fil, buf, (UINT)count, &bw);
-    f_close(&fil);
-
+    res = f_write(&slot->write_fil, buf, (UINT)count, &bw);
     if (res != FR_OK) {
         DLOG("f_write failed for '%s' (res=%d)", full_path, (int)res);
+        f_close(&slot->write_fil);
+        slot->write_fil_open = 0;
+        slot->write_path[0] = '\0';
         return -((int64_t)res);
     }
     return (int64_t)bw;
@@ -441,6 +475,12 @@ int64_t dis_fatfs_truncate(dis_fatfs_handle_t vol_handle, const char *path, int6
 
     char full_path[1024];
     make_ff_path(slot, path, full_path, sizeof(full_path));
+
+    if (slot->write_fil_open) {
+        f_close(&slot->write_fil);
+        slot->write_fil_open = 0;
+        slot->write_path[0] = '\0';
+    }
 
     if (new_size == 0) {
         FIL fil;
@@ -494,5 +534,19 @@ int dis_fatfs_get_space(dis_fatfs_handle_t vol_handle, int64_t *total_bytes, int
     uint64_t total_clst = fs->n_fatent > 2 ? (fs->n_fatent - 2) : 0;
     *total_bytes = (int64_t)(total_clst * cluster_size);
     *free_bytes = (int64_t)((uint64_t)free_clst * cluster_size);
+    return 0;
+}
+
+int dis_fatfs_sync(dis_fatfs_handle_t vol_handle) {
+    if (!vol_handle) return -EINVAL;
+    fatfs_slot_t *slot = (fatfs_slot_t *)vol_handle;
+    if (slot->write_fil_open) {
+        f_close(&slot->write_fil);
+        slot->write_fil_open = 0;
+        slot->write_path[0] = '\0';
+    }
+    if (slot->ctx) {
+        dis_blk_sync(slot->ctx);
+    }
     return 0;
 }

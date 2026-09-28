@@ -78,6 +78,12 @@ class FatFsWriter(
         return true
     }
 
+    override fun sync(): Boolean {
+        if (!isMounted) return false
+        val ret = NativeBridge.nativeFatfsSync(volHandle)
+        return ret == 0
+    }
+
     override fun getSpace(): Pair<Long, Long>? {
         if (!isMounted) return null
         val arr = NativeBridge.nativeFatfsGetSpace(volHandle) ?: return null

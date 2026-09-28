@@ -88,6 +88,9 @@ object NativeBridge {
     /** Clears NTFS dirty flags (VOLUME_IS_DIRTY, VOLUME_CHKDSK_UNDERWAY). Returns 0 on success. */
     external fun nativeNtfsRepairDirty(volHandle: Long): Int
 
+    /** Syncs and flushes NTFS volume metadata and dirty sectors to device. Returns 0 on success. */
+    external fun nativeNtfsSync(volHandle: Long): Int
+
     // ---------------- FatFs Integration (FAT32 & exFAT) ----------------
 
     /** Mounts the FAT/exFAT volume over the dislocker session; returns native volume handle or 0. */
@@ -113,6 +116,9 @@ object NativeBridge {
 
     /** Returns long[2] { totalBytes, freeBytes } or null on error. */
     external fun nativeFatfsGetSpace(volHandle: Long): LongArray?
+
+    /** Syncs and flushes FatFs volume dirty sectors to device. Returns 0 on success. */
+    external fun nativeFatfsSync(volHandle: Long): Int
 
     // ---------------- Disaster Recovery & Low-level Backup ----------------
 

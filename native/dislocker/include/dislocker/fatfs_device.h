@@ -39,6 +39,9 @@ int64_t dis_fatfs_truncate(dis_fatfs_handle_t vol_handle, const char *path, int6
 /* Get total and free space in bytes. Returns 0 on success, -1 on error. */
 int dis_fatfs_get_space(dis_fatfs_handle_t vol_handle, int64_t *total_bytes, int64_t *free_bytes);
 
+/* Sync and flush volume dirty data and block device */
+int dis_fatfs_sync(dis_fatfs_handle_t vol_handle);
+
 #ifdef __cplusplus
 }
 #endif

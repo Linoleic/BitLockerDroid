@@ -430,7 +430,6 @@ int64_t dis_ntfs_write(dis_ntfs_handle_t vol_handle, const char *path, int64_t o
 	ntfs_attr_close(na);
 	ntfs_inode_sync(ni);
 	ntfs_inode_close(ni);
-	sync_volume_metadata(vol);
 
 	return (int64_t)written;
 }
@@ -513,4 +512,13 @@ int dis_ntfs_repair_dirty(dis_ntfs_handle_t vol_handle)
 			NDevSetReadOnly(vol->dev);
 	}
 	return ret < 0 ? -errno : 0;
+}
+
+int dis_ntfs_sync(dis_ntfs_handle_t vol_handle)
+{
+	if (!vol_handle)
+		return -EINVAL;
+	ntfs_volume *vol = (ntfs_volume *)vol_handle;
+	sync_volume_metadata(vol);
+	return 0;
 }

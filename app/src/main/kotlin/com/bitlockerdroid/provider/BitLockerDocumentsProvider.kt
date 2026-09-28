@@ -1063,7 +1063,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                     var writeFailed = false
                     try {
                         ParcelFileDescriptor.AutoCloseInputStream(readFd).use { input ->
-                            val buf = ByteArray(64 * 1024)
+                            val buf = ByteArray(256 * 1024)
                             var curOffset = if (append) (core.getEntry(record)?.fileSize ?: 0L) else 0L
                             while (true) {
                                 val n = input.read(buf)
@@ -1080,8 +1080,11 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                             // Truncate only after a successful, non-empty transfer:
                             // a failed or zero-byte pipe write must leave the
                             // original file content intact.
-                            if (!writeFailed && !append && totalWritten > 0) {
+                            if (!writeFailed && totalWritten > 0) {
                                 writer.truncate(path, totalWritten)
+                            }
+                            if (!writeFailed) {
+                                writer.sync()
                             }
                             LogFile.write("provider", "Pipe write complete for $path ($totalWritten bytes, append=$append, failed=$writeFailed)")
                         }
@@ -1170,12 +1173,43 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             }
             LogFile.write("provider", "openDocument read: record=$record eff=$effRecord size=$size")
 
-            // For files <= 20MB, create a seekable temp file so random-access editors like MT Manager work seamlessly!
+            // 1. Try StorageManager.openProxyFileDescriptor for true random-access (seekable) zero-copy streaming
+            val fileSize = size
+            try {
+                val sm = appContext.getSystemService(android.os.storage.StorageManager::class.java)
+                if (sm != null) {
+                    val pfdMode = ParcelFileDescriptor.parseMode(mode)
+                    val pfd = sm.openProxyFileDescriptor(pfdMode, object : android.os.ProxyFileDescriptorCallback() {
+                        override fun onGetSize(): Long = fileSize
+
+                        override fun onRead(offset: Long, size: Int, data: ByteArray): Int {
+                            if (offset >= fileSize || size <= 0) return 0
+                            val maxToRead = minOf(size.toLong(), fileSize - offset).toInt()
+                            val n = core.readFile(record, offset, data, 0, maxToRead)
+                            if (n < 0) {
+                                throw android.system.ErrnoException("onRead", android.system.OsConstants.EIO)
+                            }
+                            return n
+                        }
+
+                        override fun onRelease() {
+                            // No-op
+                        }
+                    }, syncHandler)
+                    LogFile.write("provider", "openDocument using StorageManager ProxyFileDescriptor (seekable zero-copy, size=$fileSize)")
+                    return pfd
+                }
+            } catch (proxyEx: Throwable) {
+                LogFile.write("provider", "openProxyFileDescriptor fallback to temp/pipe: ${proxyEx.message}")
+            }
+
+            // Fallback for environments where proxy FUSE descriptor is unavailable:
+            // For files <= 20MB, create a seekable temp file
             if (size <= 20 * 1024 * 1024L) {
                 val readTemp = java.io.File.createTempFile("saf_read_", ".tmp", appContext.cacheDir)
                 if (size > 0L) {
                     readTemp.outputStream().use { out ->
-                        val buf = ByteArray(64 * 1024)
+                        val buf = ByteArray(128 * 1024)
                         var offset = 0L
                         while (offset < size) {
                             val len = minOf(buf.size.toLong(), size - offset).toInt()
@@ -1191,7 +1225,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                 }
             }
 
-            // Large files (>20MB): stream through reliable pipe
+            // Large files (>20MB) fallback: stream through reliable pipe
             val pipe = ParcelFileDescriptor.createReliablePipe()
             val readFd = pipe[0]
             val writeFd = pipe[1]
@@ -1199,7 +1233,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             Thread {
                 try {
                     ParcelFileDescriptor.AutoCloseOutputStream(writeFd).use { out ->
-                        val buf = ByteArray(64 * 1024)
+                        val buf = ByteArray(128 * 1024)
                         var offset = 0L
                         while (offset < size) {
                             val len = minOf(buf.size.toLong(), size - offset).toInt()

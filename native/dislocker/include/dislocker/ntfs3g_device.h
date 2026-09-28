@@ -39,6 +39,9 @@ int dis_ntfs_get_space(dis_ntfs_handle_t vol_handle, int64_t *total_bytes, int64
 /* Clear volume dirty flags (VOLUME_IS_DIRTY, VOLUME_CHKDSK_UNDERWAY) and flush metadata */
 int dis_ntfs_repair_dirty(dis_ntfs_handle_t vol_handle);
 
+/* Sync and flush volume metadata (inodes, bitmap, block device) */
+int dis_ntfs_sync(dis_ntfs_handle_t vol_handle);
+
 #ifdef __cplusplus
 }
 #endif
