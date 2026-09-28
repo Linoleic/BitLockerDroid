@@ -442,16 +442,24 @@ object VirtualStorageMountManager {
             if (info != null && info.pid > 1) {
                 RootAccess.exec("su -c 'kill -TERM ${info.pid} 2>/dev/null'")
                 // Wait up to 1000ms for daemon to flush and cleanly terminate
+                var terminated = false
                 for (i in 1..10) {
                     val alive = try {
                         RootAccess.execTimeout("su -c 'kill -0 ${info.pid} 2>/dev/null && echo alive'", 200)?.contains("alive") == true
                     } catch (_: Exception) { false }
-                    if (!alive) break
+                    if (!alive) {
+                        terminated = true
+                        break
+                    }
                     Thread.sleep(100)
                 }
+                if (!terminated) {
+                    // Force kill if daemon failed to cleanly terminate within timeout
+                    RootAccess.exec("su -c 'kill -9 ${info.pid} 2>/dev/null'")
+                }
             }
-            // Also cleanup any bitlocker_fuse matching this devicePath
-            RootAccess.exec("su -c 'for pid in \$(pidof bitlocker_fuse 2>/dev/null); do if grep -q \"$devicePath\" /proc/\$pid/cmdline 2>/dev/null; then kill -TERM \$pid 2>/dev/null; fi; done'")
+            // Also cleanup any bitlocker_fuse matching this devicePath with SIGTERM -> SIGKILL fallback
+            RootAccess.exec("su -c 'for pid in \$(pidof bitlocker_fuse 2>/dev/null); do if grep -q \"$devicePath\" /proc/\$pid/cmdline 2>/dev/null; then kill -TERM \$pid 2>/dev/null; sleep 0.1; kill -9 \$pid 2>/dev/null; fi; done'")
         } catch (e: Throwable) {
             Log.w(TAG, "unmount error", e)
         }

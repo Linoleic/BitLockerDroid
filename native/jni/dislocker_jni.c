@@ -32,6 +32,25 @@
 #define NATIVE_METHOD(env, cls, name, sig, fn) \
 	{ name, sig, (void *)(fn) }
 
+static void jni_throw(JNIEnv *env, const char *class_name, const char *msg)
+{
+	jclass cls = (*env)->FindClass(env, class_name);
+	if (cls) {
+		(*env)->ThrowNew(env, cls, msg);
+		(*env)->DeleteLocalRef(env, cls);
+	}
+}
+
+static void jni_throw_illegal_state(JNIEnv *env, const char *msg)
+{
+	jni_throw(env, "java/lang/IllegalStateException", msg);
+}
+
+static void jni_throw_illegal_arg(JNIEnv *env, const char *msg)
+{
+	jni_throw(env, "java/lang/IllegalArgumentException", msg);
+}
+
 static jbyteArray read_bytes(JNIEnv *env, const void *data, size_t len)
 {
 	jbyteArray arr = (*env)->NewByteArray(env, (jsize)len);
@@ -265,8 +284,7 @@ static jlongArray native_sessionInfo(JNIEnv *env, jobject thiz, jlong handle)
 {
 	jni_slot_t *slot = slot_acquire(handle);
 	if (!slot) {
-		(*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/IllegalStateException"),
-			"invalid or closed session handle");
+		jni_throw_illegal_state(env, "invalid or closed session handle");
 		return NULL;
 	}
 	dis_ctx_t *ctx = slot->ctx;
@@ -295,8 +313,7 @@ static jbyteArray native_read(JNIEnv *env, jobject thiz, jlong handle,
 	if (!slot || size <= 0) {
 		if (slot)
 			slot_release(slot);
-		(*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/IllegalArgumentException"),
-			"invalid or closed session handle");
+		jni_throw_illegal_arg(env, "invalid or closed session handle");
 		return NULL;
 	}
 	dis_ctx_t *ctx = slot->ctx;
@@ -329,8 +346,7 @@ static jint native_write(JNIEnv *env, jobject thiz, jlong handle,
 	if (!slot || !data || size <= 0) {
 		if (slot)
 			slot_release(slot);
-		(*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/IllegalArgumentException"),
-			"invalid or closed session handle");
+		jni_throw_illegal_arg(env, "invalid or closed session handle");
 		return -1;
 	}
 	dis_ctx_t *ctx = slot->ctx;
@@ -375,8 +391,7 @@ static jint native_sync(JNIEnv *env, jobject thiz, jlong handle)
 {
 	jni_slot_t *slot = slot_acquire(handle);
 	if (!slot) {
-		(*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/IllegalStateException"),
-			"invalid or closed session handle");
+		jni_throw_illegal_state(env, "invalid or closed session handle");
 		return -1;
 	}
 	int ret = dis_blk_sync(slot->ctx);
@@ -394,8 +409,7 @@ static jbyteArray native_decryptBuffer(JNIEnv *env, jobject thiz, jlong handle,
 	if (!slot || input == NULL) {
 		if (slot)
 			slot_release(slot);
-		(*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/IllegalArgumentException"),
-			"invalid or closed session handle");
+		jni_throw_illegal_arg(env, "invalid or closed session handle");
 		return NULL;
 	}
 	dis_ctx_t *ctx = slot->ctx;
@@ -441,8 +455,7 @@ static jbyteArray native_encryptBuffer(JNIEnv *env, jobject thiz, jlong handle,
 	if (!slot || input == NULL) {
 		if (slot)
 			slot_release(slot);
-		(*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/IllegalArgumentException"),
-			"invalid or closed session handle");
+		jni_throw_illegal_arg(env, "invalid or closed session handle");
 		return NULL;
 	}
 	dis_ctx_t *ctx = slot->ctx;
@@ -843,8 +856,7 @@ static jbyteArray native_extractFveMetadataFromHandle(JNIEnv *env, jobject thiz,
 {
 	jni_slot_t *slot = slot_acquire(handle);
 	if (!slot) {
-		(*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/IllegalStateException"),
-			"invalid or closed session handle");
+		jni_throw_illegal_state(env, "invalid or closed session handle");
 		return NULL;
 	}
 	dis_ctx_t *ctx = slot->ctx;
@@ -948,8 +960,7 @@ static jbyteArray native_readRaw(JNIEnv *env, jobject thiz, jlong handle, jlong 
 	if (!slot || size <= 0) {
 		if (slot)
 			slot_release(slot);
-		(*env)->ThrowNew(env, (*env)->FindClass(env, "java/lang/IllegalArgumentException"),
-			"invalid or closed session handle");
+		jni_throw_illegal_arg(env, "invalid or closed session handle");
 		return NULL;
 	}
 	dis_ctx_t *ctx = slot->ctx;
