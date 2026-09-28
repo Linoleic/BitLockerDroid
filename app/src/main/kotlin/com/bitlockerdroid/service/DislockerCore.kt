@@ -646,10 +646,9 @@ class DislockerCore private constructor(
                 effectivePath = devicePath
             }
 
+            val pwdBytes = password.toByteArray(Charsets.UTF_8)
             try {
-                val handle = NativeBridge.nativeOpenVolume(
-                    effectivePath, offset, password.toByteArray(Charsets.UTF_8)
-                )
+                val handle = NativeBridge.nativeOpenVolume(effectivePath, offset, pwdBytes)
                 if (handle == 0L) {
                     val err = NativeBridge.nativeGetLastError()
                     throw UnlockException("Unlock failed: $err")
@@ -662,6 +661,8 @@ class DislockerCore private constructor(
             } catch (e: Throwable) {
                 usbSession?.close()
                 throw e
+            } finally {
+                pwdBytes.fill(0)
             }
         }
 

@@ -436,11 +436,11 @@ void dis_close_volume(dis_ctx_t *ctx)
 
 	/* Cascade unmount attached VFS volumes if not explicitly unmounted */
 	if (ctx->ntfs_vol) {
-		dis_ntfs_umount((dis_ntfs_handle_t)ctx->ntfs_vol);
+		dis_ntfs_umount(ctx->ntfs_vol);
 		ctx->ntfs_vol = NULL;
 	}
 	if (ctx->fatfs_vol) {
-		dis_fatfs_umount((dis_fatfs_handle_t)ctx->fatfs_vol);
+		dis_fatfs_umount(ctx->fatfs_vol);
 		ctx->fatfs_vol = NULL;
 	}
 

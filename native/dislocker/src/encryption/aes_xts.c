@@ -101,7 +101,17 @@ static void gf128mul_x_ble(be128 r, const be128 x)
 	PUT_UINT64_LE(rb, r, 8);
 }
 
-/* ---------- XTS core (ported from dislocker dis_aes_crypt_xts) ---------- */
+static inline uint64_t load_u64(const void *p)
+{
+	uint64_t v;
+	memcpy(&v, p, sizeof(v));
+	return v;
+}
+
+static inline void store_u64(void *p, uint64_t v)
+{
+	memcpy(p, &v, sizeof(v));
+}
 
 static int aes_xts_crypt(aes_ctx_t *crypt_ctx, aes_ctx_t *tweak_ctx, int encrypt,
 	size_t length, const unsigned char *iv, const unsigned char *input,
@@ -116,16 +126,13 @@ static int aes_xts_crypt(aes_ctx_t *crypt_ctx, aes_ctx_t *tweak_ctx, int encrypt
 	union xts_buf128 cts_scratch;
 	union xts_buf128 t_buf;
 	union xts_buf128 cts_t_buf;
-	union xts_buf128 *inbuf;
-	union xts_buf128 *outbuf;
+	const uint8_t *in = input;
+	uint8_t *out = output;
 	size_t nb_blocks = length / 16;
 	size_t remaining = length % 16;
 
 	if (length < 16)
 		return -1;
-
-	inbuf = (union xts_buf128 *)input;
-	outbuf = (union xts_buf128 *)output;
 
 	aes_encrypt_ecb(tweak_ctx, iv, t_buf.u8);
 
@@ -134,33 +141,35 @@ static int aes_xts_crypt(aes_ctx_t *crypt_ctx, aes_ctx_t *tweak_ctx, int encrypt
 	do {
 		gf128mul_x_ble(t_buf.u8, t_buf.u8);
 first:
-		/* PP <- T xor P */
-		scratch.u64[0] = inbuf->u64[0] ^ t_buf.u64[0];
-		scratch.u64[1] = inbuf->u64[1] ^ t_buf.u64[1];
+		/* PP <- T xor P (alignment-safe loads) */
+		scratch.u64[0] = load_u64(in) ^ t_buf.u64[0];
+		scratch.u64[1] = load_u64(in + 8) ^ t_buf.u64[1];
 
 		if (encrypt)
-			aes_encrypt_ecb(crypt_ctx, scratch.u8, outbuf->u8);
+			aes_encrypt_ecb(crypt_ctx, scratch.u8, scratch.u8);
 		else
-			aes_decrypt_ecb(crypt_ctx, scratch.u8, outbuf->u8);
+			aes_decrypt_ecb(crypt_ctx, scratch.u8, scratch.u8);
 
-		/* C <- T xor CC */
-		outbuf->u64[0] = outbuf->u64[0] ^ t_buf.u64[0];
-		outbuf->u64[1] = outbuf->u64[1] ^ t_buf.u64[1];
+		/* C <- T xor CC (alignment-safe stores) */
+		store_u64(out, scratch.u64[0] ^ t_buf.u64[0]);
+		store_u64(out + 8, scratch.u64[1] ^ t_buf.u64[1]);
 
-		inbuf += 1;
-		outbuf += 1;
+		in += 16;
+		out += 16;
 		nb_blocks -= 1;
 	} while (nb_blocks > 0);
 
 	/* Ciphertext stealing, if necessary */
 	if (remaining != 0) {
-		outbuf = (union xts_buf128 *)output;
-		nb_blocks = length / 16;
+		uint8_t *out_base = output;
+		size_t full_blocks = length / 16;
+		uint8_t *last_full = out_base + (full_blocks - 1) * 16;
+		uint8_t *tail = out_base + full_blocks * 16;
 
 		if (encrypt) {
-			memcpy(cts_scratch.u8, (uint8_t *)&outbuf[nb_blocks], remaining);
-			memcpy(cts_scratch.u8 + remaining, ((uint8_t *)&outbuf[nb_blocks - 1]) + remaining, 16 - remaining);
-			memcpy((uint8_t *)&outbuf[nb_blocks], (uint8_t *)&outbuf[nb_blocks - 1], remaining);
+			memcpy(cts_scratch.u8, tail, remaining);
+			memcpy(cts_scratch.u8 + remaining, last_full + remaining, 16 - remaining);
+			memcpy(tail, last_full, remaining);
 
 			gf128mul_x_ble(t_buf.u8, t_buf.u8);
 
@@ -169,33 +178,33 @@ first:
 
 			aes_encrypt_ecb(crypt_ctx, scratch.u8, scratch.u8);
 
-			(&outbuf[nb_blocks - 1])->u64[0] = scratch.u64[0] ^ t_buf.u64[0];
-			(&outbuf[nb_blocks - 1])->u64[1] = scratch.u64[1] ^ t_buf.u64[1];
+			store_u64(last_full, scratch.u64[0] ^ t_buf.u64[0]);
+			store_u64(last_full + 8, scratch.u64[1] ^ t_buf.u64[1]);
 		} else {
 			cts_t_buf.u64[0] = t_buf.u64[0];
 			cts_t_buf.u64[1] = t_buf.u64[1];
 
 			gf128mul_x_ble(t_buf.u8, t_buf.u8);
 
-			scratch.u64[0] = outbuf[nb_blocks - 1].u64[0] ^ t_buf.u64[0];
-			scratch.u64[1] = outbuf[nb_blocks - 1].u64[1] ^ t_buf.u64[1];
+			scratch.u64[0] = load_u64(last_full) ^ t_buf.u64[0];
+			scratch.u64[1] = load_u64(last_full + 8) ^ t_buf.u64[1];
 
 			aes_decrypt_ecb(crypt_ctx, scratch.u8, scratch.u8);
 
 			cts_scratch.u64[0] = scratch.u64[0] ^ t_buf.u64[0];
 			cts_scratch.u64[1] = scratch.u64[1] ^ t_buf.u64[1];
 
-			memcpy((uint8_t *)&outbuf[nb_blocks - 1], (uint8_t *)&outbuf[nb_blocks], remaining);
-			memcpy((uint8_t *)&outbuf[nb_blocks - 1] + remaining, cts_scratch.u8, 16 - remaining);
-			memcpy((uint8_t *)&outbuf[nb_blocks], cts_scratch.u8, remaining);
+			memcpy(last_full, tail, remaining);
+			memcpy(last_full + remaining, cts_scratch.u8, 16 - remaining);
+			memcpy(tail, cts_scratch.u8, remaining);
 
-			scratch.u64[0] = (&outbuf[nb_blocks - 1])->u64[0] ^ cts_t_buf.u64[0];
-			scratch.u64[1] = (&outbuf[nb_blocks - 1])->u64[1] ^ cts_t_buf.u64[1];
+			scratch.u64[0] = load_u64(last_full) ^ cts_t_buf.u64[0];
+			scratch.u64[1] = load_u64(last_full + 8) ^ cts_t_buf.u64[1];
 
 			aes_decrypt_ecb(crypt_ctx, scratch.u8, scratch.u8);
 
-			(&outbuf[nb_blocks - 1])->u64[0] = scratch.u64[0] ^ cts_t_buf.u64[0];
-			(&outbuf[nb_blocks - 1])->u64[1] = scratch.u64[1] ^ cts_t_buf.u64[1];
+			store_u64(last_full, scratch.u64[0] ^ cts_t_buf.u64[0]);
+			store_u64(last_full + 8, scratch.u64[1] ^ cts_t_buf.u64[1]);
 		}
 	}
 
