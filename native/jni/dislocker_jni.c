@@ -62,6 +62,7 @@ typedef struct {
 	dis_ctx_t *ctx;
 	pthread_mutex_t lock;
 	int used;
+	int closing;
 } jni_slot_t;
 
 static jni_slot_t g_sessions[JNI_MAX_SESSIONS];
@@ -74,6 +75,7 @@ static jlong slot_register(dis_ctx_t *ctx)
 	for (int i = 0; i < JNI_MAX_SESSIONS; i++) {
 		if (!g_sessions[i].used) {
 			g_sessions[i].ctx = ctx;
+			g_sessions[i].closing = 0;
 			g_sessions[i].used = 1;
 			h = jptr(ctx);
 			break;
@@ -93,8 +95,13 @@ static jni_slot_t *slot_acquire(jlong h)
 	pthread_mutex_lock(&g_sessions_lock);
 	for (int i = 0; i < JNI_MAX_SESSIONS; i++) {
 		jni_slot_t *s = &g_sessions[i];
-		if (s->used && s->ctx == ctx) {
+		if (s->used && !s->closing && s->ctx == ctx) {
 			pthread_mutex_lock(&s->lock);
+			if (s->closing || !s->used) {
+				pthread_mutex_unlock(&s->lock);
+				pthread_mutex_unlock(&g_sessions_lock);
+				return NULL;
+			}
 			pthread_mutex_unlock(&g_sessions_lock);
 			return s;
 		}
@@ -105,32 +112,45 @@ static jni_slot_t *slot_acquire(jlong h)
 
 static void slot_release(jni_slot_t *s)
 {
-	pthread_mutex_unlock(&s->lock);
+	if (s)
+		pthread_mutex_unlock(&s->lock);
 }
 
-/* Validates `h` and unregisters it; returns the ctx for the caller to free,
- * or NULL when the handle is stale (already closed / never opened). */
+/* Validates `h` and unregisters it; marks it closing and releases the global lock
+ * before waiting on the slot's per-session lock to prevent starvation of other slots.
+ * Returns the ctx for the caller to free, or NULL when the handle is stale. */
 static dis_ctx_t *slot_take(jlong h)
 {
 	dis_ctx_t *ctx = ptrj(h);
 	if (!ctx)
 		return NULL;
 
-	dis_ctx_t *out = NULL;
+	jni_slot_t *target = NULL;
 	pthread_mutex_lock(&g_sessions_lock);
 	for (int i = 0; i < JNI_MAX_SESSIONS; i++) {
 		jni_slot_t *s = &g_sessions[i];
-		if (s->used && s->ctx == ctx) {
-			pthread_mutex_lock(&s->lock);
-			s->used = 0;
-			s->ctx = NULL;
-			pthread_mutex_unlock(&s->lock);
-			out = ctx;
+		if (s->used && !s->closing && s->ctx == ctx) {
+			s->closing = 1;
+			target = s;
 			break;
 		}
 	}
 	pthread_mutex_unlock(&g_sessions_lock);
-	return out;
+
+	if (!target)
+		return NULL;
+
+	/* Drain any in-flight I/O without holding g_sessions_lock */
+	pthread_mutex_lock(&target->lock);
+
+	pthread_mutex_lock(&g_sessions_lock);
+	target->used = 0;
+	target->closing = 0;
+	target->ctx = NULL;
+	pthread_mutex_unlock(&g_sessions_lock);
+
+	pthread_mutex_unlock(&target->lock);
+	return ctx;
 }
 
 /* ---------------- native methods ---------------- */
@@ -174,7 +194,7 @@ static jlong native_openVolume(JNIEnv *env, jobject thiz,
 	dis_session_info_t info;
 	dis_ctx_t *ctx = dis_open_volume(cpath, (off_t)offset, pbuf, (size_t)plen, &info);
 
-	memset(pbuf, 0, (size_t)plen + 1);
+	dis_secure_zero(pbuf, (size_t)plen + 1);
 	free(pbuf);
 	(*env)->ReleaseStringUTFChars(env, path, cpath);
 
@@ -208,16 +228,25 @@ static jlong native_openVolumeRecovery(JNIEnv *env, jobject thiz,
 		return 0;
 	}
 
+	size_t key_len = strlen(ckey);
+	char *local_key = (char *)malloc(key_len + 1);
+	if (!local_key) {
+		(*env)->ReleaseStringUTFChars(env, recoveryKey, ckey);
+		(*env)->ReleaseStringUTFChars(env, path, cpath);
+		return 0;
+	}
+	memcpy(local_key, ckey, key_len + 1);
+	/* Release the JNI-owned string buffer immediately without mutating JVM memory */
+	(*env)->ReleaseStringUTFChars(env, recoveryKey, ckey);
+
 	dis_session_info_t info;
 	dis_ctx_t *ctx = dis_open_volume_recovery(cpath, (off_t)offset,
-		(const uint8_t *)ckey, strlen(ckey), &info);
+		(const uint8_t *)local_key, key_len, &info);
 
-	/* Securely wipe the recovery key held in the JNI string buffer before
-	 * releasing it: GetStringUTFChars hands out a JNI-owned copy, so clearing
-	 * it here removes the last plaintext copy from native memory. */
-	memset((void *)ckey, 0, strlen(ckey));
+	/* Securely wipe local credential copy */
+	dis_secure_zero(local_key, key_len + 1);
+	free(local_key);
 
-	(*env)->ReleaseStringUTFChars(env, recoveryKey, ckey);
 	(*env)->ReleaseStringUTFChars(env, path, cpath);
 
 	if (!ctx) {
@@ -1009,6 +1038,13 @@ jint JNI_OnLoad(JavaVM *vm, void *reserved)
 	JNIEnv *env = NULL;
 	if ((*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6) != JNI_OK)
 		return JNI_ERR;
+
+	for (int i = 0; i < JNI_MAX_SESSIONS; i++) {
+		pthread_mutex_init(&g_sessions[i].lock, NULL);
+		g_sessions[i].ctx = NULL;
+		g_sessions[i].used = 0;
+		g_sessions[i].closing = 0;
+	}
 
 	jclass cls = (*env)->FindClass(env, "com/bitlockerdroid/util/NativeBridge");
 	if (!cls)

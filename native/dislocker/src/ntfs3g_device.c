@@ -193,6 +193,7 @@ dis_ntfs_handle_t dis_ntfs_mount(dis_ctx_t *ctx, int read_only)
 		DLOG("ntfs_device_mount failed");
 		return NULL;
 	}
+	ctx->ntfs_vol = (void *)vol;
 	return (dis_ntfs_handle_t)vol;
 }
 
@@ -200,7 +201,14 @@ int dis_ntfs_umount(dis_ntfs_handle_t vol_handle)
 {
 	if (!vol_handle)
 		return 0;
-	return ntfs_umount((ntfs_volume *)vol_handle, FALSE);
+	ntfs_volume *vol = (ntfs_volume *)vol_handle;
+	if (vol->dev && vol->dev->d_private) {
+		dis_ctx_t *ctx = (dis_ctx_t *)vol->dev->d_private;
+		if (ctx->ntfs_vol == (void *)vol) {
+			ctx->ntfs_vol = NULL;
+		}
+	}
+	return ntfs_umount(vol, FALSE);
 }
 
 static void sync_volume_metadata(ntfs_volume *vol)

@@ -209,7 +209,7 @@ int dis_read_decrypted(dis_ctx_t *ctx, uint8_t *buffer, off_t offset, size_t siz
 	/* Batch-read all encrypted sectors in a single block I/O operation */
 	int r = dis_blk_read(ctx, buf, sector_start * sector_size, total);
 	if (r != (int)total) {
-		memset(buf, 0, total);
+		dis_secure_zero(buf, total);
 		free(buf);
 		return -EIO;
 	}
@@ -224,14 +224,14 @@ int dis_read_decrypted(dis_ctx_t *ctx, uint8_t *buffer, off_t offset, size_t siz
 	}
 
 	if (!ok) {
-		memset(buf, 0, total);
+		dis_secure_zero(buf, total);
 		free(buf);
 		return -EIO;
 	}
 
 	memcpy(buffer, buf + (offset % sector_size), size);
 
-	memset(buf, 0, total);
+	dis_secure_zero(buf, total);
 	free(buf);
 
 	return (int)size;
@@ -337,7 +337,7 @@ int dis_write_encrypted(dis_ctx_t *ctx, const uint8_t *buffer, off_t offset, siz
 	for (size_t i = 0; i < sector_count; i++) {
 		uint8_t *sec_ptr = enc_buf + i * sector_size;
 		if (!dis_encrypt_sector(ctx, sec_ptr, (sector_start + i) * sector_size)) {
-			memset(enc_buf, 0, total);
+			dis_secure_zero(enc_buf, total);
 			free(enc_buf);
 			return -EIO;
 		}
@@ -345,7 +345,7 @@ int dis_write_encrypted(dis_ctx_t *ctx, const uint8_t *buffer, off_t offset, siz
 
 	/* Batch write all encrypted sectors to disk in one call */
 	int wr = dis_blk_write(ctx, enc_buf, sector_start * sector_size, total);
-	memset(enc_buf, 0, total);
+	dis_secure_zero(enc_buf, total);
 	free(enc_buf);
 
 	if (wr != (int)total) {
@@ -434,11 +434,21 @@ void dis_close_volume(dis_ctx_t *ctx)
 	if (!ctx)
 		return;
 
+	/* Cascade unmount attached VFS volumes if not explicitly unmounted */
+	if (ctx->ntfs_vol) {
+		dis_ntfs_umount((dis_ntfs_handle_t)ctx->ntfs_vol);
+		ctx->ntfs_vol = NULL;
+	}
+	if (ctx->fatfs_vol) {
+		dis_fatfs_umount((dis_fatfs_handle_t)ctx->fatfs_vol);
+		ctx->fatfs_vol = NULL;
+	}
+
 	dis_io_destroy(ctx);
 
 	dis_metadata_free(ctx);
 
-	memset(ctx->fvek, 0, sizeof(ctx->fvek));
-	memset(ctx, 0, sizeof(dis_ctx_t));
+	dis_secure_zero(ctx->fvek, sizeof(ctx->fvek));
+	dis_secure_zero(ctx, sizeof(dis_ctx_t));
 	free(ctx);
 }

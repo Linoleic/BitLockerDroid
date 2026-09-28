@@ -238,7 +238,7 @@ static int stretch_user_key(const uint8_t *user_hash, const uint8_t *salt, uint8
 
 	stretch_key(&ch, result);
 
-	memset(&ch, 0, sizeof(ch));
+	dis_secure_zero(&ch, sizeof(ch));
 	return TRUE;
 }
 
@@ -258,9 +258,9 @@ static int user_key(const uint8_t *user_password, size_t password_len,
 
 	int ok = stretch_user_key(user_hash, salt, result_key);
 
-	memset(utf16, 0, utf16_len);
+	dis_secure_zero(utf16, utf16_len);
 	free(utf16);
-	memset(user_hash, 0, sizeof(user_hash));
+	dis_secure_zero(user_hash, sizeof(user_hash));
 
 	return ok;
 }
@@ -322,18 +322,24 @@ static int recovery_key_to_binary(const uint8_t *key, size_t key_len, uint8_t *o
 		return FALSE;
 
 	/* each group of 6 digits -> uint16 (block/11), stored little-endian */
+	int ret = TRUE;
 	for (int g = 0; g < 8; g++) {
 		uint8_t group[6];
 		memcpy(group, digits + g * 6, 6);
 
 		uint16_t short_pw;
-		if (!recovery_valid_block(group, &short_pw))
-			return FALSE;
+		if (!recovery_valid_block(group, &short_pw)) {
+			dis_secure_zero(group, sizeof(group));
+			ret = FALSE;
+			break;
+		}
+		dis_secure_zero(group, sizeof(group));
 
 		out[g * 2]     = (uint8_t)(short_pw & 0xff);
 		out[g * 2 + 1] = (uint8_t)(short_pw >> 8);
 	}
-	return TRUE;
+	dis_secure_zero(digits, sizeof(digits));
+	return ret;
 }
 
 /* ---------------- datum walking (datums.c) ---------------- */
@@ -577,10 +583,12 @@ int dis_retrieve_keys(dis_ctx_t *ctx, const uint8_t *user_password,
 		uint8_t rk_pw_hash[32];
 		sha256(unwrap_key, RECOVERY_KEY_BINARY_LEN, rk_pw_hash);
 		stretch_user_key(rk_pw_hash, salt, unwrap_key);
+		dis_secure_zero(rk_pw_hash, sizeof(rk_pw_hash));
 		unwrap_key_len = 32;
 	} else {
 		if (!user_key(user_password, password_len, salt, unwrap_key)) {
 			dis_set_error("Password stretching failed");
+			dis_secure_zero(salt, sizeof(salt));
 			return FALSE;
 		}
 		unwrap_key_len = 32;
@@ -597,16 +605,19 @@ int dis_retrieve_keys(dis_ctx_t *ctx, const uint8_t *user_password,
 		} else {
 			dis_set_error("Wrong password: VMK decryption failed (MAC mismatch)");
 		}
-		memset(unwrap_key, 0, sizeof(unwrap_key));
+		dis_secure_zero(unwrap_key, sizeof(unwrap_key));
+		dis_secure_zero(salt, sizeof(salt));
 		return FALSE;
 	}
-	memset(unwrap_key, 0, sizeof(unwrap_key));
+	dis_secure_zero(unwrap_key, sizeof(unwrap_key));
+	dis_secure_zero(salt, sizeof(salt));
 
 	/* The decrypted VMK buffer IS a datum_key_t: the VMK value follows the
 	 * datum_key_t header directly (dislocker get_vmk returns the decrypted
 	 * AES-CCM payload as a datum_key_t*). */
 	if (vmk_len < sizeof(datum_key_t)) {
 		dis_set_error("Decrypted VMK too short");
+		dis_secure_zero(vmk_buf, sizeof(vmk_buf));
 		return FALSE;
 	}
 	uint8_t *vmk_key = vmk_buf + sizeof(datum_key_t);
@@ -637,6 +648,7 @@ int dis_retrieve_keys(dis_ctx_t *ctx, const uint8_t *user_password,
 
 	if (!found) {
 		dis_set_error("No FVEK datum could be decrypted with the VMK");
+		dis_secure_zero(vmk_buf, sizeof(vmk_buf));
 		return FALSE;
 	}
 
@@ -644,6 +656,8 @@ int dis_retrieve_keys(dis_ctx_t *ctx, const uint8_t *user_password,
 	 * Skip the datum_key_t header to get the raw FVEK key material. */
 	if (fvek_len <= sizeof(datum_key_t)) {
 		dis_set_error("FVEK too short (%zu bytes)", fvek_len);
+		dis_secure_zero(vmk_buf, sizeof(vmk_buf));
+		dis_secure_zero(fvek_buf, sizeof(fvek_buf));
 		return FALSE;
 	}
 	uint8_t *fvek_key = fvek_buf + sizeof(datum_key_t);
@@ -653,8 +667,8 @@ int dis_retrieve_keys(dis_ctx_t *ctx, const uint8_t *user_password,
 	memcpy(ctx->fvek, fvek_key, fvek_key_len > 64 ? 64 : fvek_key_len);
 	ctx->fvek_len = (int)(fvek_key_len > 64 ? 64 : fvek_key_len);
 
-	memset(vmk_buf, 0, sizeof(vmk_buf));
-	memset(fvek_buf, 0, sizeof(fvek_buf));
+	dis_secure_zero(vmk_buf, sizeof(vmk_buf));
+	dis_secure_zero(fvek_buf, sizeof(fvek_buf));
 
 	return TRUE;
 }

@@ -55,12 +55,29 @@ struct _dis_ctx {
 
 	uint64_t volume_size;
 
+	/* Attached VFS filesystem volumes */
+	void *ntfs_vol;
+	void *fatfs_vol;
+
 	/* Persistent I/O daemon (root helper over pipes) */
 	int io_in_fd;
 	int io_out_fd;
 	pid_t io_pid;
 	pthread_mutex_t io_lock;
 };
+
+/* Dead-store elimination-proof memory wipe for sensitive key material */
+static inline void dis_secure_zero(void *p, size_t n)
+{
+	volatile unsigned char *v = (volatile unsigned char *)p;
+	while (n--) {
+		*v++ = 0;
+	}
+}
+
+/* VFS forward declarations for cascade teardown */
+int dis_ntfs_umount(void *vol_handle);
+int dis_fatfs_umount(void *vol_handle);
 
 /* metadata.c */
 int  dis_metadata_parse(dis_ctx_t *ctx);

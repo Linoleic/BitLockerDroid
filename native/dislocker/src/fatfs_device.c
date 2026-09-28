@@ -264,6 +264,7 @@ dis_fatfs_handle_t dis_fatfs_mount(dis_ctx_t *ctx, int read_only) {
         return NULL;
     }
 
+    ctx->fatfs_vol = (void *)slot;
     DLOG("Successfully mounted FatFs volume on '%s'", slot->drive_str);
     return (dis_fatfs_handle_t)slot;
 }
@@ -276,6 +277,9 @@ int dis_fatfs_umount(dis_fatfs_handle_t vol_handle) {
     if (!slot->in_use) {
         pthread_mutex_unlock(&g_slot_lock);
         return 0;
+    }
+    if (slot->ctx && slot->ctx->fatfs_vol == (void *)slot) {
+        slot->ctx->fatfs_vol = NULL;
     }
     f_unmount(slot->drive_str);
     slot->in_use = 0;
