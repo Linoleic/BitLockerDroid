@@ -35,19 +35,15 @@ import com.bitlockerdroid.util.PreferenceHelper
 @Composable
 fun DetectedVolumeCard(
     volume: DetectedVolume,
+    hasSavedCredential: Boolean = false,
+    canBiometric: Boolean = false,
     onMountReadOnlyChange: (Boolean) -> Unit,
     onUnlock: () -> Unit,
     onBiometricUnlock: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
-    var isReadOnly by remember(volume.devicePath, volume.guid) {
-        mutableStateOf(PreferenceHelper.isVolumeReadOnly(context, volume.guid, volume.devicePath))
-    }
-    val hasSavedCredential = remember(volume.guid) {
-        !volume.guid.isNullOrBlank() && PreferenceHelper.getRememberedPassword(context, volume.guid) != null
-    }
-    val canBiometric = remember {
-        com.bitlockerdroid.util.BiometricAuthHelper.canAuthenticate(context)
+    var isReadOnly by remember(volume.devicePath, volume.isReadOnly) {
+        mutableStateOf(volume.isReadOnly)
     }
     var showDisasterDialog by remember { mutableStateOf(false) }
 

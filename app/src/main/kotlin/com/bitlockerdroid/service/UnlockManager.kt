@@ -274,13 +274,15 @@ object UnlockManager {
                     }
                 }
                 val prev = detected[devicePath]
-                if (prev == null || prev.guid != effectiveGuid || prev.recoveryKeyId != effectiveRecoveryKeyId || prev.deviceName != devInfo.friendlyName) {
+                val isRo = com.bitlockerdroid.util.PreferenceHelper.isVolumeReadOnly(com.bitlockerdroid.util.ContextProvider.app, effectiveGuid, devicePath)
+                if (prev == null || prev.guid != effectiveGuid || prev.recoveryKeyId != effectiveRecoveryKeyId || prev.deviceName != devInfo.friendlyName || prev.isReadOnly != isRo) {
                     detected[devicePath] = DetectedVolume(
                         devicePath = devicePath,
                         guid = effectiveGuid,
                         recoveryKeyId = effectiveRecoveryKeyId,
                         deviceName = devInfo.friendlyName,
-                        capacity = devInfo.sizeBytes
+                        capacity = devInfo.sizeBytes,
+                        isReadOnly = isRo
                     )
                     changed = true
                 }
@@ -512,18 +514,20 @@ object UnlockManager {
                 manuallyLockedGuids.add(guid)
             }
             manuallyLockedGuids.add(devicePath)
-            val fallbackLabel = app?.getString(R.string.notification_drive_title) ?: "BitLocker"
+            val fallbackLabel = app.getString(R.string.notification_drive_title)
             effectiveLabel = core?.volumeLabel?.ifBlank { devInfo.friendlyName.ifBlank { fallbackLabel } }
                 ?: devInfo.friendlyName.ifBlank { fallbackLabel }
 
             LogFile.write("app", "UnlockManager.safeEject: ejecting $devicePath ($effectiveLabel, guid=$guid, rkId=$recoveryKeyId)")
 
+            val isRo = com.bitlockerdroid.util.PreferenceHelper.isVolumeReadOnly(app, guid, devicePath)
             detected[devicePath] = DetectedVolume(
                 devicePath = devicePath,
                 guid = guid,
                 recoveryKeyId = recoveryKeyId,
                 deviceName = devInfo.friendlyName,
-                capacity = devInfo.sizeBytes
+                capacity = devInfo.sizeBytes,
+                isReadOnly = isRo
             )
         }
         sessionCredentials.remove(devicePath)
@@ -1014,7 +1018,8 @@ data class DetectedVolume(
     val guid: String? = null,
     val recoveryKeyId: String? = null,
     val deviceName: String = "",
-    val capacity: Long = 0L
+    val capacity: Long = 0L,
+    val isReadOnly: Boolean = false
 )
 
 /** An unencrypted storage volume (e.g. FAT32, exFAT) managed natively by Android OS. */

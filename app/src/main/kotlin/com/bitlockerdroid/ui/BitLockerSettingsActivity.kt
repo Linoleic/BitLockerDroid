@@ -56,14 +56,15 @@ import kotlinx.coroutines.withContext
  */
 class BitLockerSettingsActivity : FragmentActivity() {
 
-    private var unlockedVolumesState = mutableStateListOf<UnlockedVolume>()
-    private var detectedVolumesState = mutableStateListOf<DetectedVolume>()
-    private var unencryptedVolumesState = mutableStateListOf<UnencryptedVolume>()
+    private var unlockedVolumesState = mutableStateOf<List<UnlockedVolume>>(emptyList())
+    private var detectedVolumesState = mutableStateOf<List<DetectedVolume>>(emptyList())
+    private var unencryptedVolumesState = mutableStateOf<List<UnencryptedVolume>>(emptyList())
     private var isRefreshingState = mutableStateOf(false)
-    private var ejectingPathsState = mutableStateListOf<String>()
+    private var ejectingPathsState = mutableStateOf<Set<String>>(emptySet())
     private var showLogDialogState = mutableStateOf(false)
     private var logContentState = mutableStateOf("")
-    private var rememberedCredentialsState = mutableStateListOf<PreferenceHelper.SavedCredential>()
+    private var rememberedCredentialsState = mutableStateOf<List<PreferenceHelper.SavedCredential>>(emptyList())
+    private var canBiometricState = mutableStateOf(false)
 
     private var mountReadOnlyState = mutableStateOf(false)
     private var useRootAccessState = mutableStateOf(true)
@@ -77,6 +78,79 @@ class BitLockerSettingsActivity : FragmentActivity() {
     private var lastScanTimestamp = 0L
     private var themeModeState = mutableStateOf(com.bitlockerdroid.ui.theme.ThemeMode.fromString(PreferenceHelper.themeMode))
     private var currentLanguageState = mutableStateOf(PreferenceHelper.appLanguage)
+
+    // Stable action references to prevent recomposition leaks
+    private val onThemeModeChangeAction: (ThemeMode) -> Unit = { newMode ->
+        themeModeState.value = newMode
+        PreferenceHelper.themeMode = newMode.name.lowercase()
+    }
+    private val onLanguageChangeAction: (String) -> Unit = { newLang ->
+        currentLanguageState.value = newLang
+        com.bitlockerdroid.util.LocaleHelper.applyLanguage(newLang)
+        recreate()
+    }
+    private val onToggleAutoUnlockAction: (String, Boolean) -> Unit = { id, enabled ->
+        PreferenceHelper.setAutoUnlockEnabled(this, id, enabled)
+        refreshRememberedCredentials()
+    }
+    private val onMountReadOnlyChangeAction: (Boolean) -> Unit = { _ ->
+        refreshData()
+        BitLockerDocumentsProvider.notifyRootsChanged(this)
+    }
+    private val onUseRootAccessChangeAction: (Boolean) -> Unit = { target ->
+        if (target != useRootAccessState.value) {
+            pendingRootSwitchTargetState.value = target
+        }
+    }
+    private val onConfirmSwitchModeAction: () -> Unit = {
+        val target = pendingRootSwitchTargetState.value
+        if (target != null) {
+            isSwitchingModeProcessingState.value = true
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    if (unlockedVolumesState.value.isNotEmpty()) {
+                        UnlockManager.safeEjectAll()
+                    }
+                    VirtualStorageMountManager.unmountAll()
+                } catch (_: Throwable) {}
+                PreferenceHelper.useRootAccess = target
+                RootAccess.invalidateCache()
+                withContext(Dispatchers.Main) {
+                    com.bitlockerdroid.util.AppRestarter.restartApp(this@BitLockerSettingsActivity)
+                }
+            }
+        }
+    }
+    private val onDismissSwitchModeAction: () -> Unit = {
+        if (!isSwitchingModeProcessingState.value) {
+            pendingRootSwitchTargetState.value = null
+        }
+    }
+    private val onSuppressCorruptNotificationChangeAction: (Boolean) -> Unit = { enabled ->
+        suppressCorruptNotificationState.value = enabled
+        PreferenceHelper.suppressCorruptNotification = enabled
+    }
+    private val onOpenAdvancedSettingsAction: () -> Unit = { showAdvancedSettingsDialogState.value = true }
+    private val onCloseAdvancedSettingsAction: () -> Unit = { showAdvancedSettingsDialogState.value = false }
+    private val onRefreshAndScanAction: () -> Unit = { refreshAndScan(showToast = true) }
+    private val onOpenLogAction: () -> Unit = { openLogViewer() }
+    private val onCloseLogAction: () -> Unit = { showLogDialogState.value = false }
+    private val onClearLogAction: () -> Unit = { clearLogFile() }
+    private val onDeleteCredentialAction: (String) -> Unit = { id ->
+        PreferenceHelper.clearRememberedPassword(this, id)
+        refreshRememberedCredentials()
+        Toast.makeText(this, R.string.credential_cleared_toast, Toast.LENGTH_SHORT).show()
+    }
+    private val onClearAllCredentialsAction: () -> Unit = {
+        PreferenceHelper.clearAllRememberedPasswords(this)
+        refreshRememberedCredentials()
+        Toast.makeText(this, R.string.settings_credentials_cleared, Toast.LENGTH_SHORT).show()
+    }
+    private val onOpenVolumeAction: (String) -> Unit = { path -> openVolumeInFiles(path) }
+    private val onOpenUnencryptedAction: (UnencryptedVolume) -> Unit = { vol -> openUnencryptedVolumeInFiles(vol) }
+    private val onLockVolumeAction: (String) -> Unit = { path -> lockVolume(path) }
+    private val onUnlockDetectedAction: (String) -> Unit = { path -> promptUnlock(path) }
+    private val onBiometricUnlockDetectedAction: (String) -> Unit = { path -> biometricUnlock(path) }
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(com.bitlockerdroid.util.LocaleHelper.wrapContext(newBase))
@@ -121,94 +195,63 @@ class BitLockerSettingsActivity : FragmentActivity() {
         setContent {
             val currentTheme by themeModeState
             val currentLang by currentLanguageState
+            val unlockedVolumes by unlockedVolumesState
+            val detectedVolumes by detectedVolumesState
+            val unencryptedVolumes by unencryptedVolumesState
+            val isRefreshing by isRefreshingState
+            val showLogDialog by showLogDialogState
+            val logContent by logContentState
+            val rememberedCredentials by rememberedCredentialsState
+            val canBiometric by canBiometricState
+            val ejectingPaths by ejectingPathsState
+            val useRootAccess by useRootAccessState
+            val rootSolution by rootSolutionState
+            val showAdvancedSettingsDialog by showAdvancedSettingsDialogState
+            val suppressCorruptNotification by suppressCorruptNotificationState
+            val pendingRootSwitchTarget by pendingRootSwitchTargetState
+            val isSwitchingModeProcessing by isSwitchingModeProcessingState
+
             BitLockerTheme(themeMode = currentTheme) {
                 MainAppScreen(
                     initialTab = intent?.getIntExtra("tab", 0) ?: 0,
-                    unlockedVolumes = unlockedVolumesState,
-                    detectedVolumes = detectedVolumesState,
-                    unencryptedVolumes = unencryptedVolumesState,
-                    isRefreshing = isRefreshingState.value,
-                    showLogDialog = showLogDialogState.value,
-                    logContent = logContentState.value,
-                    rememberedCredentials = rememberedCredentialsState,
+                    unlockedVolumes = unlockedVolumes,
+                    detectedVolumes = detectedVolumes,
+                    unencryptedVolumes = unencryptedVolumes,
+                    isRefreshing = isRefreshing,
+                    showLogDialog = showLogDialog,
+                    logContent = logContent,
+                    rememberedCredentials = rememberedCredentials,
+                    canBiometric = canBiometric,
                     themeMode = currentTheme,
                     currentLanguage = currentLang,
-                    useRootAccess = useRootAccessState.value,
-                    rootSolution = rootSolutionState.value,
-                    showAdvancedSettingsDialog = showAdvancedSettingsDialogState.value,
-                    suppressCorruptNotification = suppressCorruptNotificationState.value,
-                    onThemeModeChange = { newMode ->
-                        themeModeState.value = newMode
-                        PreferenceHelper.themeMode = newMode.name.lowercase()
-                    },
-                    onLanguageChange = { newLang ->
-                        currentLanguageState.value = newLang
-                        com.bitlockerdroid.util.LocaleHelper.applyLanguage(newLang)
-                        recreate()
-                    },
-                    onToggleAutoUnlock = { id, enabled ->
-                        PreferenceHelper.setAutoUnlockEnabled(this, id, enabled)
-                        refreshRememberedCredentials()
-                    },
-                    onMountReadOnlyChange = { enabled ->
-                        refreshData()
-                        BitLockerDocumentsProvider.notifyRootsChanged(this)
-                    },
-                    pendingRootSwitchTarget = pendingRootSwitchTargetState.value,
-                    isSwitchingModeProcessing = isSwitchingModeProcessingState.value,
-                    onUseRootAccessChange = { target ->
-                        if (target != useRootAccessState.value) {
-                            pendingRootSwitchTargetState.value = target
-                        }
-                    },
-                    onConfirmSwitchMode = {
-                        val target = pendingRootSwitchTargetState.value ?: return@MainAppScreen
-                        isSwitchingModeProcessingState.value = true
-                        lifecycleScope.launch(Dispatchers.IO) {
-                            try {
-                                if (unlockedVolumesState.isNotEmpty()) {
-                                    UnlockManager.safeEjectAll()
-                                }
-                                VirtualStorageMountManager.unmountAll()
-                            } catch (_: Throwable) {}
-                            PreferenceHelper.useRootAccess = target
-                            RootAccess.invalidateCache()
-                            withContext(Dispatchers.Main) {
-                                com.bitlockerdroid.util.AppRestarter.restartApp(this@BitLockerSettingsActivity)
-                            }
-                        }
-                    },
-                    onDismissSwitchMode = {
-                        if (!isSwitchingModeProcessingState.value) {
-                            pendingRootSwitchTargetState.value = null
-                        }
-                    },
-                    onSuppressCorruptNotificationChange = { enabled ->
-                        suppressCorruptNotificationState.value = enabled
-                        PreferenceHelper.suppressCorruptNotification = enabled
-                    },
-                    onOpenAdvancedSettings = { showAdvancedSettingsDialogState.value = true },
-                    onCloseAdvancedSettings = { showAdvancedSettingsDialogState.value = false },
-                    onRefreshAndScan = { refreshAndScan(showToast = true) },
-                    onOpenLog = { openLogViewer() },
-                    onCloseLog = { showLogDialogState.value = false },
-                    onClearLog = { clearLogFile() },
-                    onDeleteCredential = { id ->
-                        PreferenceHelper.clearRememberedPassword(this, id)
-                        refreshRememberedCredentials()
-                        Toast.makeText(this, R.string.credential_cleared_toast, Toast.LENGTH_SHORT).show()
-                    },
-                    onClearAllCredentials = {
-                        PreferenceHelper.clearAllRememberedPasswords(this)
-                        refreshRememberedCredentials()
-                        Toast.makeText(this, R.string.settings_credentials_cleared, Toast.LENGTH_SHORT).show()
-                    },
-                    onOpenVolume = { path -> openVolumeInFiles(path) },
-                    onOpenUnencrypted = { vol -> openUnencryptedVolumeInFiles(vol) },
-                    onLockVolume = { path -> lockVolume(path) },
-                    onUnlockDetected = { path -> promptUnlock(path) },
-                    onBiometricUnlockDetected = { path -> biometricUnlock(path) },
-                    ejectingPaths = ejectingPathsState.toSet()
+                    useRootAccess = useRootAccess,
+                    rootSolution = rootSolution,
+                    showAdvancedSettingsDialog = showAdvancedSettingsDialog,
+                    suppressCorruptNotification = suppressCorruptNotification,
+                    onThemeModeChange = onThemeModeChangeAction,
+                    onLanguageChange = onLanguageChangeAction,
+                    onToggleAutoUnlock = onToggleAutoUnlockAction,
+                    onMountReadOnlyChange = onMountReadOnlyChangeAction,
+                    pendingRootSwitchTarget = pendingRootSwitchTarget,
+                    isSwitchingModeProcessing = isSwitchingModeProcessing,
+                    onUseRootAccessChange = onUseRootAccessChangeAction,
+                    onConfirmSwitchMode = onConfirmSwitchModeAction,
+                    onDismissSwitchMode = onDismissSwitchModeAction,
+                    onSuppressCorruptNotificationChange = onSuppressCorruptNotificationChangeAction,
+                    onOpenAdvancedSettings = onOpenAdvancedSettingsAction,
+                    onCloseAdvancedSettings = onCloseAdvancedSettingsAction,
+                    onRefreshAndScan = onRefreshAndScanAction,
+                    onOpenLog = onOpenLogAction,
+                    onCloseLog = onCloseLogAction,
+                    onClearLog = onClearLogAction,
+                    onDeleteCredential = onDeleteCredentialAction,
+                    onClearAllCredentials = onClearAllCredentialsAction,
+                    onOpenVolume = onOpenVolumeAction,
+                    onOpenUnencrypted = onOpenUnencryptedAction,
+                    onLockVolume = onLockVolumeAction,
+                    onUnlockDetected = onUnlockDetectedAction,
+                    onBiometricUnlockDetected = onBiometricUnlockDetectedAction,
+                    ejectingPaths = ejectingPaths
                 )
             }
         }
@@ -245,6 +288,18 @@ class BitLockerSettingsActivity : FragmentActivity() {
         suppressCorruptNotificationState.value = PreferenceHelper.suppressCorruptNotification
         refreshRememberedCredentials()
         refreshRootSolution()
+        refreshBiometricStatus()
+    }
+
+    private fun refreshBiometricStatus() {
+        lifecycleScope.launch(Dispatchers.Default) {
+            val canBio = BiometricAuthHelper.canAuthenticate(this@BitLockerSettingsActivity)
+            withContext(Dispatchers.Main) {
+                if (canBiometricState.value != canBio) {
+                    canBiometricState.value = canBio
+                }
+            }
+        }
     }
 
     private fun refreshRootSolution(force: Boolean = false) {
@@ -260,8 +315,9 @@ class BitLockerSettingsActivity : FragmentActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             val creds = PreferenceHelper.getRememberedCredentials(this@BitLockerSettingsActivity)
             withContext(Dispatchers.Main) {
-                rememberedCredentialsState.clear()
-                rememberedCredentialsState.addAll(creds)
+                if (rememberedCredentialsState.value != creds) {
+                    rememberedCredentialsState.value = creds
+                }
             }
         }
     }
@@ -272,12 +328,15 @@ class BitLockerSettingsActivity : FragmentActivity() {
             val currentDetected = UnlockManager.detectedVolumes
             val currentUnencrypted = UnlockManager.unencryptedVolumes
             withContext(Dispatchers.Main) {
-                unlockedVolumesState.clear()
-                unlockedVolumesState.addAll(currentUnlocked)
-                detectedVolumesState.clear()
-                detectedVolumesState.addAll(currentDetected)
-                unencryptedVolumesState.clear()
-                unencryptedVolumesState.addAll(currentUnencrypted)
+                if (unlockedVolumesState.value != currentUnlocked) {
+                    unlockedVolumesState.value = currentUnlocked
+                }
+                if (detectedVolumesState.value != currentDetected) {
+                    detectedVolumesState.value = currentDetected
+                }
+                if (unencryptedVolumesState.value != currentUnencrypted) {
+                    unencryptedVolumesState.value = currentUnencrypted
+                }
             }
         }
     }
@@ -392,13 +451,13 @@ class BitLockerSettingsActivity : FragmentActivity() {
     }
 
     private fun lockVolume(devicePath: String) {
-        if (ejectingPathsState.contains(devicePath)) return
-        ejectingPathsState.add(devicePath)
+        if (ejectingPathsState.value.contains(devicePath)) return
+        ejectingPathsState.value = ejectingPathsState.value + devicePath
         LogFile.write("app", "safe eject requested for $devicePath")
         lifecycleScope.launch(Dispatchers.IO) {
             val result = UnlockManager.safeEject(devicePath)
             withContext(Dispatchers.Main) {
-                ejectingPathsState.remove(devicePath)
+                ejectingPathsState.value = ejectingPathsState.value - devicePath
                 if (result.isSuccess) {
                     val label = result.getOrNull() ?: ""
                     Toast.makeText(
@@ -562,6 +621,7 @@ fun MainAppScreen(
     showLogDialog: Boolean,
     logContent: String,
     rememberedCredentials: List<PreferenceHelper.SavedCredential>,
+    canBiometric: Boolean = false,
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     currentLanguage: String = PreferenceHelper.LANG_SYSTEM,
     useRootAccess: Boolean = true,
@@ -693,6 +753,9 @@ fun MainAppScreen(
                 .padding(innerPadding)
         ) {
             if (selectedTab == 0) {
+                val savedCredentialGuids = remember(rememberedCredentials) {
+                    rememberedCredentials.mapNotNull { it.id.takeIf { id -> id.isNotBlank() }?.lowercase() }.toSet()
+                }
                 VolumesTabContent(
                     unlockedVolumes = unlockedVolumes,
                     detectedVolumes = detectedVolumes,
@@ -700,6 +763,8 @@ fun MainAppScreen(
                     isRefreshing = isRefreshing,
                     ejectingPaths = ejectingPaths,
                     isVirtualMountSupported = useRootAccess && (rootSolution.isDeviceRooted || RootAccess.cachedHasSu == true),
+                    canBiometric = canBiometric,
+                    savedCredentialGuids = savedCredentialGuids,
                     onMountReadOnlyChange = onMountReadOnlyChange,
                     onRefreshAndScan = onRefreshAndScan,
                     onOpenVolume = onOpenVolume,

@@ -28,6 +28,8 @@ fun VolumesTabContent(
     isRefreshing: Boolean,
     ejectingPaths: Set<String> = emptySet(),
     isVirtualMountSupported: Boolean = false,
+    canBiometric: Boolean = false,
+    savedCredentialGuids: Set<String> = emptySet(),
     onMountReadOnlyChange: (Boolean) -> Unit,
     onRefreshAndScan: () -> Unit,
     onOpenVolume: (String) -> Unit,
@@ -37,6 +39,7 @@ fun VolumesTabContent(
     onBiometricUnlockDetected: ((String) -> Unit)? = null
 ) {
     val activeMounts by VirtualStorageMountManager.activeMountsFlow.collectAsState()
+    val shareStates by com.bitlockerdroid.share.LanShareManager.shareStates.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize()) {
         AnimatedVisibility(visible = isRefreshing) {
@@ -81,7 +84,10 @@ fun VolumesTabContent(
                         key = { "detected_${it.devicePath}" },
                         contentType = { "detected_volume" }
                     ) { detected ->
-                        val onUnlock = remember(detected.devicePath) { { onUnlockDetected(detected.devicePath) } }
+                        val hasSavedCredential = remember(detected.guid, savedCredentialGuids) {
+                            !detected.guid.isNullOrBlank() && detected.guid.lowercase() in savedCredentialGuids
+                        }
+                        val onUnlock = remember(detected.devicePath, onUnlockDetected) { { onUnlockDetected(detected.devicePath) } }
                         val onBiometricUnlock = remember(detected.devicePath, onBiometricUnlockDetected) {
                             if (onBiometricUnlockDetected != null) { { onBiometricUnlockDetected(detected.devicePath) } } else null
                         }
@@ -92,6 +98,8 @@ fun VolumesTabContent(
                         ) {
                             DetectedVolumeCard(
                                 volume = detected,
+                                hasSavedCredential = hasSavedCredential,
+                                canBiometric = canBiometric,
                                 onMountReadOnlyChange = onMountReadOnlyChange,
                                 onUnlock = onUnlock,
                                 onBiometricUnlock = onBiometricUnlock
@@ -122,8 +130,10 @@ fun VolumesTabContent(
                     ) { volume ->
                         val vMount = activeMounts[volume.devicePath]
                             ?: activeMounts.values.firstOrNull { !volume.guid.isNullOrBlank() && it.volumeGuid.equals(volume.guid, ignoreCase = true) }
-                        val onOpen = remember(volume.devicePath) { { onOpenVolume(volume.devicePath) } }
-                        val onLock = remember(volume.devicePath) { { onLockVolume(volume.devicePath) } }
+                        val effectiveShareGuid = volume.guid ?: volume.devicePath
+                        val shareState = shareStates[effectiveShareGuid]
+                        val onOpen = remember(volume.devicePath, onOpenVolume) { { onOpenVolume(volume.devicePath) } }
+                        val onLock = remember(volume.devicePath, onLockVolume) { { onLockVolume(volume.devicePath) } }
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -132,6 +142,7 @@ fun VolumesTabContent(
                             UnlockedVolumeCard(
                                 volume = volume,
                                 vMount = vMount,
+                                shareState = shareState,
                                 isVirtualMountSupported = isVirtualMountSupported,
                                 onMountReadOnlyChange = onMountReadOnlyChange,
                                 onOpen = onOpen,
@@ -162,7 +173,7 @@ fun VolumesTabContent(
                         key = { "unencrypted_${it.id}" },
                         contentType = { "unencrypted_volume" }
                     ) { unenc ->
-                        val onOpen = remember(unenc.id) { { onOpenUnencrypted(unenc) } }
+                        val onOpen = remember(unenc.id, onOpenUnencrypted) { { onOpenUnencrypted(unenc) } }
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()

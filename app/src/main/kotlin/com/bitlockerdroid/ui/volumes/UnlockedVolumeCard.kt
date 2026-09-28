@@ -51,6 +51,7 @@ import kotlinx.coroutines.withContext
 fun UnlockedVolumeCard(
     volume: UnlockedVolume,
     vMount: VirtualMountInfo? = null,
+    shareState: com.bitlockerdroid.share.LanShareState? = null,
     isVirtualMountSupported: Boolean = false,
     onMountReadOnlyChange: (Boolean) -> Unit,
     onOpen: () -> Unit,
@@ -63,7 +64,6 @@ fun UnlockedVolumeCard(
     var showBenchmarkDialog by remember { mutableStateOf(false) }
     var showDisasterDialog by remember { mutableStateOf(false) }
     var showLanShareDialog by remember { mutableStateOf(false) }
-    val shareStates by com.bitlockerdroid.share.LanShareManager.shareStates.collectAsState()
     var showRepairConfirm by remember { mutableStateOf(false) }
     var showStandaloneDiagnostic by remember { mutableStateOf(false) }
     var isRepairing by remember { mutableStateOf(false) }
@@ -355,7 +355,6 @@ fun UnlockedVolumeCard(
 
             // LAN Wireless Sharing Section (Card-level, no need to expand)
             val effectiveShareGuid = volume.guid ?: volume.devicePath
-            val shareState = shareStates[effectiveShareGuid]
             val isVolumeSharing = shareState?.isRunning == true
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -769,8 +768,8 @@ fun UnlockedVolumeCard(
             Spacer(modifier = Modifier.height(14.dp))
 
             // Read-Only Access Mode Control (每个盘符独立控制)
-            var isVolumeRo by remember(volume.devicePath, volume.guid) {
-                mutableStateOf(PreferenceHelper.isVolumeReadOnly(context, volume.guid, volume.devicePath))
+            var isVolumeRo by remember(volume.devicePath, volume.canWrite) {
+                mutableStateOf(!volume.canWrite)
             }
             Surface(
                 shape = RoundedCornerShape(12.dp),
