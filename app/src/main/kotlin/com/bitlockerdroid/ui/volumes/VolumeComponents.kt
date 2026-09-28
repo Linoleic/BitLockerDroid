@@ -33,16 +33,17 @@ fun SectionHeader(title: String, count: Int, isWarning: Boolean) {
             color = if (isWarning) WarningAmber else MaterialTheme.colorScheme.primary
         )
         Spacer(modifier = Modifier.width(8.dp))
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = if (isWarning) WarningAmber.copy(alpha = 0.15f) else MaterialTheme.colorScheme.primaryContainer
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .background(if (isWarning) WarningAmber.copy(alpha = 0.15f) else MaterialTheme.colorScheme.primaryContainer)
+                .padding(horizontal = 8.dp, vertical = 2.dp)
         ) {
             Text(
                 text = count.toString(),
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
-                color = if (isWarning) WarningAmber else MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                color = if (isWarning) WarningAmber else MaterialTheme.colorScheme.onPrimaryContainer
             )
         }
     }

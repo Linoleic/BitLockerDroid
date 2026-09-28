@@ -1,10 +1,8 @@
 package com.bitlockerdroid.ui.volumes
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,10 +21,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -36,15 +35,18 @@ import com.bitlockerdroid.R
 import com.bitlockerdroid.service.UnlockedVolume
 import com.bitlockerdroid.service.VirtualStorageMountManager
 import com.bitlockerdroid.service.VirtualStorageMountManager.VirtualMountInfo
-import com.bitlockerdroid.ui.dialogs.BenchmarkDialog
-import com.bitlockerdroid.ui.dialogs.DisasterRecoveryDialog
-import com.bitlockerdroid.ui.dialogs.LanShareDialog
-import com.bitlockerdroid.ui.dialogs.RepairConfirmDialog
-import com.bitlockerdroid.ui.dialogs.StandaloneDiagnosticDialog
 import com.bitlockerdroid.ui.theme.SuccessGreen
 import com.bitlockerdroid.ui.theme.WarningAmber
 import com.bitlockerdroid.util.DeviceIdentity
 import com.bitlockerdroid.util.PreferenceHelper
+
+private data class CapacityStats(
+    val fraction: Float,
+    val percent: Int,
+    val usedText: String,
+    val totalText: String,
+    val freeText: String
+)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -56,21 +58,42 @@ fun UnlockedVolumeCard(
     onMountReadOnlyChange: (Boolean) -> Unit,
     onOpen: () -> Unit,
     onLock: () -> Unit,
+    onBenchmarkClick: () -> Unit,
+    onLanShareClick: () -> Unit,
+    onRepairClick: () -> Unit,
+    onDiagnosticClick: () -> Unit,
+    onDisasterClick: () -> Unit,
     isEjecting: Boolean = false,
     isCompact: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     var detailsExpanded by remember { mutableStateOf(false) }
-    var showBenchmarkDialog by remember { mutableStateOf(false) }
-    var showDisasterDialog by remember { mutableStateOf(false) }
-    var showLanShareDialog by remember { mutableStateOf(false) }
-    var showRepairConfirm by remember { mutableStateOf(false) }
-    var showStandaloneDiagnostic by remember { mutableStateOf(false) }
 
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
     val cardBorder = remember(outlineColor) {
         BorderStroke(1.dp, outlineColor.copy(alpha = 0.45f))
+    }
+
+    val displayName = remember(volume.label, volume.deviceName, volume.guid) {
+        DeviceIdentity.getDisplayName(
+            label = volume.label,
+            deviceName = volume.deviceName,
+            guid = volume.guid
+        )
+    }
+
+    val formattedTotalSize = remember(volume.size) { DeviceIdentity.formatSize(volume.size) }
+    val capacityStats = remember(volume.usedBytes, volume.size, volume.freeBytes) {
+        if (volume.size > 0L && volume.freeBytes >= 0L) {
+            val usedFraction = (volume.usedBytes.toFloat() / volume.size.toFloat()).coerceIn(0f, 1f)
+            val usedPercent = (usedFraction * 100).toInt()
+            val usedText = DeviceIdentity.formatSize(volume.usedBytes)
+            val totalText = DeviceIdentity.formatSize(volume.size)
+            val freeText = DeviceIdentity.formatSize(volume.freeBytes)
+            CapacityStats(usedFraction, usedPercent, usedText, totalText, freeText)
+        } else null
     }
 
     Card(
@@ -82,7 +105,11 @@ fun UnlockedVolumeCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         border = cardBorder
     ) {
-        Column(modifier = Modifier.padding(18.dp)) {
+        Column(
+            modifier = Modifier
+                .padding(18.dp)
+                .animateContentSize()
+        ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
@@ -104,11 +131,6 @@ fun UnlockedVolumeCard(
 
                 Spacer(modifier = Modifier.width(14.dp))
 
-                val displayName = DeviceIdentity.getDisplayName(
-                    label = volume.label,
-                    deviceName = volume.deviceName,
-                    guid = volume.guid
-                )
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = displayName,
@@ -172,8 +194,7 @@ fun UnlockedVolumeCard(
                         }
                         IconButton(
                             onClick = {
-                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                cm?.setPrimaryClip(ClipData.newPlainText("Volume GUID", volume.guid))
+                                clipboardManager.setText(AnnotatedString(volume.guid))
                                 Toast.makeText(context, R.string.guid_copied, Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.size(28.dp)
@@ -223,8 +244,7 @@ fun UnlockedVolumeCard(
                         }
                         IconButton(
                             onClick = {
-                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                cm?.setPrimaryClip(ClipData.newPlainText("Recovery Key ID", volume.recoveryKeyId))
+                                clipboardManager.setText(AnnotatedString(volume.recoveryKeyId))
                                 Toast.makeText(context, R.string.recovery_id_copied, Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.size(28.dp)
@@ -295,8 +315,7 @@ fun UnlockedVolumeCard(
                         Spacer(modifier = Modifier.width(4.dp))
                         IconButton(
                             onClick = {
-                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                cm?.setPrimaryClip(ClipData.newPlainText("Mount Path", vMount.mountPoint))
+                                clipboardManager.setText(AnnotatedString(vMount.mountPoint))
                                 Toast.makeText(context, R.string.mount_path_copied, Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.size(28.dp)
@@ -385,7 +404,7 @@ fun UnlockedVolumeCard(
                             )
                         }
                         TextButton(
-                            onClick = { showLanShareDialog = true },
+                            onClick = onLanShareClick,
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                             modifier = Modifier.height(28.dp)
                         ) {
@@ -413,8 +432,7 @@ fun UnlockedVolumeCard(
                         Spacer(modifier = Modifier.width(4.dp))
                         IconButton(
                             onClick = {
-                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                cm?.setPrimaryClip(ClipData.newPlainText("Share URL", shareState.primaryUrl))
+                                clipboardManager.setText(AnnotatedString(shareState.primaryUrl))
                                 Toast.makeText(context, R.string.lan_share_copied, Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.size(28.dp)
@@ -430,7 +448,7 @@ fun UnlockedVolumeCard(
                 }
             } else {
                 OutlinedButton(
-                    onClick = { showLanShareDialog = true },
+                    onClick = onLanShareClick,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp)
                 ) {
@@ -446,14 +464,8 @@ fun UnlockedVolumeCard(
             }
 
             // Drive capacity usage progress bar
-            if (volume.size > 0L && volume.freeBytes >= 0L) {
+            if (capacityStats != null) {
                 Spacer(modifier = Modifier.height(12.dp))
-                val usedFraction = (volume.usedBytes.toFloat() / volume.size.toFloat()).coerceIn(0f, 1f)
-                val usedPercent = (usedFraction * 100).toInt()
-                val usedText = DeviceIdentity.formatSize(volume.usedBytes)
-                val totalText = DeviceIdentity.formatSize(volume.size)
-                val freeText = DeviceIdentity.formatSize(volume.freeBytes)
-
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -461,23 +473,23 @@ fun UnlockedVolumeCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = stringResource(R.string.storage_used, usedText, usedPercent),
+                            text = stringResource(R.string.storage_used, capacityStats.usedText, capacityStats.percent),
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = stringResource(R.string.storage_available, freeText, totalText),
+                            text = stringResource(R.string.storage_available, capacityStats.freeText, capacityStats.totalText),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Spacer(modifier = Modifier.height(6.dp))
                     VolumeCapacityBar(
-                        progress = usedFraction,
+                        progress = capacityStats.fraction,
                         color = when {
-                            usedFraction > 0.9f -> MaterialTheme.colorScheme.error
-                            usedFraction > 0.75f -> WarningAmber
+                            capacityStats.fraction > 0.9f -> MaterialTheme.colorScheme.error
+                            capacityStats.fraction > 0.75f -> WarningAmber
                             else -> SuccessGreen
                         },
                         trackColor = MaterialTheme.colorScheme.surfaceVariant
@@ -499,7 +511,7 @@ fun UnlockedVolumeCard(
                 if (volume.cipher.isNotBlank()) {
                     MetaChip(text = volume.cipher)
                 }
-                MetaChip(text = DeviceIdentity.formatSize(volume.size))
+                MetaChip(text = formattedTotalSize)
                 MetaChip(
                     text = if (volume.canWrite) stringResource(R.string.writable) else stringResource(R.string.read_only),
                     color = if (volume.canWrite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
@@ -548,7 +560,7 @@ fun UnlockedVolumeCard(
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                         FilledTonalButton(
-                            onClick = { showRepairConfirm = true },
+                            onClick = onRepairClick,
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.filledTonalButtonColors(
                                 containerColor = WarningAmber.copy(alpha = 0.22f),
@@ -605,7 +617,7 @@ fun UnlockedVolumeCard(
                 }
             }
 
-            AnimatedVisibility(visible = detailsExpanded) {
+            if (detailsExpanded) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -630,8 +642,7 @@ fun UnlockedVolumeCard(
                                 value = volume.devicePath,
                                 isMonospace = true,
                                 onCopy = {
-                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                    cm?.setPrimaryClip(ClipData.newPlainText("Device Node", volume.devicePath))
+                                    clipboardManager.setText(AnnotatedString(volume.devicePath))
                                     Toast.makeText(context, R.string.device_node_copied, Toast.LENGTH_SHORT).show()
                                 }
                             )
@@ -648,8 +659,7 @@ fun UnlockedVolumeCard(
                                     value = "0x$hexSerial",
                                     isMonospace = true,
                                     onCopy = {
-                                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                        cm?.setPrimaryClip(ClipData.newPlainText("Volume Serial", "0x$hexSerial"))
+                                        clipboardManager.setText(AnnotatedString("0x$hexSerial"))
                                         Toast.makeText(context, R.string.volume_serial_copied, Toast.LENGTH_SHORT).show()
                                     }
                                 )
@@ -705,7 +715,7 @@ fun UnlockedVolumeCard(
 
                             Spacer(modifier = Modifier.height(4.dp))
                             OutlinedButton(
-                                onClick = { showStandaloneDiagnostic = true },
+                                onClick = onDiagnosticClick,
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth(),
                                 contentPadding = PaddingValues(vertical = 6.dp)
@@ -724,7 +734,7 @@ fun UnlockedVolumeCard(
 
                             Spacer(modifier = Modifier.height(6.dp))
                             OutlinedButton(
-                                onClick = { showDisasterDialog = true },
+                                onClick = onDisasterClick,
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth(),
                                 contentPadding = PaddingValues(vertical = 6.dp)
@@ -810,7 +820,7 @@ fun UnlockedVolumeCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         OutlinedButton(
-                            onClick = { showBenchmarkDialog = true },
+                            onClick = onBenchmarkClick,
                             enabled = !isEjecting,
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1f)
@@ -878,7 +888,7 @@ fun UnlockedVolumeCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedButton(
-                        onClick = { showBenchmarkDialog = true },
+                        onClick = onBenchmarkClick,
                         enabled = !isEjecting,
                         shape = RoundedCornerShape(12.dp)
                     ) {
@@ -922,55 +932,6 @@ fun UnlockedVolumeCard(
                 }
             }
         }
-    }
-
-    if (showBenchmarkDialog) {
-        BenchmarkDialog(
-            devicePath = volume.devicePath,
-            onDismiss = { showBenchmarkDialog = false }
-        )
-    }
-
-    if (showDisasterDialog) {
-        val core = com.bitlockerdroid.service.UnlockManager.get(volume.devicePath)
-        val handle = core?.handle ?: 0L
-        val offset = core?.offset ?: 0L
-        val displayName = if (volume.deviceName.isNotBlank()) {
-            volume.deviceName
-        } else {
-            volume.label.ifBlank { stringResource(R.string.encrypted_storage_device) }
-        }
-        DisasterRecoveryDialog(
-            volumeGuid = volume.guid ?: "",
-            devicePath = volume.devicePath,
-            partitionOffset = offset,
-            totalVolumeSize = volume.size,
-            volumeLabel = displayName,
-            sessionHandle = handle,
-            isUnlocked = true,
-            onDismiss = { showDisasterDialog = false }
-        )
-    }
-
-    if (showLanShareDialog) {
-        LanShareDialog(
-            volume = volume,
-            onDismiss = { showLanShareDialog = false }
-        )
-    }
-
-    if (showRepairConfirm) {
-        RepairConfirmDialog(
-            volume = volume,
-            onDismiss = { showRepairConfirm = false }
-        )
-    }
-
-    if (showStandaloneDiagnostic) {
-        StandaloneDiagnosticDialog(
-            volume = volume,
-            onDismiss = { showStandaloneDiagnostic = false }
-        )
     }
 }
 

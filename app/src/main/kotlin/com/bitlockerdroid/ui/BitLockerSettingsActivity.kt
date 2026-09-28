@@ -322,8 +322,11 @@ class BitLockerSettingsActivity : FragmentActivity() {
         }
     }
 
+    private var refreshJob: kotlinx.coroutines.Job? = null
     private fun refreshData() {
-        lifecycleScope.launch(Dispatchers.IO) {
+        refreshJob?.cancel()
+        refreshJob = lifecycleScope.launch(Dispatchers.IO) {
+            kotlinx.coroutines.delay(60)
             val currentUnlocked = UnlockManager.unlockedVolumes
             val currentDetected = UnlockManager.detectedVolumes
             val currentUnencrypted = UnlockManager.unencryptedVolumes

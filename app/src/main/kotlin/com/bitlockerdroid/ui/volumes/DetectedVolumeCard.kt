@@ -1,8 +1,5 @@
 package com.bitlockerdroid.ui.volumes
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -20,16 +17,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bitlockerdroid.R
 import com.bitlockerdroid.service.DetectedVolume
-import com.bitlockerdroid.ui.dialogs.DisasterRecoveryDialog
 import com.bitlockerdroid.ui.theme.WarningAmber
 import com.bitlockerdroid.util.DeviceIdentity
 import com.bitlockerdroid.util.PreferenceHelper
@@ -42,16 +40,27 @@ fun DetectedVolumeCard(
     onMountReadOnlyChange: (Boolean) -> Unit,
     onUnlock: () -> Unit,
     onBiometricUnlock: (() -> Unit)? = null,
+    onDisasterClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     var isReadOnly by remember(volume.devicePath, volume.isReadOnly) {
         mutableStateOf(volume.isReadOnly)
     }
-    var showDisasterDialog by remember { mutableStateOf(false) }
 
     val cardBorder = remember {
         BorderStroke(1.dp, WarningAmber.copy(alpha = 0.4f))
+    }
+
+    val displayName = remember(volume.deviceName) {
+        volume.deviceName.ifBlank {
+            context.getString(R.string.encrypted_storage_device)
+        }
+    }
+
+    val formattedCapacity = remember(volume.capacity) {
+        if (volume.capacity > 0L) DeviceIdentity.formatSize(volume.capacity) else null
     }
 
     Card(
@@ -82,11 +91,6 @@ fun DetectedVolumeCard(
 
                 Spacer(modifier = Modifier.width(14.dp))
 
-                val displayName = if (volume.deviceName.isNotBlank()) {
-                    volume.deviceName
-                } else {
-                    stringResource(R.string.encrypted_storage_device)
-                }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = displayName,
@@ -96,8 +100,8 @@ fun DetectedVolumeCard(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = if (volume.capacity > 0L) {
-                            stringResource(R.string.locked_status_with_size, DeviceIdentity.formatSize(volume.capacity))
+                        text = if (formattedCapacity != null) {
+                            stringResource(R.string.locked_status_with_size, formattedCapacity)
                         } else {
                             stringResource(R.string.locked_status)
                         },
@@ -177,8 +181,7 @@ fun DetectedVolumeCard(
                         }
                         IconButton(
                             onClick = {
-                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                cm?.setPrimaryClip(ClipData.newPlainText("Volume GUID", volume.guid))
+                                clipboardManager.setText(AnnotatedString(volume.guid))
                                 Toast.makeText(context, R.string.guid_copied, Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.size(28.dp)
@@ -228,8 +231,7 @@ fun DetectedVolumeCard(
                         }
                         IconButton(
                             onClick = {
-                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                cm?.setPrimaryClip(ClipData.newPlainText("Recovery Key ID", volume.recoveryKeyId))
+                                clipboardManager.setText(AnnotatedString(volume.recoveryKeyId))
                                 Toast.makeText(context, R.string.recovery_id_copied, Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.size(28.dp)
@@ -290,7 +292,7 @@ fun DetectedVolumeCard(
 
             // Disaster Recovery & Low-level Protection Action
             OutlinedButton(
-                onClick = { showDisasterDialog = true },
+                onClick = onDisasterClick,
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.fillMaxWidth(),
                 contentPadding = PaddingValues(vertical = 6.dp)
@@ -315,23 +317,5 @@ fun DetectedVolumeCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-    }
-
-    if (showDisasterDialog) {
-        val displayName = if (volume.deviceName.isNotBlank()) {
-            volume.deviceName
-        } else {
-            stringResource(R.string.encrypted_storage_device)
-        }
-        DisasterRecoveryDialog(
-            volumeGuid = volume.guid ?: "",
-            devicePath = volume.devicePath,
-            partitionOffset = 0L,
-            totalVolumeSize = volume.capacity,
-            volumeLabel = displayName,
-            sessionHandle = 0L,
-            isUnlocked = false,
-            onDismiss = { showDisasterDialog = false }
-        )
     }
 }
