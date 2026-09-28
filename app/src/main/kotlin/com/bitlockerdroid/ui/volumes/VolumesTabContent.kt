@@ -41,6 +41,13 @@ fun VolumesTabContent(
     val activeMounts by VirtualStorageMountManager.activeMountsFlow.collectAsState()
     val shareStates by com.bitlockerdroid.share.LanShareManager.shareStates.collectAsState()
 
+    val isCompact = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 480
+    val cardModifier = remember {
+        Modifier
+            .fillMaxWidth()
+            .widthIn(max = 720.dp)
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         AnimatedVisibility(visible = isRefreshing) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -67,11 +74,7 @@ fun VolumesTabContent(
                 // Section 1: Detected Locked Volumes
                 if (detectedVolumes.isNotEmpty()) {
                     item(key = "header_detected", contentType = "header") {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .widthIn(max = 720.dp)
-                        ) {
+                        Box(modifier = cardModifier) {
                             SectionHeader(
                                 title = stringResource(R.string.detected_volumes_header),
                                 count = detectedVolumes.size,
@@ -91,31 +94,22 @@ fun VolumesTabContent(
                         val onBiometricUnlock = remember(detected.devicePath, onBiometricUnlockDetected) {
                             if (onBiometricUnlockDetected != null) { { onBiometricUnlockDetected(detected.devicePath) } } else null
                         }
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .widthIn(max = 720.dp)
-                        ) {
-                            DetectedVolumeCard(
-                                volume = detected,
-                                hasSavedCredential = hasSavedCredential,
-                                canBiometric = canBiometric,
-                                onMountReadOnlyChange = onMountReadOnlyChange,
-                                onUnlock = onUnlock,
-                                onBiometricUnlock = onBiometricUnlock
-                            )
-                        }
+                        DetectedVolumeCard(
+                            volume = detected,
+                            hasSavedCredential = hasSavedCredential,
+                            canBiometric = canBiometric,
+                            onMountReadOnlyChange = onMountReadOnlyChange,
+                            onUnlock = onUnlock,
+                            onBiometricUnlock = onBiometricUnlock,
+                            modifier = cardModifier
+                        )
                     }
                 }
 
                 // Section 2: Unlocked Volumes
                 if (unlockedVolumes.isNotEmpty()) {
                     item(key = "header_unlocked", contentType = "header") {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .widthIn(max = 720.dp)
-                        ) {
+                        Box(modifier = cardModifier) {
                             SectionHeader(
                                 title = stringResource(R.string.unlocked_volumes_header),
                                 count = unlockedVolumes.size,
@@ -134,33 +128,25 @@ fun VolumesTabContent(
                         val shareState = shareStates[effectiveShareGuid]
                         val onOpen = remember(volume.devicePath, onOpenVolume) { { onOpenVolume(volume.devicePath) } }
                         val onLock = remember(volume.devicePath, onLockVolume) { { onLockVolume(volume.devicePath) } }
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .widthIn(max = 720.dp)
-                        ) {
-                            UnlockedVolumeCard(
-                                volume = volume,
-                                vMount = vMount,
-                                shareState = shareState,
-                                isVirtualMountSupported = isVirtualMountSupported,
-                                onMountReadOnlyChange = onMountReadOnlyChange,
-                                onOpen = onOpen,
-                                onLock = onLock,
-                                isEjecting = ejectingPaths.contains(volume.devicePath)
-                            )
-                        }
+                        UnlockedVolumeCard(
+                            volume = volume,
+                            vMount = vMount,
+                            shareState = shareState,
+                            isVirtualMountSupported = isVirtualMountSupported,
+                            onMountReadOnlyChange = onMountReadOnlyChange,
+                            onOpen = onOpen,
+                            onLock = onLock,
+                            isEjecting = ejectingPaths.contains(volume.devicePath),
+                            isCompact = isCompact,
+                            modifier = cardModifier
+                        )
                     }
                 }
 
                 // Section 3: Unencrypted Volumes
                 if (unencryptedVolumes.isNotEmpty()) {
                     item(key = "header_unencrypted", contentType = "header") {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .widthIn(max = 720.dp)
-                        ) {
+                        Box(modifier = cardModifier) {
                             SectionHeader(
                                 title = stringResource(R.string.unencrypted_volumes_header),
                                 count = unencryptedVolumes.size,
@@ -174,16 +160,11 @@ fun VolumesTabContent(
                         contentType = { "unencrypted_volume" }
                     ) { unenc ->
                         val onOpen = remember(unenc.id, onOpenUnencrypted) { { onOpenUnencrypted(unenc) } }
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .widthIn(max = 720.dp)
-                        ) {
-                            UnencryptedVolumeCard(
-                                volume = unenc,
-                                onOpen = onOpen
-                            )
-                        }
+                        UnencryptedVolumeCard(
+                            volume = unenc,
+                            onOpen = onOpen,
+                            modifier = cardModifier
+                        )
                     }
                 }
             }

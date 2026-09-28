@@ -13,6 +13,7 @@ data class LanShareConfig(
     val password: String = ""
 )
 
+@androidx.compose.runtime.Immutable
 data class LanShareState(
     val isRunning: Boolean = false,
     val volumeGuid: String = "",

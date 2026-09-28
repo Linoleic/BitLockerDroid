@@ -994,6 +994,7 @@ object UnlockManager {
     fun ensureChannel(context: Context) = ensureChannels(context)
 }
 
+@androidx.compose.runtime.Immutable
 data class UnlockedVolume(
     val devicePath: String,
     val size: Long,
@@ -1013,6 +1014,7 @@ data class UnlockedVolume(
 )
 
 /** A BitLocker volume detected on the bus but not yet unlocked. */
+@androidx.compose.runtime.Immutable
 data class DetectedVolume(
     val devicePath: String,
     val guid: String? = null,
@@ -1023,6 +1025,7 @@ data class DetectedVolume(
 )
 
 /** An unencrypted storage volume (e.g. FAT32, exFAT) managed natively by Android OS. */
+@androidx.compose.runtime.Immutable
 data class UnencryptedVolume(
     val id: String,
     val label: String,

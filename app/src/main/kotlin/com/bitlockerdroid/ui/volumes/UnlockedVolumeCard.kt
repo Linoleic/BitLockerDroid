@@ -5,21 +5,20 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,14 +36,15 @@ import com.bitlockerdroid.R
 import com.bitlockerdroid.service.UnlockedVolume
 import com.bitlockerdroid.service.VirtualStorageMountManager
 import com.bitlockerdroid.service.VirtualStorageMountManager.VirtualMountInfo
+import com.bitlockerdroid.ui.dialogs.BenchmarkDialog
 import com.bitlockerdroid.ui.dialogs.DisasterRecoveryDialog
+import com.bitlockerdroid.ui.dialogs.LanShareDialog
+import com.bitlockerdroid.ui.dialogs.RepairConfirmDialog
+import com.bitlockerdroid.ui.dialogs.StandaloneDiagnosticDialog
 import com.bitlockerdroid.ui.theme.SuccessGreen
 import com.bitlockerdroid.ui.theme.WarningAmber
 import com.bitlockerdroid.util.DeviceIdentity
 import com.bitlockerdroid.util.PreferenceHelper
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -56,58 +56,50 @@ fun UnlockedVolumeCard(
     onMountReadOnlyChange: (Boolean) -> Unit,
     onOpen: () -> Unit,
     onLock: () -> Unit,
-    isEjecting: Boolean = false
+    isEjecting: Boolean = false,
+    isCompact: Boolean = false,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     var detailsExpanded by remember { mutableStateOf(false) }
     var showBenchmarkDialog by remember { mutableStateOf(false) }
     var showDisasterDialog by remember { mutableStateOf(false) }
     var showLanShareDialog by remember { mutableStateOf(false) }
     var showRepairConfirm by remember { mutableStateOf(false) }
     var showStandaloneDiagnostic by remember { mutableStateOf(false) }
-    var isRepairing by remember { mutableStateOf(false) }
-    var diagnosticResult by remember { mutableStateOf<com.bitlockerdroid.ntfs.VolumeDiagnostic?>(null) }
-    var isDiagnosing by remember { mutableStateOf(false) }
 
-    androidx.compose.runtime.LaunchedEffect(showRepairConfirm, showStandaloneDiagnostic) {
-        if (showRepairConfirm || showStandaloneDiagnostic) {
-            isDiagnosing = true
-            diagnosticResult = withContext(Dispatchers.IO) {
-                com.bitlockerdroid.service.UnlockManager.diagnoseVolume(volume.devicePath)
-            }
-            isDiagnosing = false
-        }
+    val outlineColor = MaterialTheme.colorScheme.outlineVariant
+    val cardBorder = remember(outlineColor) {
+        BorderStroke(1.dp, outlineColor.copy(alpha = 0.45f))
     }
+
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = CardDefaults.outlinedCardBorder().copy(
-            brush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-        )
+        border = cardBorder
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = SuccessGreen.copy(alpha = 0.15f),
-                    modifier = Modifier.size(44.dp)
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(SuccessGreen.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = null,
-                            tint = SuccessGreen,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        tint = SuccessGreen,
+                        modifier = Modifier.size(24.dp)
+                    )
                 }
 
                 Spacer(modifier = Modifier.width(14.dp))
@@ -134,16 +126,17 @@ fun UnlockedVolumeCard(
                 }
 
                 // Mounted Badge
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = SuccessGreen.copy(alpha = 0.12f)
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(SuccessGreen.copy(alpha = 0.12f))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     Text(
                         text = stringResource(R.string.mounted),
                         style = MaterialTheme.typography.labelSmall,
                         color = SuccessGreen,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
@@ -151,10 +144,11 @@ fun UnlockedVolumeCard(
             // Full GUID Section with copy button
             if (!volume.guid.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(10.dp))
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                    modifier = Modifier.fillMaxWidth()
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
                 ) {
                     Row(
                         modifier = Modifier
@@ -198,10 +192,11 @@ fun UnlockedVolumeCard(
             // Recovery Key ID Section with copy button
             if (!volume.recoveryKeyId.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(8.dp))
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    modifier = Modifier.fillMaxWidth()
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                 ) {
                     Row(
                         modifier = Modifier
@@ -248,10 +243,11 @@ fun UnlockedVolumeCard(
             // POSIX Virtual Mount Section (Root Mode)
             if (vMount != null) {
                 Spacer(modifier = Modifier.height(8.dp))
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    modifier = Modifier.fillMaxWidth()
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                 ) {
                     Row(
                         modifier = Modifier
@@ -359,10 +355,11 @@ fun UnlockedVolumeCard(
 
             Spacer(modifier = Modifier.height(8.dp))
             if (isVolumeSharing) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    modifier = Modifier.fillMaxWidth()
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                 ) {
                     Row(
                         modifier = Modifier
@@ -476,19 +473,14 @@ fun UnlockedVolumeCard(
                         )
                     }
                     Spacer(modifier = Modifier.height(6.dp))
-                    LinearProgressIndicator(
-                        progress = { usedFraction },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(3.dp)),
+                    VolumeCapacityBar(
+                        progress = usedFraction,
                         color = when {
                             usedFraction > 0.9f -> MaterialTheme.colorScheme.error
                             usedFraction > 0.75f -> WarningAmber
                             else -> SuccessGreen
                         },
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                        drawStopIndicator = {}
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
                     )
                 }
             }
@@ -523,11 +515,12 @@ fun UnlockedVolumeCard(
             // Dirty volume compact warning banner with repair option
             if (volume.isDirty) {
                 Spacer(modifier = Modifier.height(8.dp))
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = WarningAmber.copy(alpha = 0.12f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, WarningAmber.copy(alpha = 0.35f)),
-                    modifier = Modifier.fillMaxWidth()
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(WarningAmber.copy(alpha = 0.12f))
+                        .border(1.dp, WarningAmber.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
                 ) {
                     Row(
                         modifier = Modifier
@@ -556,7 +549,6 @@ fun UnlockedVolumeCard(
                         Spacer(modifier = Modifier.width(8.dp))
                         FilledTonalButton(
                             onClick = { showRepairConfirm = true },
-                            enabled = !isRepairing,
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.filledTonalButtonColors(
                                 containerColor = WarningAmber.copy(alpha = 0.22f),
@@ -565,30 +557,17 @@ fun UnlockedVolumeCard(
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                             modifier = Modifier.height(32.dp)
                         ) {
-                            if (isRepairing) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(14.dp),
-                                    strokeWidth = 2.dp,
-                                    color = WarningAmber
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = stringResource(R.string.repair_dirty_in_progress),
-                                    style = MaterialTheme.typography.labelSmall
-                                )
-                            } else {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_repair),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = stringResource(R.string.repair_dirty_action),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
+                            Icon(
+                                painter = painterResource(R.drawable.ic_repair),
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = stringResource(R.string.repair_dirty_action),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
                 }
@@ -597,11 +576,12 @@ fun UnlockedVolumeCard(
             Spacer(modifier = Modifier.height(14.dp))
 
             // Expandable Hardware & Volume Metadata Section
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                modifier = Modifier.fillMaxWidth(),
-                onClick = { detailsExpanded = !detailsExpanded }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                    .clickable { detailsExpanded = !detailsExpanded }
             ) {
                 Row(
                     modifier = Modifier
@@ -631,11 +611,12 @@ fun UnlockedVolumeCard(
                         .fillMaxWidth()
                         .padding(top = 8.dp)
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                        modifier = Modifier.fillMaxWidth()
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f))
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
                     ) {
                         Column(
                             modifier = Modifier
@@ -771,16 +752,16 @@ fun UnlockedVolumeCard(
             var isVolumeRo by remember(volume.devicePath, volume.canWrite) {
                 mutableStateOf(!volume.canWrite)
             }
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = if (isVolumeRo) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
-                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                border = androidx.compose.foundation.BorderStroke(
-                    1.dp,
-                    if (isVolumeRo) MaterialTheme.colorScheme.error.copy(alpha = 0.4f)
-                    else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
-                ),
-                modifier = Modifier.fillMaxWidth()
+            val roBgColor = if (isVolumeRo) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+            val roBorderColor = if (isVolumeRo) MaterialTheme.colorScheme.error.copy(alpha = 0.4f)
+                                else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(roBgColor)
+                    .border(1.dp, roBorderColor, RoundedCornerShape(12.dp))
             ) {
                 Row(
                     modifier = Modifier
@@ -819,7 +800,6 @@ fun UnlockedVolumeCard(
             Spacer(modifier = Modifier.height(14.dp))
 
             // Action Buttons
-            val isCompact = LocalConfiguration.current.screenWidthDp < 480
             if (isCompact) {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -945,7 +925,7 @@ fun UnlockedVolumeCard(
     }
 
     if (showBenchmarkDialog) {
-        com.bitlockerdroid.ui.dialogs.BenchmarkDialog(
+        BenchmarkDialog(
             devicePath = volume.devicePath,
             onDismiss = { showBenchmarkDialog = false }
         )
@@ -973,240 +953,23 @@ fun UnlockedVolumeCard(
     }
 
     if (showLanShareDialog) {
-        com.bitlockerdroid.ui.dialogs.LanShareDialog(
+        LanShareDialog(
             volume = volume,
             onDismiss = { showLanShareDialog = false }
         )
     }
 
     if (showRepairConfirm) {
-        val diag = diagnosticResult
-        val hasErrors = diag?.hasStructuralErrors == true
-
-        AlertDialog(
-            onDismissRequest = { if (!isRepairing) showRepairConfirm = false },
-            title = {
-                Text(
-                    text = if (hasErrors) stringResource(R.string.diagnostic_corrupted_title)
-                           else stringResource(R.string.repair_dirty_confirm_title),
-                    color = if (hasErrors) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-                )
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (isDiagnosing) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Text(
-                                text = stringResource(R.string.diagnostic_in_progress),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    } else if (diag != null) {
-                        if (hasErrors) {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text(
-                                        text = stringResource(R.string.diagnostic_corrupted_desc),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onErrorContainer
-                                    )
-                                    diag.items.filter { !it.passed }.forEach { item ->
-                                        Text(
-                                            text = "• ${item.name}: ${item.detail}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = MaterialTheme.colorScheme.error
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = SuccessGreen.copy(alpha = 0.12f),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, SuccessGreen.copy(alpha = 0.35f)),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text(
-                                        text = stringResource(R.string.diagnostic_passed_title),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = SuccessGreen
-                                    )
-                                    Text(
-                                        text = stringResource(R.string.diagnostic_passed_desc),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    } else {
-                        Text(
-                            text = stringResource(R.string.repair_dirty_confirm_desc),
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showRepairConfirm = false
-                        isRepairing = true
-                        scope.launch(Dispatchers.IO) {
-                            val res = com.bitlockerdroid.service.UnlockManager.repairDirtyVolume(volume.devicePath)
-                            withContext(Dispatchers.Main) {
-                                isRepairing = false
-                                res.onSuccess { fs ->
-                                    val msg = context.getString(R.string.repair_dirty_success, fs)
-                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                                }.onFailure { err ->
-                                    val msg = context.getString(R.string.repair_dirty_failed, err.message ?: err.toString())
-                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        }
-                    },
-                    enabled = !isRepairing
-                ) {
-                    Text(
-                        text = if (hasErrors) stringResource(R.string.diagnostic_force_repair)
-                               else stringResource(R.string.repair_dirty_action),
-                        color = if (hasErrors) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { showRepairConfirm = false },
-                    enabled = !isRepairing
-                ) {
-                    Text(text = stringResource(R.string.cancel))
-                }
-            }
+        RepairConfirmDialog(
+            volume = volume,
+            onDismiss = { showRepairConfirm = false }
         )
     }
 
     if (showStandaloneDiagnostic) {
-        val diag = diagnosticResult
-        AlertDialog(
-            onDismissRequest = { showStandaloneDiagnostic = false },
-            title = { Text(text = stringResource(R.string.diagnostic_title)) },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    if (isDiagnosing) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            modifier = Modifier.padding(vertical = 12.dp)
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            Text(
-                                text = stringResource(R.string.diagnostic_in_progress),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                    } else if (diag != null) {
-                        val statusBg = if (diag.hasStructuralErrors) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f)
-                            else if (diag.isDirty) WarningAmber.copy(alpha = 0.15f)
-                            else SuccessGreen.copy(alpha = 0.15f)
-                        val statusTextColor = if (diag.hasStructuralErrors) MaterialTheme.colorScheme.error
-                            else if (diag.isDirty) WarningAmber
-                            else SuccessGreen
-                        val statusText = if (diag.hasStructuralErrors) stringResource(R.string.diagnostic_overall_corrupt)
-                            else if (diag.isDirty) stringResource(R.string.diagnostic_overall_dirty_only)
-                            else stringResource(R.string.diagnostic_overall_healthy)
-
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = statusBg,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = if (diag.hasStructuralErrors) Icons.Default.Warning else Icons.Default.Check,
-                                    contentDescription = null,
-                                    tint = statusTextColor,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = statusText,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = statusTextColor
-                                )
-                            }
-                        }
-
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            diag.items.forEach { item ->
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Column(modifier = Modifier.padding(10.dp)) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                text = item.name,
-                                                style = MaterialTheme.typography.labelMedium,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                            MetaChip(
-                                                text = if (item.passed) stringResource(R.string.diagnostic_item_passed)
-                                                       else stringResource(R.string.diagnostic_item_failed),
-                                                color = if (item.passed) SuccessGreen else MaterialTheme.colorScheme.error
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(
-                                            text = item.detail,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        Text(
-                            text = stringResource(R.string.repair_dirty_failed, "无法读取底层文件系统诊断元数据"),
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showStandaloneDiagnostic = false }) {
-                    Text(text = stringResource(android.R.string.ok))
-                }
-            }
+        StandaloneDiagnosticDialog(
+            volume = volume,
+            onDismiss = { showStandaloneDiagnostic = false }
         )
     }
 }
@@ -1243,7 +1006,7 @@ private fun VolumeDetailRow(
                 },
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis
             )
             if (onCopy != null) {
                 Spacer(modifier = Modifier.width(4.dp))

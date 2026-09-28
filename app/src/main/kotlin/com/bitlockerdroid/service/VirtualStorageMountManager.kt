@@ -30,6 +30,7 @@ object VirtualStorageMountManager {
     /** Mount points we create or accept from daemon cmdlines — strict charset, no shell metacharacters. */
     private val MOUNT_POINT_PATTERN = Regex("^/storage/[A-Za-z0-9_-]+$")
 
+    @androidx.compose.runtime.Immutable
     data class VirtualMountInfo(
         val devicePath: String,
         val volumeGuid: String,
