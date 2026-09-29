@@ -14,6 +14,11 @@
 
 #include <string.h>
 
+#if defined(HAVE_ARMV8_CE)
+#include "../encryption/aes_xts_armv8ce.h"
+#include "../encryption/sha256_armv8ce.h"
+#endif
+
 #include "mbedtls/aes.h"
 #include "mbedtls/sha256.h"
 
@@ -30,6 +35,13 @@ void aes_ctx_init(aes_ctx_t *ctx, const uint8_t *key, aes_key_len_t key_len)
 
 void aes_encrypt_ecb(aes_ctx_t *ctx, const uint8_t in[16], uint8_t out[16])
 {
+#if defined(HAVE_ARMV8_CE)
+	if (dislocker_is_armv8_ce_enabled()) {
+		if (aes_ecb_encrypt_armv8ce(ctx, in, out) == 0) {
+			return;
+		}
+	}
+#endif
 	mbedtls_aes_crypt_ecb(&ctx->enc, MBEDTLS_AES_ENCRYPT, in, out);
 }
 
@@ -58,6 +70,13 @@ void aes_xts_setkey(aes_ctx_t *crypt, aes_ctx_t *tweak,
 void aes_cbc_decrypt(aes_ctx_t *ctx, const uint8_t *iv,
 	const uint8_t *in, uint8_t *out, size_t length)
 {
+#if defined(HAVE_ARMV8_CE)
+	if (dislocker_is_armv8_ce_enabled()) {
+		if (aes_cbc_decrypt_armv8ce(ctx, iv, in, out, length) == 0) {
+			return;
+		}
+	}
+#endif
 	mbedtls_aes_crypt_cbc(&ctx->dec, MBEDTLS_AES_DECRYPT, length, (unsigned char *)iv, in, out);
 }
 
@@ -65,6 +84,13 @@ void aes_cbc_decrypt(aes_ctx_t *ctx, const uint8_t *iv,
 void aes_cbc_encrypt(aes_ctx_t *ctx, const uint8_t *iv,
 	const uint8_t *in, uint8_t *out, size_t length)
 {
+#if defined(HAVE_ARMV8_CE)
+	if (dislocker_is_armv8_ce_enabled()) {
+		if (aes_cbc_encrypt_armv8ce(ctx, iv, in, out, length) == 0) {
+			return;
+		}
+	}
+#endif
 	uint8_t iv_copy[16];
 	memcpy(iv_copy, iv, 16);
 	mbedtls_aes_crypt_cbc(&ctx->enc, MBEDTLS_AES_ENCRYPT, length, iv_copy, in, out);
@@ -90,6 +116,13 @@ void sha256_final(sha256_ctx_t *ctx, uint8_t out[32])
 
 void sha256(const uint8_t *data, size_t len, uint8_t out[32])
 {
+#if defined(HAVE_ARMV8_CE)
+	if (dislocker_is_armv8_sha2_enabled()) {
+		if (sha256_armv8ce(data, len, out) == 0) {
+			return;
+		}
+	}
+#endif
 	mbedtls_sha256(data, len, out, 0);
 }
 

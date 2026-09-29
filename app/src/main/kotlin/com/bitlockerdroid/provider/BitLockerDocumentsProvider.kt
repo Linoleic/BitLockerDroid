@@ -278,6 +278,54 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             out.putString("document_id", newDocId)
             return out
         }
+        if (method == "unlock_volume") {
+            val dev = arg ?: extras?.getString("device_path") ?: return null
+            val password = extras?.getString("password")
+            val recoveryKey = extras?.getString("recovery_key")
+            val remember = extras?.getBoolean("remember", false) ?: false
+            val offset = extras?.getLong("offset", 0L) ?: 0L
+            val out = Bundle()
+            val res = if (!recoveryKey.isNullOrBlank()) {
+                UnlockManager.unlockWithRecoveryKey(appContext, dev, offset, recoveryKey, remember)
+            } else if (!password.isNullOrBlank()) {
+                UnlockManager.unlockWithPassword(appContext, dev, offset, password, remember)
+            } else {
+                kotlin.Result.failure(IllegalArgumentException("Neither password nor recovery_key provided"))
+            }
+            if (res.isSuccess) {
+                out.putBoolean("success", true)
+                out.putString("guid", res.getOrNull()?.volumeGuid)
+            } else {
+                out.putBoolean("success", false)
+                out.putString("error", res.exceptionOrNull()?.message ?: "Unlock failed")
+            }
+            return out
+        }
+        if (method == "get_volumes_info") {
+            val out = Bundle()
+            val unlockedPaths = ArrayList<String>()
+            val unlockedGuids = ArrayList<String>()
+            val unlockedLabels = ArrayList<String>()
+            for (v in UnlockManager.unlockedVolumes) {
+                unlockedPaths.add(v.devicePath)
+                unlockedGuids.add(v.guid ?: "")
+                unlockedLabels.add(v.label)
+            }
+            val detectedPaths = ArrayList<String>()
+            val detectedGuids = ArrayList<String>()
+            for (d in UnlockManager.detectedVolumes) {
+                detectedPaths.add(d.devicePath)
+                detectedGuids.add(d.guid ?: "")
+            }
+            out.putStringArrayList("unlocked_paths", unlockedPaths)
+            out.putStringArrayList("unlocked_guids", unlockedGuids)
+            out.putStringArrayList("unlocked_labels", unlockedLabels)
+            out.putStringArrayList("detected_paths", detectedPaths)
+            out.putStringArrayList("detected_guids", detectedGuids)
+            out.putInt("unlocked_count", unlockedPaths.size)
+            out.putInt("detected_count", detectedPaths.size)
+            return out
+        }
         if (method == "lock_volume") {
             val dev = arg ?: extras?.getString("device_path") ?: return null
             UnlockManager.lock(dev)
@@ -334,17 +382,60 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             return out
         }
         if (method == "run_benchmark") {
-            val dev = arg ?: extras?.getString("device_path") ?: return null
-            val core = UnlockManager.get(dev) ?: return null
+            val dev = arg ?: extras?.getString("device_path") ?: ""
+            var core = (if (dev.isNotEmpty()) UnlockManager.get(dev) ?: UnlockManager.activeSessions.find { it.devicePath == dev } else null)
+                ?: UnlockManager.activeSessions.firstOrNull()
+            if (core == null) {
+                UnlockManager.restoreRemembered(appContext)
+                core = (if (dev.isNotEmpty()) UnlockManager.get(dev) ?: UnlockManager.activeSessions.find { it.devicePath == dev } else null)
+                    ?: UnlockManager.activeSessions.firstOrNull()
+            }
+            if (core == null) return null
+
+            val testTypeArg = extras?.getString("test_type") ?: extras?.getString("options") ?: "all"
+            val selectedTests = when (testTypeArg.lowercase()) {
+                "seq_read" -> setOf(com.bitlockerdroid.util.BenchmarkTestType.SEQ_READ)
+                "seq_write" -> setOf(com.bitlockerdroid.util.BenchmarkTestType.SEQ_WRITE)
+                "rand_read", "rand_4k_read" -> setOf(com.bitlockerdroid.util.BenchmarkTestType.RAND_4K_READ)
+                "rand_write", "rand_4k_write" -> setOf(com.bitlockerdroid.util.BenchmarkTestType.RAND_4K_WRITE)
+                "read_only" -> com.bitlockerdroid.util.BenchmarkTestType.READ_ONLY
+                "write_only" -> com.bitlockerdroid.util.BenchmarkTestType.WRITE_ONLY
+                else -> {
+                    val parsed = testTypeArg.split(',').mapNotNull { com.bitlockerdroid.util.BenchmarkTestType.fromId(it.trim()) }.toSet()
+                    if (parsed.isNotEmpty()) parsed else com.bitlockerdroid.util.BenchmarkTestType.ALL
+                }
+            }
+
             val res = kotlinx.coroutines.runBlocking {
-                com.bitlockerdroid.util.BenchmarkEngine.runBenchmark(core, appContext) { _, _ -> }
+                com.bitlockerdroid.util.BenchmarkEngine.runBenchmark(core, selectedTests, appContext) { phase, prog ->
+                    LogFile.write("benchmark", "Phase: $phase ($prog)")
+                }
             }
             val out = Bundle()
-            out.putDouble("seq_mb_s", res.sequentialReadMbPerSec)
-            out.putDouble("random_4k_ms", res.random4kLatencyMs)
-            out.putDouble("random_4k_iops", res.random4kIops)
+            if (res.sequentialReadMbPerSec != null) {
+                out.putDouble("seq_mb_s", res.sequentialReadMbPerSec!!)
+                out.putDouble("seq_read_mbps", res.sequentialReadMbPerSec!!)
+            }
+            if (res.sequentialWriteMbPerSec != null) {
+                out.putDouble("seq_write_mb_s", res.sequentialWriteMbPerSec!!)
+                out.putDouble("seq_write_mbps", res.sequentialWriteMbPerSec!!)
+            }
+            if (res.random4kLatencyMs != null) {
+                out.putDouble("random_4k_ms", res.random4kLatencyMs!!)
+                out.putDouble("random_4k_latency_ms", res.random4kLatencyMs!!)
+                out.putDouble("random_4k_iops", res.random4kIops ?: 0.0)
+                out.putDouble("random_4k_read_ms", res.random4kLatencyMs!!)
+                out.putDouble("random_4k_read_iops", res.random4kIops ?: 0.0)
+            }
+            if (res.random4kWriteLatencyMs != null) {
+                out.putDouble("random_4k_write_ms", res.random4kWriteLatencyMs!!)
+                out.putDouble("random_4k_write_latency_ms", res.random4kWriteLatencyMs!!)
+                out.putDouble("random_4k_write_iops", res.random4kWriteIops ?: 0.0)
+            }
+            out.putInt("usb_speed_mbps", res.usbLinkSpeedMbps ?: 0)
             out.putString("usb_speed_desc", res.usbSpeedDesc)
             out.putString("assessment", res.assessment)
+            out.putBoolean("success", true)
             return out
         }
         if (method == "set_mount_read_only") {
@@ -372,6 +463,82 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             com.bitlockerdroid.util.AppRestarter.restartApp(appContext)
             val out = Bundle()
             out.putBoolean("success", true)
+            return out
+        }
+        if (method == "get_hardware_crypto" || method == "get_hardware_accel") {
+            val aesSup = com.bitlockerdroid.util.NativeBridge.nativeIsHardwareAesSupported()
+            val shaSup = com.bitlockerdroid.util.NativeBridge.nativeIsHardwareSha2Supported()
+            val supported = aesSup && shaSup
+            val aesEn = com.bitlockerdroid.util.NativeBridge.nativeIsHardwareAesEnabled()
+            val shaEn = com.bitlockerdroid.util.NativeBridge.nativeIsHardwareSha2Enabled()
+            val enabled = aesEn && shaEn
+            val pref = PreferenceHelper.useHardwareCrypto
+            val out = Bundle()
+            out.putBoolean("supported", supported)
+            out.putBoolean("enabled", enabled)
+            out.putBoolean("aes_supported", aesSup)
+            out.putBoolean("sha2_supported", shaSup)
+            out.putBoolean("aes_enabled", aesEn)
+            out.putBoolean("sha2_enabled", shaEn)
+            out.putBoolean("pref", pref)
+            return out
+        }
+        if (method == "set_hardware_crypto" || method == "set_hardware_accel") {
+            val target = if (extras != null && extras.containsKey("enabled")) extras.getBoolean("enabled") else (arg == "true")
+            PreferenceHelper.useHardwareCrypto = target
+            val enabled = com.bitlockerdroid.util.NativeBridge.isHardwareCryptoEnabled()
+            val out = Bundle()
+            out.putBoolean("enabled", enabled)
+            out.putBoolean("pref", PreferenceHelper.useHardwareCrypto)
+            return out
+        }
+        if (method == "get_hardware_aes") {
+            val supported = com.bitlockerdroid.util.NativeBridge.nativeIsHardwareAesSupported()
+            val enabled = com.bitlockerdroid.util.NativeBridge.nativeIsHardwareAesEnabled()
+            val pref = PreferenceHelper.useHardwareAes
+            val out = Bundle()
+            out.putBoolean("supported", supported)
+            out.putBoolean("enabled", enabled)
+            out.putBoolean("pref", pref)
+            return out
+        }
+        if (method == "set_hardware_aes") {
+            val target = if (extras != null && extras.containsKey("enabled")) extras.getBoolean("enabled") else (arg == "true")
+            PreferenceHelper.useHardwareAes = target
+            val enabled = com.bitlockerdroid.util.NativeBridge.nativeIsHardwareAesEnabled()
+            val out = Bundle()
+            out.putBoolean("enabled", enabled)
+            out.putBoolean("pref", PreferenceHelper.useHardwareAes)
+            return out
+        }
+        if (method == "get_hardware_sha2") {
+            val supported = com.bitlockerdroid.util.NativeBridge.nativeIsHardwareSha2Supported()
+            val enabled = com.bitlockerdroid.util.NativeBridge.nativeIsHardwareSha2Enabled()
+            val pref = PreferenceHelper.useHardwareSha2
+            val out = Bundle()
+            out.putBoolean("supported", supported)
+            out.putBoolean("enabled", enabled)
+            out.putBoolean("pref", pref)
+            return out
+        }
+        if (method == "set_hardware_sha2") {
+            val target = if (extras != null && extras.containsKey("enabled")) extras.getBoolean("enabled") else (arg == "true")
+            PreferenceHelper.useHardwareSha2 = target
+            val enabled = com.bitlockerdroid.util.NativeBridge.nativeIsHardwareSha2Enabled()
+            val out = Bundle()
+            out.putBoolean("enabled", enabled)
+            out.putBoolean("pref", PreferenceHelper.useHardwareSha2)
+            return out
+        }
+        if (method == "benchmark_key_stretching") {
+            val rounds = arg?.toIntOrNull() ?: extras?.getInt("rounds", 1048576) ?: 1048576
+            val us = com.bitlockerdroid.util.NativeBridge.nativeBenchmarkKeyStretching(rounds)
+            val hw = com.bitlockerdroid.util.NativeBridge.nativeIsHardwareSha2Enabled()
+            val out = Bundle()
+            out.putLong("us", us)
+            out.putDouble("ms", us / 1000.0)
+            out.putInt("rounds", rounds)
+            out.putBoolean("hw_enabled", hw)
             return out
         }
         try {
@@ -1066,9 +1233,14 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                             val buf = ByteArray(256 * 1024)
                             var curOffset = if (append) (core.getEntry(record)?.fileSize ?: 0L) else 0L
                             while (true) {
-                                val n = input.read(buf)
-                                if (n <= 0) break
-                                val w = writer.write(path, curOffset, buf, n)
+                                var accumulated = 0
+                                while (accumulated < buf.size) {
+                                    val n = input.read(buf, accumulated, buf.size - accumulated)
+                                    if (n <= 0) break
+                                    accumulated += n
+                                }
+                                if (accumulated <= 0) break
+                                val w = writer.write(path, curOffset, buf, accumulated)
                                 if (w < 0) {
                                     LogFile.write("provider", "Failed writing pipe chunk at $curOffset to $path: $w")
                                     writeFailed = true
@@ -1182,9 +1354,36 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                     val pfd = sm.openProxyFileDescriptor(pfdMode, object : android.os.ProxyFileDescriptorCallback() {
                         override fun onGetSize(): Long = fileSize
 
+                        // 1MB read-ahead cache to pipeline sequential reads and eliminate high-frequency I/O round-trips
+                        private var cacheOffset: Long = -1L
+                        private var cacheLength: Int = 0
+                        private val cacheBuffer = ByteArray(1024 * 1024)
+
                         override fun onRead(offset: Long, size: Int, data: ByteArray): Int {
                             if (offset >= fileSize || size <= 0) return 0
                             val maxToRead = minOf(size.toLong(), fileSize - offset).toInt()
+
+                            // 1. Cache hit: request is completely within the prefetch window
+                            if (cacheOffset >= 0L && offset >= cacheOffset && (offset + maxToRead) <= (cacheOffset + cacheLength)) {
+                                val cachePos = (offset - cacheOffset).toInt()
+                                System.arraycopy(cacheBuffer, cachePos, data, 0, maxToRead)
+                                return maxToRead
+                            }
+
+                            // 2. Sequential prefetch trigger: for requests <= 128KB, prefetch up to 1MB ahead
+                            if (maxToRead <= 128 * 1024 && (fileSize - offset) > maxToRead) {
+                                val toPrefetch = minOf(cacheBuffer.size.toLong(), fileSize - offset).toInt()
+                                val prefetchRead = core.readFile(record, offset, cacheBuffer, 0, toPrefetch)
+                                if (prefetchRead > 0) {
+                                    cacheOffset = offset
+                                    cacheLength = prefetchRead
+                                    val copyLen = minOf(maxToRead, prefetchRead)
+                                    System.arraycopy(cacheBuffer, 0, data, 0, copyLen)
+                                    return copyLen
+                                }
+                            }
+
+                            // 3. Fallback direct read for random seeks or large buffers
                             val n = core.readFile(record, offset, data, 0, maxToRead)
                             if (n < 0) {
                                 throw android.system.ErrnoException("onRead", android.system.OsConstants.EIO)
@@ -1193,7 +1392,8 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                         }
 
                         override fun onRelease() {
-                            // No-op
+                            cacheOffset = -1L
+                            cacheLength = 0
                         }
                     }, syncHandler)
                     LogFile.write("provider", "openDocument using StorageManager ProxyFileDescriptor (seekable zero-copy, size=$fileSize)")

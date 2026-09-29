@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <linux/fs.h>
+#include <pthread.h>
 
 #include "ntfs-3g/types.h"
 #include "ntfs-3g/device.h"
@@ -197,10 +198,39 @@ dis_ntfs_handle_t dis_ntfs_mount(dis_ctx_t *ctx, int read_only)
 	return (dis_ntfs_handle_t)vol;
 }
 
+typedef struct {
+	ntfs_volume *vol;
+	char path[1024];
+	ntfs_inode *ni;
+	ntfs_attr *na;
+} ntfs_write_cache_t;
+
+static ntfs_write_cache_t g_ntfs_write_cache = {0};
+static pthread_mutex_t g_ntfs_write_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void dis_ntfs_flush_write_cache_locked(void)
+{
+	if (g_ntfs_write_cache.na) {
+		ntfs_attr_close(g_ntfs_write_cache.na);
+		g_ntfs_write_cache.na = NULL;
+	}
+	if (g_ntfs_write_cache.ni) {
+		ntfs_inode_sync(g_ntfs_write_cache.ni);
+		ntfs_inode_close(g_ntfs_write_cache.ni);
+		g_ntfs_write_cache.ni = NULL;
+	}
+	g_ntfs_write_cache.vol = NULL;
+	g_ntfs_write_cache.path[0] = '\0';
+}
+
 int dis_ntfs_umount(dis_ntfs_handle_t vol_handle)
 {
 	if (!vol_handle)
 		return 0;
+	pthread_mutex_lock(&g_ntfs_write_lock);
+	dis_ntfs_flush_write_cache_locked();
+	pthread_mutex_unlock(&g_ntfs_write_lock);
+
 	ntfs_volume *vol = (ntfs_volume *)vol_handle;
 	if (vol->dev && vol->dev->d_private) {
 		dis_ctx_t *ctx = (dis_ctx_t *)vol->dev->d_private;
@@ -228,6 +258,10 @@ int64_t dis_ntfs_create(dis_ntfs_handle_t vol_handle, const char *parent_path, c
 {
 	if (!vol_handle || !name || strlen(name) == 0)
 		return -EINVAL;
+	pthread_mutex_lock(&g_ntfs_write_lock);
+	dis_ntfs_flush_write_cache_locked();
+	pthread_mutex_unlock(&g_ntfs_write_lock);
+
 	ntfs_volume *vol = (ntfs_volume *)vol_handle;
 
 	ntfs_inode *dir_ni = NULL;
@@ -278,6 +312,10 @@ int dis_ntfs_delete(dis_ntfs_handle_t vol_handle, const char *path)
 {
 	if (!vol_handle || !path)
 		return -EINVAL;
+	pthread_mutex_lock(&g_ntfs_write_lock);
+	dis_ntfs_flush_write_cache_locked();
+	pthread_mutex_unlock(&g_ntfs_write_lock);
+
 	ntfs_volume *vol = (ntfs_volume *)vol_handle;
 
 	/* Find parent directory and name */
@@ -351,6 +389,10 @@ int dis_ntfs_rename(dis_ntfs_handle_t vol_handle, const char *old_path, const ch
 {
 	if (!vol_handle || !old_path || !new_path)
 		return -EINVAL;
+	pthread_mutex_lock(&g_ntfs_write_lock);
+	dis_ntfs_flush_write_cache_locked();
+	pthread_mutex_unlock(&g_ntfs_write_lock);
+
 	ntfs_volume *vol = (ntfs_volume *)vol_handle;
 
 	ntfs_inode *ni = ntfs_pathname_to_inode(vol, NULL, old_path);
@@ -416,20 +458,33 @@ int64_t dis_ntfs_write(dis_ntfs_handle_t vol_handle, const char *path, int64_t o
 		return -EINVAL;
 	ntfs_volume *vol = (ntfs_volume *)vol_handle;
 
-	ntfs_inode *ni = ntfs_pathname_to_inode(vol, NULL, path);
-	if (!ni)
-		return -ENOENT;
+	pthread_mutex_lock(&g_ntfs_write_lock);
 
-	ntfs_attr *na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
-	if (!na) {
-		ntfs_inode_close(ni);
-		return -EIO;
+	if (g_ntfs_write_cache.vol != vol || strcmp(g_ntfs_write_cache.path, path) != 0 || !g_ntfs_write_cache.na) {
+		dis_ntfs_flush_write_cache_locked();
+
+		ntfs_inode *ni = ntfs_pathname_to_inode(vol, NULL, path);
+		if (!ni) {
+			pthread_mutex_unlock(&g_ntfs_write_lock);
+			return -ENOENT;
+		}
+
+		ntfs_attr *na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
+		if (!na) {
+			ntfs_inode_close(ni);
+			pthread_mutex_unlock(&g_ntfs_write_lock);
+			return -EIO;
+		}
+
+		g_ntfs_write_cache.vol = vol;
+		strncpy(g_ntfs_write_cache.path, path, sizeof(g_ntfs_write_cache.path) - 1);
+		g_ntfs_write_cache.path[sizeof(g_ntfs_write_cache.path) - 1] = '\0';
+		g_ntfs_write_cache.ni = ni;
+		g_ntfs_write_cache.na = na;
 	}
 
-	s64 written = ntfs_attr_pwrite(na, (s64)offset, (s64)count, buf);
-	ntfs_attr_close(na);
-	ntfs_inode_sync(ni);
-	ntfs_inode_close(ni);
+	s64 written = ntfs_attr_pwrite(g_ntfs_write_cache.na, (s64)offset, (s64)count, buf);
+	pthread_mutex_unlock(&g_ntfs_write_lock);
 
 	return (int64_t)written;
 }
@@ -439,6 +494,10 @@ int64_t dis_ntfs_truncate(dis_ntfs_handle_t vol_handle, const char *path, int64_
 	if (!vol_handle || !path || new_size < 0)
 		return -EINVAL;
 	ntfs_volume *vol = (ntfs_volume *)vol_handle;
+
+	pthread_mutex_lock(&g_ntfs_write_lock);
+	dis_ntfs_flush_write_cache_locked();
+	pthread_mutex_unlock(&g_ntfs_write_lock);
 
 	ntfs_inode *ni = ntfs_pathname_to_inode(vol, NULL, path);
 	if (!ni)
@@ -519,6 +578,11 @@ int dis_ntfs_sync(dis_ntfs_handle_t vol_handle)
 	if (!vol_handle)
 		return -EINVAL;
 	ntfs_volume *vol = (ntfs_volume *)vol_handle;
+
+	pthread_mutex_lock(&g_ntfs_write_lock);
+	dis_ntfs_flush_write_cache_locked();
+	pthread_mutex_unlock(&g_ntfs_write_lock);
+
 	sync_volume_metadata(vol);
 	return 0;
 }

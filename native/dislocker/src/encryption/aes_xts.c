@@ -9,8 +9,11 @@
  * (FVEK) + tweak key, with the tweak = little-endian sector number.
  */
 #include "dislocker/crypto.h"
-
 #include <string.h>
+
+#if defined(HAVE_ARMV8_CE)
+#include "aes_xts_armv8ce.h"
+#endif
 
 /* ---------- little-endian u64 load/store (from dislocker aes-xts.c) ---------- */
 
@@ -214,11 +217,25 @@ first:
 void aes_xts_decrypt(aes_ctx_t *crypt_ctx, aes_ctx_t *tweak_ctx,
 	const uint8_t *in, uint8_t *out, size_t length, const uint8_t iv[16])
 {
+#if defined(HAVE_ARMV8_CE)
+	if (dislocker_is_armv8_ce_enabled()) {
+		if (aes_xts_crypt_armv8ce(crypt_ctx, tweak_ctx, 0, length, iv, in, out) == 0) {
+			return;
+		}
+	}
+#endif
 	aes_xts_crypt(crypt_ctx, tweak_ctx, 0, length, iv, in, out);
 }
 
 void aes_xts_encrypt(aes_ctx_t *crypt_ctx, aes_ctx_t *tweak_ctx,
 	const uint8_t *in, uint8_t *out, size_t length, const uint8_t iv[16])
 {
+#if defined(HAVE_ARMV8_CE)
+	if (dislocker_is_armv8_ce_enabled()) {
+		if (aes_xts_crypt_armv8ce(crypt_ctx, tweak_ctx, 1, length, iv, in, out) == 0) {
+			return;
+		}
+	}
+#endif
 	aes_xts_crypt(crypt_ctx, tweak_ctx, 1, length, iv, in, out);
 }

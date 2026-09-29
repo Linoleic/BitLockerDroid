@@ -500,28 +500,17 @@ class NtfsReader(
                 // Sparse run: logical zeros
                 val dstOff = dstPos + (filePos - offset)
                 java.util.Arrays.fill(dst, dstOff.toInt(), (dstOff + toRead).toInt(), 0.toByte())
+                filePos += toRead
+                remaining -= toRead
             } else {
-                var clusterIdx = within / clusterSize
-                var byteIn = (within % clusterSize)
-                var todo = toRead
-                var dstOff = dstPos + (filePos - offset)
-
-                while (todo > 0) {
-                    val clusterBuf = ByteArray(clusterSize.toInt())
-                    val n = source.read((run.clusterOffset + clusterIdx) * clusterSize, clusterBuf, 0, clusterBuf.size)
-                    if (n <= 0) break
-
-                    val fromBuf = minOf(todo, (n - byteIn).toLong()).toInt()
-                    System.arraycopy(clusterBuf, byteIn.toInt(), dst, (dstOff + (toRead - todo)).toInt(), fromBuf)
-                    todo -= fromBuf
-                    byteIn = 0
-                    clusterIdx++
-                    if (n < clusterBuf.size && fromBuf < todo) break
-                }
+                val diskOffset = run.clusterOffset * clusterSize + within
+                val dstOff = (dstPos + (filePos - offset)).toInt()
+                val n = source.read(diskOffset, dst, dstOff, toRead.toInt())
+                if (n <= 0) break
+                filePos += n
+                remaining -= n
+                if (n < toRead) break
             }
-
-            filePos += toRead
-            remaining -= toRead
             runFileStart = runFileEnd
         }
 

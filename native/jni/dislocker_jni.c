@@ -17,11 +17,17 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 #include <pthread.h>
 #include <android/log.h>
+#if defined(__aarch64__)
+#include <sys/auxv.h>
+#include <asm/hwcap.h>
+#endif
 
 #include "dislocker/dislocker.h"
 #include "dislocker/dislocker_priv.h"
+#include "dislocker/crypto.h"
 #include "dislocker/ntfs3g_device.h"
 #include "dislocker/fatfs_device.h"
 
@@ -1011,9 +1017,119 @@ static jlong native_getDeviceSize(JNIEnv *env, jobject thiz, jlong handle)
 	return (jlong)sz;
 }
 
+static jboolean native_isHardwareAesSupported(JNIEnv *env, jobject thiz)
+{
+	(void)env; (void)thiz;
+	return dislocker_is_armv8_ce_supported() ? JNI_TRUE : JNI_FALSE;
+}
+
+static jboolean native_isHardwareAesEnabled(JNIEnv *env, jobject thiz)
+{
+	(void)env; (void)thiz;
+	return dislocker_is_armv8_ce_enabled() ? JNI_TRUE : JNI_FALSE;
+}
+
+static void native_setHardwareAesEnabled(JNIEnv *env, jobject thiz, jboolean enabled)
+{
+	(void)env; (void)thiz;
+	dislocker_set_armv8_ce_enabled(enabled ? 1 : 0);
+}
+
+static jboolean native_isHardwareSha2Supported(JNIEnv *env, jobject thiz)
+{
+	(void)env; (void)thiz;
+	return dislocker_is_armv8_sha2_supported() ? JNI_TRUE : JNI_FALSE;
+}
+
+static jboolean native_isHardwareSha2Enabled(JNIEnv *env, jobject thiz)
+{
+	(void)env; (void)thiz;
+	return dislocker_is_armv8_sha2_enabled() ? JNI_TRUE : JNI_FALSE;
+}
+
+static void native_setHardwareSha2Enabled(JNIEnv *env, jobject thiz, jboolean enabled)
+{
+	(void)env; (void)thiz;
+	dislocker_set_armv8_sha2_enabled(enabled ? 1 : 0);
+}
+
+static jlong native_benchmarkKeyStretching(JNIEnv *env, jobject thiz, jint rounds)
+{
+	(void)env; (void)thiz;
+	if (rounds <= 0) return 0;
+
+	uint8_t ch_buf[88];
+	memset(ch_buf, 0x5a, sizeof(ch_buf));
+	uint8_t result[32];
+
+	struct timespec t0, t1;
+	clock_gettime(CLOCK_MONOTONIC, &t0);
+
+	if (dislocker_is_armv8_sha2_enabled()) {
+		bitlocker_stretch_key_rounds_armv8ce(ch_buf, result, (uint32_t)rounds);
+	} else {
+		for (int i = 0; i < rounds; i++) {
+			sha256(ch_buf, sizeof(ch_buf), ch_buf);
+			uint64_t *cnt = (uint64_t *)(ch_buf + 80);
+			(*cnt)++;
+		}
+	}
+
+	clock_gettime(CLOCK_MONOTONIC, &t1);
+	int64_t us = (int64_t)(t1.tv_sec - t0.tv_sec) * 1000000LL + (t1.tv_nsec - t0.tv_nsec) / 1000LL;
+	return (jlong)us;
+}
+
+static jstring native_getHardwareAesDetails(JNIEnv *env, jobject thiz)
+{
+	(void)thiz;
+#if defined(__aarch64__) && defined(HWCAP_AES)
+	unsigned long hwcap = getauxval(AT_HWCAP);
+	int has_hwcap = (hwcap & HWCAP_AES) != 0;
+	int supported = dislocker_is_armv8_ce_supported();
+	if (supported) {
+		return (*env)->NewStringUTF(env, "HWCAP_AES: OK | Self-Test: AES-XTS & CBC Passed (ARMv8 CE)");
+	} else if (has_hwcap) {
+		return (*env)->NewStringUTF(env, "HWCAP_AES: OK | Self-Test: Failed (Fallback Software)");
+	} else {
+		return (*env)->NewStringUTF(env, "HWCAP_AES: Missing | CPU lacks ARMv8 CE instructions");
+	}
+#else
+	return (*env)->NewStringUTF(env, "Non-ARM64 architecture | Software table mode");
+#endif
+}
+
+static jstring native_getHardwareSha2Details(JNIEnv *env, jobject thiz)
+{
+	(void)thiz;
+#if defined(__aarch64__) && defined(HWCAP_SHA2)
+	unsigned long hwcap = getauxval(AT_HWCAP);
+	int has_hwcap = (hwcap & HWCAP_SHA2) != 0;
+	int supported = dislocker_is_armv8_sha2_supported();
+	if (supported) {
+		return (*env)->NewStringUTF(env, "HWCAP_SHA2: OK | Self-Test: NIST & Stretch Passed (ARMv8 CE)");
+	} else if (has_hwcap) {
+		return (*env)->NewStringUTF(env, "HWCAP_SHA2: OK | Self-Test: Failed (Fallback mbedtls)");
+	} else {
+		return (*env)->NewStringUTF(env, "HWCAP_SHA2: Missing | CPU lacks ARMv8 CE instructions");
+	}
+#else
+	return (*env)->NewStringUTF(env, "Non-ARM64 architecture | Software mbedtls mode");
+#endif
+}
+
 /* ---------------- registration ---------------- */
 
 static const JNINativeMethod methods[] = {
+	NATIVE_METHOD(env, cls, "nativeIsHardwareAesSupported", "()Z", native_isHardwareAesSupported),
+	NATIVE_METHOD(env, cls, "nativeIsHardwareAesEnabled", "()Z", native_isHardwareAesEnabled),
+	NATIVE_METHOD(env, cls, "nativeSetHardwareAesEnabled", "(Z)V", native_setHardwareAesEnabled),
+	NATIVE_METHOD(env, cls, "nativeGetHardwareAesDetails", "()Ljava/lang/String;", native_getHardwareAesDetails),
+	NATIVE_METHOD(env, cls, "nativeIsHardwareSha2Supported", "()Z", native_isHardwareSha2Supported),
+	NATIVE_METHOD(env, cls, "nativeIsHardwareSha2Enabled", "()Z", native_isHardwareSha2Enabled),
+	NATIVE_METHOD(env, cls, "nativeSetHardwareSha2Enabled", "(Z)V", native_setHardwareSha2Enabled),
+	NATIVE_METHOD(env, cls, "nativeGetHardwareSha2Details", "()Ljava/lang/String;", native_getHardwareSha2Details),
+	NATIVE_METHOD(env, cls, "nativeBenchmarkKeyStretching", "(I)J", native_benchmarkKeyStretching),
 	NATIVE_METHOD(env, cls, "nativeHasBitLockerHeader", "(Ljava/lang/String;)Z", native_hasBitLockerHeader),
 	NATIVE_METHOD(env, cls, "nativeOpenVolume", "(Ljava/lang/String;J[B)J", native_openVolume),
 	NATIVE_METHOD(env, cls, "nativeOpenVolumeRecovery", "(Ljava/lang/String;JLjava/lang/String;)J", native_openVolumeRecovery),

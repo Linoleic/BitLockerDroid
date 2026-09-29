@@ -6,7 +6,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -16,7 +15,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import com.bitlockerdroid.R
-import com.bitlockerdroid.ui.settings.SettingsClickableItem
 import com.bitlockerdroid.ui.settings.SettingsGroup
 import com.bitlockerdroid.ui.settings.SettingsStatusItem
 import com.bitlockerdroid.ui.settings.SettingsSwitchItem
@@ -24,51 +22,66 @@ import com.bitlockerdroid.ui.theme.SuccessGreen
 import com.bitlockerdroid.util.RootAccess
 
 /**
- * Dedicated Advanced Options dialog:
- * - Master switch for Root privilege usage (fallback to pure Non-Root USB Host mode)
- * - Root-exclusive feature switches (POSIX mount, notification suppressor)
- * - System environment and diagnostic indicators (Root, SELinux, 16KB alignment, App logs)
+ * Dedicated Root Permission Control Dialog:
+ * - Master switch for Root privilege usage (with fallback to non-root USB Host mode)
+ * - Detailed Root environment and solution status detection
+ * - Root-exclusive feature switches (system corrupt notification suppression)
  */
 @Composable
-fun AdvancedSettingsDialog(
+fun RootControlDialog(
     rootSolution: RootAccess.RootSolutionInfo,
     useRootAccess: Boolean,
     onUseRootAccessChange: (Boolean) -> Unit,
     suppressCorruptNotification: Boolean,
     onSuppressCorruptNotificationChange: (Boolean) -> Unit,
-    onOpenLog: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val selinuxStatus = RootAccess.getSelinuxStatus()
     val canUseRootFeatures = useRootAccess && rootSolution.isDeviceRooted
+
+    val rootSummary = if (!useRootAccess) {
+        if (rootSolution.isDeviceRooted) {
+            "${rootSolution.solutionName} · ${stringResource(R.string.settings_root_disabled_badge)}"
+        } else {
+            stringResource(R.string.settings_non_root_mode)
+        }
+    } else {
+        rootSolution.summary
+    }
+
+    val rootBadge = if (!useRootAccess) {
+        stringResource(R.string.settings_non_root_mode)
+    } else if (rootSolution.hasRoot) {
+        rootSolution.solutionName
+    } else {
+        stringResource(R.string.settings_root_not_granted)
+    }
+
+    val rootBadgeColor = if (!useRootAccess) {
+        MaterialTheme.colorScheme.outline
+    } else if (rootSolution.hasRoot) {
+        SuccessGreen
+    } else {
+        MaterialTheme.colorScheme.error
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
         modifier = Modifier
-            .widthIn(min = 360.dp, max = 560.dp)
             .fillMaxWidth(0.92f)
-            .padding(vertical = 16.dp),
-        confirmButton = {
-            Button(
-                onClick = onDismiss,
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text(text = stringResource(R.string.done))
-            }
-        },
+            .widthIn(max = 520.dp),
         icon = {
             Surface(
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.primaryContainer,
-                modifier = Modifier.size(48.dp)
+                modifier = Modifier.size(52.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
-                        imageVector = Icons.Default.Settings,
+                        imageVector = Icons.Default.Lock,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(26.dp)
                     )
                 }
             }
@@ -76,7 +89,7 @@ fun AdvancedSettingsDialog(
         title = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = stringResource(R.string.settings_advanced_title),
+                    text = stringResource(R.string.settings_header_root_mode),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -92,11 +105,23 @@ fun AdvancedSettingsDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 620.dp)
+                    .heightIn(max = 560.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Section 1: Root Permission Master Switch
+                // Section 1: Root Environment Status
+                SettingsGroup(
+                    title = stringResource(R.string.settings_root_status)
+                ) {
+                    SettingsStatusItem(
+                        title = stringResource(R.string.settings_root_status),
+                        description = rootSummary,
+                        badgeText = rootBadge,
+                        badgeColor = rootBadgeColor
+                    )
+                }
+
+                // Section 2: Root Master Switch
                 SettingsGroup(
                     title = stringResource(R.string.settings_header_root_mode)
                 ) {
@@ -108,7 +133,7 @@ fun AdvancedSettingsDialog(
                     )
                 }
 
-                // Section 2: Root-Exclusive Features
+                // Section 3: Root-Exclusive Features
                 SettingsGroup(
                     title = stringResource(R.string.settings_root_features_header)
                 ) {
@@ -148,79 +173,14 @@ fun AdvancedSettingsDialog(
                         onCheckedChange = onSuppressCorruptNotificationChange
                     )
                 }
-
-                // Section 3: System Environment & Diagnostics
-                SettingsGroup(
-                    title = stringResource(R.string.settings_header_diag)
-                ) {
-                    val rootSummary = if (!useRootAccess) {
-                        if (rootSolution.isDeviceRooted) {
-                            "${rootSolution.solutionName} · ${stringResource(R.string.settings_root_disabled_badge)}"
-                        } else {
-                            stringResource(R.string.settings_non_root_mode)
-                        }
-                    } else {
-                        rootSolution.summary
-                    }
-
-                    val rootBadge = if (!useRootAccess) {
-                        stringResource(R.string.settings_non_root_mode)
-                    } else if (rootSolution.hasRoot) {
-                        rootSolution.solutionName
-                    } else {
-                        stringResource(R.string.settings_root_not_granted)
-                    }
-
-                    val rootBadgeColor = if (!useRootAccess) {
-                        MaterialTheme.colorScheme.outline
-                    } else if (rootSolution.hasRoot) {
-                        SuccessGreen
-                    } else {
-                        MaterialTheme.colorScheme.error
-                    }
-
-                    SettingsStatusItem(
-                        title = stringResource(R.string.settings_root_status),
-                        description = rootSummary,
-                        badgeText = rootBadge,
-                        badgeColor = rootBadgeColor
-                    )
-
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                    )
-
-                    SettingsStatusItem(
-                        title = stringResource(R.string.settings_selinux_status),
-                        description = "SELinux: $selinuxStatus",
-                        badgeText = selinuxStatus,
-                        badgeColor = if (selinuxStatus == "Enforcing") SuccessGreen else MaterialTheme.colorScheme.tertiary
-                    )
-
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                    )
-
-                    SettingsStatusItem(
-                        title = stringResource(R.string.settings_align_status),
-                        description = stringResource(R.string.settings_align_ok),
-                        badgeText = "16KB Ready",
-                        badgeColor = SuccessGreen
-                    )
-
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                    )
-
-                    SettingsClickableItem(
-                        title = stringResource(R.string.log_title),
-                        description = stringResource(R.string.settings_view_log_desc),
-                        onClick = onOpenLog
-                    )
-                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(
+                    text = stringResource(R.string.close),
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
     )

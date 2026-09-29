@@ -35,6 +35,10 @@ class BitLockerApplication : Application() {
             LogFile.init(applicationContext)
             LogFile.write("app", "=== Application onCreate ===")
             com.bitlockerdroid.util.PreferenceHelper.purgeLegacyNodeKeys(applicationContext)
+            val hwCrypto = com.bitlockerdroid.util.PreferenceHelper.isUseHardwareCrypto(applicationContext)
+            try {
+                com.bitlockerdroid.util.NativeBridge.setHardwareCryptoEnabled(hwCrypto)
+            } catch (_: Throwable) {}
             com.bitlockerdroid.util.RootAccess.ensureDaemonInstalled(applicationContext)
             com.bitlockerdroid.util.RootAccess.ensureFuseDaemonInstalled(applicationContext)
             try {

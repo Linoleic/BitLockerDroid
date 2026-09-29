@@ -50,3 +50,17 @@ Java_me_jahnen_libaums_core_usb_AndroidUsbCommunication_clearHaltNative(JNIEnv *
     (void)thiz;
     return do_clear_halt(fd, endpoint);
 }
+
+JNIEXPORT jboolean JNICALL
+Java_com_bitlockerdroid_usb_PipelinedUsbCommunication_nativeResetDevice(JNIEnv *env, jobject thiz, jint fd) {
+    (void)env;
+    (void)thiz;
+    return do_reset(fd);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_bitlockerdroid_usb_PipelinedUsbCommunication_nativeClearHalt(JNIEnv *env, jobject thiz, jint fd, jint endpoint) {
+    (void)env;
+    (void)thiz;
+    return do_clear_halt(fd, endpoint);
+}

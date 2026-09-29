@@ -53,6 +53,10 @@ const uint16_t datum_value_header_size[22] = {
 
 /* ---------------- chain hash (stretch_key.c) ---------------- */
 
+#if defined(HAVE_ARMV8_CE)
+#include "sha256_armv8ce.h"
+#endif
+
 #define SHA256_DIGEST_LENGTH 32
 #define SALT_LENGTH          16
 
@@ -65,6 +69,13 @@ typedef struct {
 
 static void stretch_key(bitlocker_chain_hash_t *ch, uint8_t *result)
 {
+#if defined(HAVE_ARMV8_CE)
+	if (dislocker_is_armv8_sha2_enabled()) {
+		if (bitlocker_stretch_key_armv8ce(ch, result) == 0) {
+			return;
+		}
+	}
+#endif
 	for (uint64_t loop = 0; loop < 0x100000; ++loop) {
 		sha256((uint8_t *)ch, sizeof(bitlocker_chain_hash_t), ch->updated_hash);
 		ch->hash_count++;

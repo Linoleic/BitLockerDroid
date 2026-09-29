@@ -1,5 +1,7 @@
 package com.bitlockerdroid.ui.dialogs
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,9 +26,12 @@ import com.bitlockerdroid.ui.theme.SuccessGreen
 import com.bitlockerdroid.ui.theme.WarningAmber
 import com.bitlockerdroid.util.BenchmarkEngine
 import com.bitlockerdroid.util.BenchmarkResult
+import com.bitlockerdroid.util.BenchmarkTestType
+import com.bitlockerdroid.util.PreferenceHelper
 import kotlinx.coroutines.launch
 import java.util.Locale
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BenchmarkDialog(
     devicePath: String,
@@ -38,30 +43,44 @@ fun BenchmarkDialog(
         UnlockManager.activeSessions.find { it.devicePath == devicePath }
     }
 
+    val isReadOnly = core == null || core.writer == null || PreferenceHelper.isVolumeReadOnly(context, core.volumeGuid, core.devicePath)
+
+    // Initialize selected tests: all available tests based on read-only status
+    var selectedTests by remember(isReadOnly) {
+        mutableStateOf(
+            if (isReadOnly) {
+                setOf(BenchmarkTestType.SEQ_READ, BenchmarkTestType.RAND_4K_READ)
+            } else {
+                BenchmarkTestType.entries.toSet()
+            }
+        )
+    }
+
     var isRunning by remember { mutableStateOf(false) }
     var currentPhase by remember { mutableStateOf("") }
     var currentProgress by remember { mutableStateOf(0f) }
     var result by remember { mutableStateOf<BenchmarkResult?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    fun startTest() {
+    fun runTests(testsToRun: Set<BenchmarkTestType>) {
         if (core == null) {
             errorMessage = context.getString(R.string.benchmark_session_lost)
             return
         }
+        if (testsToRun.isEmpty()) return
+
         isRunning = true
         errorMessage = null
-        result = null
         currentProgress = 0f
         currentPhase = context.getString(R.string.benchmark_preparing)
 
         coroutineScope.launch {
             try {
-                val res = BenchmarkEngine.runBenchmark(core, context) { phase, progress ->
+                val newRes = BenchmarkEngine.runBenchmark(core, testsToRun, context) { phase, progress ->
                     currentPhase = phase
                     currentProgress = progress
                 }
-                result = res
+                result = result?.mergeWith(newRes) ?: newRes
             } catch (e: Exception) {
                 errorMessage = context.getString(R.string.benchmark_error, e.message ?: "")
             } finally {
@@ -77,7 +96,7 @@ fun BenchmarkDialog(
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-                    modifier = Modifier.size(32.dp)
+                    modifier = Modifier.size(34.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
@@ -108,7 +127,7 @@ fun BenchmarkDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
                     text = stringResource(R.string.benchmark_intro),
@@ -116,6 +135,48 @@ fun BenchmarkDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
+                // Quick preset filter chips
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val allSet = if (isReadOnly) {
+                        setOf(BenchmarkTestType.SEQ_READ, BenchmarkTestType.RAND_4K_READ)
+                    } else {
+                        BenchmarkTestType.entries.toSet()
+                    }
+                    val readSet = setOf(BenchmarkTestType.SEQ_READ, BenchmarkTestType.RAND_4K_READ)
+                    val writeSet = setOf(BenchmarkTestType.SEQ_WRITE, BenchmarkTestType.RAND_4K_WRITE)
+
+                    FilterChip(
+                        selected = selectedTests == allSet,
+                        onClick = {
+                            if (!isRunning) selectedTests = allSet
+                        },
+                        label = { Text(stringResource(R.string.benchmark_opt_all), fontSize = 12.sp) },
+                        enabled = !isRunning
+                    )
+
+                    FilterChip(
+                        selected = selectedTests == readSet,
+                        onClick = {
+                            if (!isRunning) selectedTests = readSet
+                        },
+                        label = { Text(stringResource(R.string.benchmark_opt_readonly), fontSize = 12.sp) },
+                        enabled = !isRunning
+                    )
+
+                    FilterChip(
+                        selected = !isReadOnly && selectedTests == writeSet,
+                        onClick = {
+                            if (!isRunning && !isReadOnly) selectedTests = writeSet
+                        },
+                        label = { Text(stringResource(R.string.benchmark_opt_writeonly), fontSize = 12.sp) },
+                        enabled = !isRunning && !isReadOnly
+                    )
+                }
+
+                // Progress indicator during run
                 if (isRunning) {
                     Surface(
                         shape = RoundedCornerShape(12.dp),
@@ -125,8 +186,8 @@ fun BenchmarkDialog(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Text(
                                 text = currentPhase,
@@ -138,8 +199,8 @@ fun BenchmarkDialog(
                                 progress = { currentProgress },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(8.dp)
-                                    .clip(RoundedCornerShape(4.dp)),
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
                                 color = MaterialTheme.colorScheme.primary,
                                 trackColor = MaterialTheme.colorScheme.surfaceVariant
                             )
@@ -153,114 +214,142 @@ fun BenchmarkDialog(
                     }
                 }
 
+                // Error banner
                 if (errorMessage != null) {
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
                             text = errorMessage ?: "",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(12.dp)
+                            modifier = Modifier.padding(10.dp)
                         )
                     }
                 }
 
-                if (result != null) {
-                    val r = result!!
+                // Test Items List
+                BenchmarkItemCard(
+                    title = stringResource(R.string.benchmark_item_seq_read_title),
+                    subtitle = stringResource(R.string.benchmark_item_seq_read_sub),
+                    isSelected = selectedTests.contains(BenchmarkTestType.SEQ_READ),
+                    isReadOnlyRestricted = false,
+                    isRunning = isRunning,
+                    valueText = result?.sequentialReadMbPerSec?.let { String.format(Locale.US, "%.1f MB/s", it) },
+                    valueHighlight = (result?.sequentialReadMbPerSec ?: 0.0) >= 30.0,
+                    onToggleSelect = {
+                        selectedTests = if (selectedTests.contains(BenchmarkTestType.SEQ_READ)) {
+                            selectedTests - BenchmarkTestType.SEQ_READ
+                        } else {
+                            selectedTests + BenchmarkTestType.SEQ_READ
+                        }
+                    },
+                    onRunSingle = { runTests(setOf(BenchmarkTestType.SEQ_READ)) }
+                )
+
+                BenchmarkItemCard(
+                    title = stringResource(R.string.benchmark_item_seq_write_title),
+                    subtitle = stringResource(R.string.benchmark_item_seq_write_sub),
+                    isSelected = selectedTests.contains(BenchmarkTestType.SEQ_WRITE),
+                    isReadOnlyRestricted = isReadOnly,
+                    isRunning = isRunning,
+                    valueText = result?.sequentialWriteMbPerSec?.let { String.format(Locale.US, "%.1f MB/s", it) },
+                    valueHighlight = (result?.sequentialWriteMbPerSec ?: 0.0) >= 20.0,
+                    onToggleSelect = {
+                        if (!isReadOnly) {
+                            selectedTests = if (selectedTests.contains(BenchmarkTestType.SEQ_WRITE)) {
+                                selectedTests - BenchmarkTestType.SEQ_WRITE
+                            } else {
+                                selectedTests + BenchmarkTestType.SEQ_WRITE
+                            }
+                        }
+                    },
+                    onRunSingle = { runTests(setOf(BenchmarkTestType.SEQ_WRITE)) }
+                )
+
+                BenchmarkItemCard(
+                    title = stringResource(R.string.benchmark_item_rand_read_title),
+                    subtitle = stringResource(R.string.benchmark_item_rand_read_sub),
+                    isSelected = selectedTests.contains(BenchmarkTestType.RAND_4K_READ),
+                    isReadOnlyRestricted = false,
+                    isRunning = isRunning,
+                    valueText = if (result?.random4kLatencyMs != null && result?.random4kIops != null) {
+                        String.format(Locale.US, "%.2f ms (%.0f IOPS)", result!!.random4kLatencyMs, result!!.random4kIops)
+                    } else null,
+                    valueHighlight = false,
+                    onToggleSelect = {
+                        selectedTests = if (selectedTests.contains(BenchmarkTestType.RAND_4K_READ)) {
+                            selectedTests - BenchmarkTestType.RAND_4K_READ
+                        } else {
+                            selectedTests + BenchmarkTestType.RAND_4K_READ
+                        }
+                    },
+                    onRunSingle = { runTests(setOf(BenchmarkTestType.RAND_4K_READ)) }
+                )
+
+                BenchmarkItemCard(
+                    title = stringResource(R.string.benchmark_item_rand_write_title),
+                    subtitle = stringResource(R.string.benchmark_item_rand_write_sub),
+                    isSelected = selectedTests.contains(BenchmarkTestType.RAND_4K_WRITE),
+                    isReadOnlyRestricted = isReadOnly,
+                    isRunning = isRunning,
+                    valueText = if (result?.random4kWriteLatencyMs != null && result?.random4kWriteIops != null) {
+                        String.format(Locale.US, "%.2f ms (%.0f IOPS)", result!!.random4kWriteLatencyMs, result!!.random4kWriteIops)
+                    } else null,
+                    valueHighlight = false,
+                    onToggleSelect = {
+                        if (!isReadOnly) {
+                            selectedTests = if (selectedTests.contains(BenchmarkTestType.RAND_4K_WRITE)) {
+                                selectedTests - BenchmarkTestType.RAND_4K_WRITE
+                            } else {
+                                selectedTests + BenchmarkTestType.RAND_4K_WRITE
+                            }
+                        }
+                    },
+                    onRunSingle = { runTests(setOf(BenchmarkTestType.RAND_4K_WRITE)) }
+                )
+
+                // Physical Link Speed Summary Card
+                val linkDesc = result?.usbSpeedDesc
+                if (linkDesc != null && linkDesc != "Unknown") {
                     Surface(
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(10.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = stringResource(R.string.benchmark_results),
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
+                                text = stringResource(R.string.benchmark_link_speed),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (result?.usbLinkSpeedMbps != null && result!!.usbLinkSpeedMbps!! >= 5000)
+                                    SuccessGreen.copy(alpha = 0.15f)
+                                else WarningAmber.copy(alpha = 0.15f)
                             ) {
                                 Text(
-                                    text = stringResource(R.string.benchmark_seq_read),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = String.format(Locale.US, "%.1f MB/s", r.sequentialReadMbPerSec),
-                                    style = MaterialTheme.typography.titleMedium.copy(
+                                    text = linkDesc,
+                                    style = MaterialTheme.typography.labelSmall.copy(
                                         fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.Bold
                                     ),
-                                    color = if (r.sequentialReadMbPerSec >= 30.0) SuccessGreen else MaterialTheme.colorScheme.onSurface
+                                    color = if (result?.usbLinkSpeedMbps != null && result!!.usbLinkSpeedMbps!! >= 5000)
+                                        SuccessGreen
+                                    else WarningAmber,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.benchmark_4k_latency),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = String.format(Locale.US, "%.2f ms (%.0f IOPS)", r.random4kLatencyMs, r.random4kIops),
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        fontFamily = FontFamily.Monospace,
-                                        fontWeight = FontWeight.SemiBold
-                                    ),
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.benchmark_link_speed),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = if (r.usbLinkSpeedMbps != null && r.usbLinkSpeedMbps >= 5000) SuccessGreen.copy(alpha = 0.15f)
-                                            else WarningAmber.copy(alpha = 0.15f)
-                                ) {
-                                    Text(
-                                        text = r.usbSpeedDesc,
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            fontFamily = FontFamily.Monospace,
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        color = if (r.usbLinkSpeedMbps != null && r.usbLinkSpeedMbps >= 5000) SuccessGreen else WarningAmber,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
                             }
                         }
                     }
@@ -270,7 +359,8 @@ fun BenchmarkDialog(
         confirmButton = {
             if (!isRunning) {
                 Button(
-                    onClick = { startTest() },
+                    onClick = { runTests(selectedTests) },
+                    enabled = selectedTests.isNotEmpty(),
                     shape = RoundedCornerShape(10.dp)
                 ) {
                     Icon(
@@ -279,7 +369,9 @@ fun BenchmarkDialog(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = if (result != null) stringResource(R.string.benchmark_restart) else stringResource(R.string.benchmark_start))
+                    Text(
+                        text = stringResource(R.string.benchmark_run_selected, selectedTests.size)
+                    )
                 }
             }
         },
@@ -295,3 +387,121 @@ fun BenchmarkDialog(
         }
     )
 }
+
+@Composable
+private fun BenchmarkItemCard(
+    title: String,
+    subtitle: String,
+    isSelected: Boolean,
+    isReadOnlyRestricted: Boolean,
+    isRunning: Boolean,
+    valueText: String?,
+    valueHighlight: Boolean,
+    onToggleSelect: () -> Unit,
+    onRunSingle: () -> Unit
+) {
+    val effectiveSelected = isSelected && !isReadOnlyRestricted
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = if (effectiveSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f)
+                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+        border = BorderStroke(
+            1.dp,
+            if (effectiveSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(enabled = !isRunning && !isReadOnlyRestricted) { onToggleSelect() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Checkbox(
+                    checked = effectiveSelected,
+                    onCheckedChange = { onToggleSelect() },
+                    enabled = !isRunning && !isReadOnlyRestricted,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (isReadOnlyRestricted) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                    else MaterialTheme.colorScheme.onSurface
+                        )
+                        if (isReadOnlyRestricted) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.benchmark_readonly_badge),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.outline,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                    )
+                }
+
+                // Single-run test button
+                OutlinedButton(
+                    onClick = onRunSingle,
+                    enabled = !isRunning && !isReadOnlyRestricted,
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    modifier = Modifier.height(30.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.benchmark_item_run_single),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            // Metric Value Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 32.dp, top = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = valueText ?: "--",
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = when {
+                        valueText == null -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                        valueHighlight -> SuccessGreen
+                        else -> MaterialTheme.colorScheme.primary
+                    }
+                )
+            }
+        }
+    }
+}
+

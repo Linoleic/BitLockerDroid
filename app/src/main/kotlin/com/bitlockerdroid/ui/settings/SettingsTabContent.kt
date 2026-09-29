@@ -34,8 +34,12 @@ fun SettingsTabContent(
     currentLanguage: String,
     useRootAccess: Boolean,
     rootSolution: RootAccess.RootSolutionInfo,
+    useHardwareAes: Boolean = PreferenceHelper.useHardwareAes,
+    useHardwareSha2: Boolean = PreferenceHelper.useHardwareSha2,
     onOpenCredentialsManager: () -> Unit,
-    onOpenAdvancedSettings: () -> Unit,
+    onOpenRootControl: () -> Unit = {},
+    onOpenHardwareAcceleration: () -> Unit = {},
+    onOpenSystemDiagnostics: () -> Unit = {},
     onThemeModeChange: (ThemeMode) -> Unit,
     onLanguageChange: (String) -> Unit
 ) {
@@ -213,8 +217,9 @@ fun SettingsTabContent(
                 }
             }
 
-            // Group 4: Advanced Options
+            // Group 4: Advanced Options (拆分为三大高级入口)
             SettingsGroup(title = stringResource(R.string.settings_header_advanced)) {
+                // 1. Root 权限控制
                 val rootBadge = if (!useRootAccess) {
                     stringResource(R.string.settings_non_root_mode)
                 } else if (rootSolution.hasRoot) {
@@ -231,12 +236,85 @@ fun SettingsTabContent(
                     MaterialTheme.colorScheme.error
                 }
 
+                val rootSummary = if (!useRootAccess) {
+                    stringResource(R.string.settings_non_root_mode)
+                } else if (rootSolution.hasRoot) {
+                    "${rootSolution.solutionName} · ${stringResource(R.string.root_status_authorized)}"
+                } else {
+                    stringResource(R.string.settings_root_not_granted)
+                }
+
                 SettingsClickableItem(
-                    title = stringResource(R.string.settings_advanced_title),
-                    description = stringResource(R.string.settings_advanced_desc),
+                    title = stringResource(R.string.settings_header_root_mode),
+                    description = rootSummary,
                     badgeText = rootBadge,
                     badgeColor = rootBadgeColor,
-                    onClick = onOpenAdvancedSettings
+                    onClick = onOpenRootControl
+                )
+
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                )
+
+                // 2. ARMv8 硬件密码学加速
+                val isHwCryptoSupported = remember {
+                    try {
+                        com.bitlockerdroid.util.NativeBridge.isHardwareCryptoSupported()
+                    } catch (_: Throwable) {
+                        false
+                    }
+                }
+                val aesState = if (useHardwareAes) stringResource(R.string.settings_hw_state_enabled) else stringResource(R.string.settings_hw_state_disabled)
+                val sha2State = if (useHardwareSha2) stringResource(R.string.settings_hw_state_enabled) else stringResource(R.string.settings_hw_state_disabled)
+                val summary = if (isHwCryptoSupported) {
+                    stringResource(R.string.settings_hw_accel_summary, aesState, sha2State)
+                } else {
+                    stringResource(R.string.settings_hw_crypto_unsupported)
+                }
+
+                val hwBadgeText = if (!isHwCryptoSupported) {
+                    stringResource(R.string.settings_hw_crypto_unsupported)
+                } else if (useHardwareAes && useHardwareSha2) {
+                    stringResource(R.string.settings_hw_badge_all_enabled)
+                } else if (useHardwareAes || useHardwareSha2) {
+                    stringResource(R.string.settings_hw_badge_partial)
+                } else {
+                    stringResource(R.string.settings_hw_badge_disabled)
+                }
+
+                val hwBadgeColor = if (!isHwCryptoSupported) {
+                    MaterialTheme.colorScheme.outline
+                } else if (useHardwareAes && useHardwareSha2) {
+                    SuccessGreen
+                } else if (useHardwareAes || useHardwareSha2) {
+                    MaterialTheme.colorScheme.tertiary
+                } else {
+                    MaterialTheme.colorScheme.outline
+                }
+
+                SettingsClickableItem(
+                    title = stringResource(R.string.settings_hw_crypto_title),
+                    description = summary,
+                    badgeText = hwBadgeText,
+                    badgeColor = hwBadgeColor,
+                    onClick = onOpenHardwareAcceleration
+                )
+
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                )
+
+                // 3. 系统环境与诊断
+                val selinuxStatus = remember { com.bitlockerdroid.util.RootAccess.getSelinuxStatus() }
+
+                SettingsClickableItem(
+                    title = stringResource(R.string.settings_header_diag),
+                    description = "SELinux: $selinuxStatus · " + stringResource(R.string.log_title),
+                    badgeText = selinuxStatus,
+                    badgeColor = if (selinuxStatus == "Enforcing") SuccessGreen else MaterialTheme.colorScheme.tertiary,
+                    onClick = onOpenSystemDiagnostics
                 )
             }
 

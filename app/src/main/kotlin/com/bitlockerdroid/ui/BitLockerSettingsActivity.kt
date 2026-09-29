@@ -30,7 +30,9 @@ import com.bitlockerdroid.service.UnencryptedVolume
 import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.service.UnlockedVolume
 import com.bitlockerdroid.service.VirtualStorageMountManager
-import com.bitlockerdroid.ui.dialogs.AdvancedSettingsDialog
+import com.bitlockerdroid.ui.dialogs.RootControlDialog
+import com.bitlockerdroid.ui.dialogs.HardwareAccelerationDialog
+import com.bitlockerdroid.ui.dialogs.SystemDiagnosticsDialog
 import com.bitlockerdroid.ui.dialogs.SwitchModeConfirmDialog
 import com.bitlockerdroid.ui.dialogs.CredentialsManagerDialog
 import com.bitlockerdroid.ui.dialogs.LogViewerDialog
@@ -68,10 +70,14 @@ class BitLockerSettingsActivity : FragmentActivity() {
 
     private var mountReadOnlyState = mutableStateOf(false)
     private var useRootAccessState = mutableStateOf(true)
+    private var useHardwareAesState = mutableStateOf(PreferenceHelper.useHardwareAes)
+    private var useHardwareSha2State = mutableStateOf(PreferenceHelper.useHardwareSha2)
+    private var showHardwareAccelerationDialogState = mutableStateOf(false)
     private var virtualMountState = mutableStateOf(false)
     private var suppressCorruptNotificationState = mutableStateOf(false)
     private var rootSolutionState = mutableStateOf(RootAccess.RootSolutionInfo(hasRoot = false, isDeviceRooted = false, solutionName = "", version = null, summary = ""))
-    private var showAdvancedSettingsDialogState = mutableStateOf(false)
+    private var showRootControlDialogState = mutableStateOf(false)
+    private var showSystemDiagnosticsDialogState = mutableStateOf(false)
     private var pendingRootSwitchTargetState = mutableStateOf<Boolean?>(null)
     private var isSwitchingModeProcessingState = mutableStateOf(false)
 
@@ -83,6 +89,22 @@ class BitLockerSettingsActivity : FragmentActivity() {
     private val onThemeModeChangeAction: (ThemeMode) -> Unit = { newMode ->
         themeModeState.value = newMode
         PreferenceHelper.themeMode = newMode.name.lowercase()
+    }
+    private val onUseHardwareAesChangeAction: (Boolean) -> Unit = { enabled ->
+        useHardwareAesState.value = enabled
+        PreferenceHelper.useHardwareAes = enabled
+        PreferenceHelper.useHardwareCrypto = enabled && useHardwareSha2State.value
+    }
+    private val onUseHardwareSha2ChangeAction: (Boolean) -> Unit = { enabled ->
+        useHardwareSha2State.value = enabled
+        PreferenceHelper.useHardwareSha2 = enabled
+        PreferenceHelper.useHardwareCrypto = useHardwareAesState.value && enabled
+    }
+    private val onOpenHardwareAccelerationAction: () -> Unit = {
+        showHardwareAccelerationDialogState.value = true
+    }
+    private val onCloseHardwareAccelerationAction: () -> Unit = {
+        showHardwareAccelerationDialogState.value = false
     }
     private val onLanguageChangeAction: (String) -> Unit = { newLang ->
         currentLanguageState.value = newLang
@@ -130,8 +152,10 @@ class BitLockerSettingsActivity : FragmentActivity() {
         suppressCorruptNotificationState.value = enabled
         PreferenceHelper.suppressCorruptNotification = enabled
     }
-    private val onOpenAdvancedSettingsAction: () -> Unit = { showAdvancedSettingsDialogState.value = true }
-    private val onCloseAdvancedSettingsAction: () -> Unit = { showAdvancedSettingsDialogState.value = false }
+    private val onOpenRootControlAction: () -> Unit = { showRootControlDialogState.value = true }
+    private val onCloseRootControlAction: () -> Unit = { showRootControlDialogState.value = false }
+    private val onOpenSystemDiagnosticsAction: () -> Unit = { showSystemDiagnosticsDialogState.value = true }
+    private val onCloseSystemDiagnosticsAction: () -> Unit = { showSystemDiagnosticsDialogState.value = false }
     private val onRefreshAndScanAction: () -> Unit = { refreshAndScan(showToast = true) }
     private val onOpenLogAction: () -> Unit = { openLogViewer() }
     private val onCloseLogAction: () -> Unit = { showLogDialogState.value = false }
@@ -205,8 +229,12 @@ class BitLockerSettingsActivity : FragmentActivity() {
             val canBiometric by canBiometricState
             val ejectingPaths by ejectingPathsState
             val useRootAccess by useRootAccessState
+            val useHardwareAes by useHardwareAesState
+            val useHardwareSha2 by useHardwareSha2State
+            val showHardwareAccelerationDialog by showHardwareAccelerationDialogState
             val rootSolution by rootSolutionState
-            val showAdvancedSettingsDialog by showAdvancedSettingsDialogState
+            val showRootControlDialog by showRootControlDialogState
+            val showSystemDiagnosticsDialog by showSystemDiagnosticsDialogState
             val suppressCorruptNotification by suppressCorruptNotificationState
             val pendingRootSwitchTarget by pendingRootSwitchTargetState
             val isSwitchingModeProcessing by isSwitchingModeProcessingState
@@ -225,8 +253,12 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     themeMode = currentTheme,
                     currentLanguage = currentLang,
                     useRootAccess = useRootAccess,
+                    useHardwareAes = useHardwareAes,
+                    useHardwareSha2 = useHardwareSha2,
+                    showHardwareAccelerationDialog = showHardwareAccelerationDialog,
                     rootSolution = rootSolution,
-                    showAdvancedSettingsDialog = showAdvancedSettingsDialog,
+                    showRootControlDialog = showRootControlDialog,
+                    showSystemDiagnosticsDialog = showSystemDiagnosticsDialog,
                     suppressCorruptNotification = suppressCorruptNotification,
                     onThemeModeChange = onThemeModeChangeAction,
                     onLanguageChange = onLanguageChangeAction,
@@ -235,11 +267,15 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     pendingRootSwitchTarget = pendingRootSwitchTarget,
                     isSwitchingModeProcessing = isSwitchingModeProcessing,
                     onUseRootAccessChange = onUseRootAccessChangeAction,
+                    onUseHardwareAesChange = onUseHardwareAesChangeAction,
+                    onUseHardwareSha2Change = onUseHardwareSha2ChangeAction,
+                    onOpenRootControl = onOpenRootControlAction,
+                    onCloseRootControl = onCloseRootControlAction,
+                    onOpenHardwareAcceleration = onOpenHardwareAccelerationAction,
+                    onCloseHardwareAcceleration = onCloseHardwareAccelerationAction,
+                    onOpenSystemDiagnostics = onOpenSystemDiagnosticsAction,
+                    onCloseSystemDiagnostics = onCloseSystemDiagnosticsAction,
                     onConfirmSwitchMode = onConfirmSwitchModeAction,
-                    onDismissSwitchMode = onDismissSwitchModeAction,
-                    onSuppressCorruptNotificationChange = onSuppressCorruptNotificationChangeAction,
-                    onOpenAdvancedSettings = onOpenAdvancedSettingsAction,
-                    onCloseAdvancedSettings = onCloseAdvancedSettingsAction,
                     onRefreshAndScan = onRefreshAndScanAction,
                     onOpenLog = onOpenLogAction,
                     onCloseLog = onCloseLogAction,
@@ -284,6 +320,8 @@ class BitLockerSettingsActivity : FragmentActivity() {
     private fun syncPreferences() {
         mountReadOnlyState.value = PreferenceHelper.mountReadOnly
         useRootAccessState.value = PreferenceHelper.useRootAccess
+        useHardwareAesState.value = PreferenceHelper.isUseHardwareAes(this)
+        useHardwareSha2State.value = PreferenceHelper.isUseHardwareSha2(this)
         virtualMountState.value = PreferenceHelper.virtualMountEnabled
         suppressCorruptNotificationState.value = PreferenceHelper.suppressCorruptNotification
         refreshRememberedCredentials()
@@ -628,8 +666,12 @@ fun MainAppScreen(
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     currentLanguage: String = PreferenceHelper.LANG_SYSTEM,
     useRootAccess: Boolean = true,
+    useHardwareAes: Boolean = true,
+    useHardwareSha2: Boolean = true,
+    showHardwareAccelerationDialog: Boolean = false,
+    showRootControlDialog: Boolean = false,
+    showSystemDiagnosticsDialog: Boolean = false,
     rootSolution: RootAccess.RootSolutionInfo,
-    showAdvancedSettingsDialog: Boolean = false,
     suppressCorruptNotification: Boolean = true,
     onThemeModeChange: (ThemeMode) -> Unit = {},
     onLanguageChange: (String) -> Unit = {},
@@ -638,11 +680,17 @@ fun MainAppScreen(
     pendingRootSwitchTarget: Boolean? = null,
     isSwitchingModeProcessing: Boolean = false,
     onUseRootAccessChange: (Boolean) -> Unit = {},
+    onUseHardwareAesChange: (Boolean) -> Unit = {},
+    onUseHardwareSha2Change: (Boolean) -> Unit = {},
+    onOpenRootControl: () -> Unit = {},
+    onCloseRootControl: () -> Unit = {},
+    onOpenHardwareAcceleration: () -> Unit = {},
+    onCloseHardwareAcceleration: () -> Unit = {},
+    onOpenSystemDiagnostics: () -> Unit = {},
+    onCloseSystemDiagnostics: () -> Unit = {},
     onConfirmSwitchMode: () -> Unit = {},
     onDismissSwitchMode: () -> Unit = {},
     onSuppressCorruptNotificationChange: (Boolean) -> Unit = {},
-    onOpenAdvancedSettings: () -> Unit = {},
-    onCloseAdvancedSettings: () -> Unit = {},
     onRefreshAndScan: () -> Unit,
     onOpenLog: () -> Unit,
     onCloseLog: () -> Unit,
@@ -783,24 +831,46 @@ fun MainAppScreen(
                     currentLanguage = currentLanguage,
                     useRootAccess = useRootAccess,
                     rootSolution = rootSolution,
+                    useHardwareAes = useHardwareAes,
+                    useHardwareSha2 = useHardwareSha2,
                     onOpenCredentialsManager = { showCredentialsDialog = true },
-                    onOpenAdvancedSettings = onOpenAdvancedSettings,
+                    onOpenRootControl = onOpenRootControl,
+                    onOpenHardwareAcceleration = onOpenHardwareAcceleration,
+                    onOpenSystemDiagnostics = onOpenSystemDiagnostics,
                     onThemeModeChange = onThemeModeChange,
                     onLanguageChange = onLanguageChange
                 )
             }
         }
 
-        // Advanced Settings Dialog
-        if (showAdvancedSettingsDialog) {
-            AdvancedSettingsDialog(
+        // Root Control Dialog
+        if (showRootControlDialog) {
+            RootControlDialog(
                 rootSolution = rootSolution,
                 useRootAccess = useRootAccess,
                 onUseRootAccessChange = onUseRootAccessChange,
                 suppressCorruptNotification = suppressCorruptNotification,
                 onSuppressCorruptNotificationChange = onSuppressCorruptNotificationChange,
+                onDismiss = onCloseRootControl
+            )
+        }
+
+        // Hardware Acceleration Dialog
+        if (showHardwareAccelerationDialog) {
+            HardwareAccelerationDialog(
+                useHardwareAes = useHardwareAes,
+                onUseHardwareAesChange = onUseHardwareAesChange,
+                useHardwareSha2 = useHardwareSha2,
+                onUseHardwareSha2Change = onUseHardwareSha2Change,
+                onDismiss = onCloseHardwareAcceleration
+            )
+        }
+
+        // System Diagnostics Dialog
+        if (showSystemDiagnosticsDialog) {
+            SystemDiagnosticsDialog(
                 onOpenLog = onOpenLog,
-                onDismiss = onCloseAdvancedSettings
+                onDismiss = onCloseSystemDiagnostics
             )
         }
 

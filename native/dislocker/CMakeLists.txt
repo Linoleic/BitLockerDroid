@@ -101,6 +101,8 @@ add_library(dislocker_core STATIC
     src/dislocker.c
     src/metadata/metadata.c
     src/encryption/aes_xts.c
+    src/encryption/aes_xts_armv8ce.c
+    src/encryption/sha256_armv8ce.c
     src/encryption/vmkey.c
     src/access/access.c
     src/io.c
@@ -108,6 +110,16 @@ add_library(dislocker_core STATIC
     src/ntfs3g_device.c
     src/fatfs_device.c
 )
+
+if(ANDROID_ABI STREQUAL "arm64-v8a")
+    set_source_files_properties(
+        src/encryption/aes_xts_armv8ce.c
+        src/encryption/sha256_armv8ce.c
+        PROPERTIES
+        COMPILE_FLAGS "-march=armv8-a+crypto"
+    )
+    target_compile_definitions(dislocker_core PUBLIC HAVE_ARMV8_CE=1)
+endif()
 
 target_include_directories(dislocker_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include

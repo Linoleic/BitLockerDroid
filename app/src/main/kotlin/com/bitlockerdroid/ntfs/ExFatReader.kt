@@ -396,18 +396,17 @@ class ExFatReader(
         } else len
 
         val noFatChain = noFatChainMap[ref] ?: false
-        var filePos = 0L
-        var cluster = firstCluster
-
-        // O(1) direct cluster jump for contiguous allocations
         if (noFatChain && clusterSize > 0) {
-            val skipClusters = offset / clusterSize
-            cluster = firstCluster + skipClusters
-            filePos = skipClusters * clusterSize
+            val diskByte = boot.clusterByte(firstCluster) + offset
+            val n = source.read(diskByte, dst, dstPos, toRead)
+            return if (n > 0) n else 0
         }
 
+        var filePos = 0L
+        var cluster = firstCluster
         var written = 0
         var guard = 0
+        var tempBuf: ByteArray? = null
         while (isValidCluster(cluster) && guard++ < 100000 && written < toRead) {
             val clusterStart = filePos
             val clusterEnd = filePos + clusterSize
@@ -418,18 +417,25 @@ class ExFatReader(
                         (toRead - written).toLong(),
                         (clusterSize - within).toLong()
                     ).toInt()
-                    val buf = ByteArray(clusterSize)
-                    val n = source.read(boot.clusterByte(cluster), buf, 0, buf.size)
-                    if (n <= within.toInt()) break
-                    val copy = minOf(chunkLen, n - within.toInt())
-                    System.arraycopy(buf, within.toInt(), dst, dstPos + written, copy)
-                    written += copy
-                    if (copy < chunkLen) break
+                    if (within == 0L && chunkLen == clusterSize) {
+                        val n = source.read(boot.clusterByte(cluster), dst, dstPos + written, clusterSize)
+                        if (n <= 0) break
+                        written += n
+                        if (n < clusterSize) break
+                    } else {
+                        if (tempBuf == null) tempBuf = ByteArray(clusterSize)
+                        val n = source.read(boot.clusterByte(cluster), tempBuf, 0, clusterSize)
+                        if (n <= within.toInt()) break
+                        val copy = minOf(chunkLen, n - within.toInt())
+                        System.arraycopy(tempBuf, within.toInt(), dst, dstPos + written, copy)
+                        written += copy
+                        if (copy < chunkLen) break
+                    }
                 }
             }
             filePos = clusterEnd
-            cluster = if (noFatChain) (cluster + 1) else nextCluster(cluster)
-            if (!noFatChain && isEof(cluster)) break
+            cluster = nextCluster(cluster)
+            if (isEof(cluster)) break
         }
         return written
     }

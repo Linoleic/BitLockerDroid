@@ -13,6 +13,49 @@ object NativeBridge {
         System.loadLibrary("dislocker")
     }
 
+    /** Returns true if ARMv8 Cryptography Extensions (Hardware AES) are supported by CPU and passed self-test. */
+    external fun nativeIsHardwareAesSupported(): Boolean
+
+    /** Returns true if ARMv8 Hardware AES is currently active. */
+    external fun nativeIsHardwareAesEnabled(): Boolean
+
+    /** Enables or disables ARMv8 Hardware AES at runtime (switching between hardware and software fallback). */
+    external fun nativeSetHardwareAesEnabled(enabled: Boolean)
+
+    /** Returns detailed underlying diagnosis string for ARMv8 Hardware AES (HWCAP, self-test status). */
+    external fun nativeGetHardwareAesDetails(): String
+
+    /** Returns true if ARMv8 Cryptography Extensions (Hardware SHA-256) are supported by CPU and passed self-test. */
+    external fun nativeIsHardwareSha2Supported(): Boolean
+
+    /** Returns true if ARMv8 Hardware SHA-256 is currently active. */
+    external fun nativeIsHardwareSha2Enabled(): Boolean
+
+    /** Enables or disables ARMv8 Hardware SHA-256 at runtime (switching between hardware and software fallback). */
+    external fun nativeSetHardwareSha2Enabled(enabled: Boolean)
+
+    /** Returns detailed underlying diagnosis string for ARMv8 Hardware SHA-256 (HWCAP, self-test status). */
+    external fun nativeGetHardwareSha2Details(): String
+
+    /** Returns true if all ARMv8 Cryptography Extensions (both AES and SHA-256) are supported by CPU. */
+    fun isHardwareCryptoSupported(): Boolean = try {
+        nativeIsHardwareAesSupported() && nativeIsHardwareSha2Supported()
+    } catch (_: Throwable) { false }
+
+    /** Returns true if both ARMv8 Hardware AES and SHA-256 are active. */
+    fun isHardwareCryptoEnabled(): Boolean = try {
+        nativeIsHardwareAesEnabled() && nativeIsHardwareSha2Enabled()
+    } catch (_: Throwable) { false }
+
+    /** Enables or disables all ARMv8 Hardware Cryptography Extensions at runtime. */
+    fun setHardwareCryptoEnabled(enabled: Boolean) {
+        try { nativeSetHardwareAesEnabled(enabled) } catch (_: Throwable) {}
+        try { nativeSetHardwareSha2Enabled(enabled) } catch (_: Throwable) {}
+    }
+
+    /** Runs key stretching micro-benchmark for [rounds] rounds and returns elapsed time in microseconds. */
+    external fun nativeBenchmarkKeyStretching(rounds: Int): Long
+
     /** True if the block device at [path] carries a BitLocker volume header. */
     external fun nativeHasBitLockerHeader(path: String): Boolean
 

@@ -378,9 +378,15 @@ object UsbStorageManager {
         }
 
         try {
-            val comm = UsbCommunicationFactory.createUsbCommunication(
-                usbManager, device, iface, outEp, inEp
-            )
+            val comm = try {
+                Log.i(TAG, "Initializing PipelinedUsbCommunication for ${device.deviceName}")
+                PipelinedUsbCommunication(conn, iface, inEp, outEp)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to initialize PipelinedUsbCommunication, falling back to standard communication", e)
+                UsbCommunicationFactory.createUsbCommunication(
+                    usbManager, device, iface, outEp, inEp
+                )
+            }
 
             // MAX LUN inquiry (Control transfer 161, 254)
             val maxLunBuf = ByteArray(1)
@@ -611,6 +617,22 @@ object UsbStorageManager {
     }
 
     /**
+     * Resolves physical link speed in Mbps from the mass storage bulk endpoint packet size.
+     */
+    fun getUsbSpeedMbps(devicePath: String): Int? {
+        val part = discoveredPartitions[devicePath] ?: return null
+        val holder = activeDevices[part.deviceId] ?: return null
+        val msc = findMassStorageInterface(holder.usbDevice) ?: return null
+        val inEp = msc.second
+        return when (inEp.maxPacketSize) {
+            1024 -> 5000 // USB 3.0+ SuperSpeed
+            512 -> 480  // USB 2.0 HighSpeed
+            64 -> 12    // USB 1.1 FullSpeed
+            else -> null
+        }
+    }
+
+    /**
      * Opens a native dislocker worker session for the specified USB partition.
      * Creates a Unix socketpair and background SCSI I/O worker thread.
      */
@@ -697,6 +719,8 @@ object UsbStorageManager {
      * Slices the underlying USB ScsiBlockDevice for a single partition.
      * Translates partition-relative byte offsets to physical disk LBAs.
      */
+    private class ChunkDegradedException(val newChunkSize: Int) : Exception("Degraded chunk size to $newChunkSize")
+
     class PartitionBlockDeviceDriver(
         val scsiDevice: ScsiBlockDevice,
         val startLba: Long,
@@ -704,7 +728,37 @@ object UsbStorageManager {
         val sectorSize: Int = 512
     ) {
         val sizeBytes: Long = sectorCount * sectorSize
-        private val maxChunkBytes = 16 * 1024 // 16KB matches Linux MAX_USBFS_BUFFER_SIZE
+        @Volatile
+        var maxChunkBytes = 128 * 1024 // 128KB default (256 sectors); adaptively degrades to 64KB -> 16KB if device rejects
+        private val reusableChunkBuf = ByteBuffer.allocate(128 * 1024)
+        private var reusableTempBuf: ByteBuffer? = null
+
+        private fun downgradeChunkSize(failedChunkBytes: Int): Int {
+            val target = when {
+                failedChunkBytes > 64 * 1024 -> 64 * 1024
+                failedChunkBytes > 16 * 1024 -> 16 * 1024
+                else -> 16 * 1024
+            }
+            if (target < maxChunkBytes) {
+                Log.w(TAG, "SCSI transfer rejected at ${failedChunkBytes / 1024}KB, adaptively downgrading maxChunkBytes to ${target / 1024}KB")
+                maxChunkBytes = target
+            }
+            return target
+        }
+
+        private fun acquireTempBuf(capacity: Int): ByteBuffer {
+            val existing = reusableTempBuf
+            return if (existing != null && existing.capacity() >= capacity) {
+                existing.clear()
+                existing.limit(capacity)
+                existing
+            } else {
+                val newBuf = ByteBuffer.allocate(maxOf(capacity, 128 * 1024))
+                newBuf.limit(capacity)
+                reusableTempBuf = newBuf
+                newBuf
+            }
+        }
 
         private fun safeScsiRead(lba: Long, buf: ByteBuffer) {
             synchronized(scsiDevice) {
@@ -712,6 +766,11 @@ object UsbStorageManager {
                 try {
                     scsiDevice.read(lba, buf)
                 } catch (e: Exception) {
+                    if (buf.remaining() > 16 * 1024) {
+                        val newMax = downgradeChunkSize(buf.remaining())
+                        try { scsiDevice.init() } catch (_: Exception) {}
+                        throw ChunkDegradedException(newMax)
+                    }
                     Log.w(TAG, "SCSI read error at LBA $lba, reinitializing and retrying...", e)
                     try { scsiDevice.init() } catch (_: Exception) {}
                     buf.position(0)
@@ -726,6 +785,11 @@ object UsbStorageManager {
                 try {
                     scsiDevice.write(lba, buf)
                 } catch (e: Exception) {
+                    if (buf.remaining() > 16 * 1024) {
+                        val newMax = downgradeChunkSize(buf.remaining())
+                        try { scsiDevice.init() } catch (_: Exception) {}
+                        throw ChunkDegradedException(newMax)
+                    }
                     Log.w(TAG, "SCSI write error at LBA $lba, reinitializing and retrying...", e)
                     try { scsiDevice.init() } catch (_: Exception) {}
                     buf.position(0)
@@ -740,50 +804,61 @@ object UsbStorageManager {
             val toRead = minOf(dest.remaining().toLong(), sizeBytes - byteOffset).toInt()
             if (toRead <= 0) return
 
-            val lba = startLba + (byteOffset / sectorSize)
-            val offInSector = (byteOffset % sectorSize).toInt()
+            var currentOffset = byteOffset
+            var remainingBytes = toRead
 
-            if (offInSector == 0 && (toRead % sectorSize) == 0) {
-                var currentLba = lba
-                var remainingBytes = toRead
-                val chunkBuf = ByteBuffer.allocate(maxChunkBytes * 2)
+            while (remainingBytes > 0) {
+                val lba = startLba + (currentOffset / sectorSize)
+                val offInSector = (currentOffset % sectorSize).toInt()
 
-                while (remainingBytes > 0) {
+                if (offInSector == 0 && (remainingBytes % sectorSize) == 0) {
                     val thisChunk = minOf(remainingBytes, maxChunkBytes)
-                    chunkBuf.clear()
-                    chunkBuf.limit(thisChunk)
-                    safeScsiRead(currentLba, chunkBuf)
-                    chunkBuf.flip()
-                    dest.put(chunkBuf)
-                    val blocksRead = thisChunk / sectorSize
-                    currentLba += blocksRead
-                    remainingBytes -= thisChunk
-                }
-            } else {
-                val startSector = lba
-                val endByte = byteOffset + toRead
-                val endSector = startLba + ((endByte + sectorSize - 1) / sectorSize)
-                val numSectors = (endSector - startSector).toInt()
-                val fullBytes = numSectors * sectorSize
-                val tempBuf = ByteBuffer.allocate(fullBytes)
+                    reusableChunkBuf.clear()
+                    reusableChunkBuf.limit(thisChunk)
+                    try {
+                        safeScsiRead(lba, reusableChunkBuf)
+                        reusableChunkBuf.flip()
+                        dest.put(reusableChunkBuf)
+                        currentOffset += thisChunk
+                        remainingBytes -= thisChunk
+                    } catch (_: ChunkDegradedException) {
+                        continue
+                    }
+                } else {
+                    val startSector = lba
+                    val endByte = currentOffset + remainingBytes
+                    val endSector = startLba + ((endByte + sectorSize - 1) / sectorSize)
+                    val numSectors = (endSector - startSector).toInt()
+                    val fullBytes = numSectors * sectorSize
+                    val tempBuf = acquireTempBuf(fullBytes)
 
-                var curLba = startSector
-                var rem = fullBytes
-                val chunkBuf = ByteBuffer.allocate(maxChunkBytes * 2)
-                while (rem > 0) {
-                    val thisChunk = minOf(rem, maxChunkBytes)
-                    chunkBuf.clear()
-                    chunkBuf.limit(thisChunk)
-                    safeScsiRead(curLba, chunkBuf)
-                    chunkBuf.flip()
-                    tempBuf.put(chunkBuf)
-                    curLba += thisChunk / sectorSize
-                    rem -= thisChunk
+                    var curLba = startSector
+                    var rem = fullBytes
+                    var failed = false
+                    while (rem > 0) {
+                        val thisChunk = minOf(rem, maxChunkBytes)
+                        reusableChunkBuf.clear()
+                        reusableChunkBuf.limit(thisChunk)
+                        try {
+                            safeScsiRead(curLba, reusableChunkBuf)
+                            reusableChunkBuf.flip()
+                            tempBuf.put(reusableChunkBuf)
+                            curLba += thisChunk / sectorSize
+                            rem -= thisChunk
+                        } catch (_: ChunkDegradedException) {
+                            failed = true
+                            break
+                        }
+                    }
+                    if (failed) {
+                        continue
+                    }
+                    tempBuf.flip()
+                    tempBuf.position(offInSector)
+                    tempBuf.limit(offInSector + remainingBytes)
+                    dest.put(tempBuf)
+                    remainingBytes = 0
                 }
-                tempBuf.flip()
-                tempBuf.position(offInSector)
-                tempBuf.limit(offInSector + toRead)
-                dest.put(tempBuf)
             }
         }
 
@@ -793,67 +868,89 @@ object UsbStorageManager {
             val toWrite = minOf(src.remaining().toLong(), sizeBytes - byteOffset).toInt()
             if (toWrite <= 0) return
 
-            val lba = startLba + (byteOffset / sectorSize)
-            val offInSector = (byteOffset % sectorSize).toInt()
+            var currentOffset = byteOffset
+            var remainingBytes = toWrite
 
-            if (offInSector == 0 && (toWrite % sectorSize) == 0) {
-                var currentLba = lba
-                var remainingBytes = toWrite
-                val chunkBuf = ByteBuffer.allocate(maxChunkBytes * 2)
+            while (remainingBytes > 0) {
+                val lba = startLba + (currentOffset / sectorSize)
+                val offInSector = (currentOffset % sectorSize).toInt()
 
-                while (remainingBytes > 0) {
+                if (offInSector == 0 && (remainingBytes % sectorSize) == 0) {
                     val thisChunk = minOf(remainingBytes, maxChunkBytes)
-                    chunkBuf.clear()
+                    reusableChunkBuf.clear()
                     val oldLimit = src.limit()
                     src.limit(src.position() + thisChunk)
-                    chunkBuf.put(src)
+                    reusableChunkBuf.put(src)
                     src.limit(oldLimit)
-                    chunkBuf.flip()
-                    safeScsiWrite(currentLba, chunkBuf)
-                    val blocksWritten = thisChunk / sectorSize
-                    currentLba += blocksWritten
-                    remainingBytes -= thisChunk
-                }
-            } else {
-                val startSector = lba
-                val endByte = byteOffset + toWrite
-                val endSector = startLba + ((endByte + sectorSize - 1) / sectorSize)
-                val numSectors = (endSector - startSector).toInt()
-                val fullBytes = numSectors * sectorSize
-                val fullBuf = ByteBuffer.allocate(fullBytes)
+                    reusableChunkBuf.flip()
+                    try {
+                        safeScsiWrite(lba, reusableChunkBuf)
+                        currentOffset += thisChunk
+                        remainingBytes -= thisChunk
+                    } catch (_: ChunkDegradedException) {
+                        src.position(src.position() - thisChunk)
+                        continue
+                    }
+                } else {
+                    val startSector = lba
+                    val endByte = currentOffset + remainingBytes
+                    val endSector = startLba + ((endByte + sectorSize - 1) / sectorSize)
+                    val numSectors = (endSector - startSector).toInt()
+                    val fullBytes = numSectors * sectorSize
+                    val fullBuf = acquireTempBuf(fullBytes)
 
-                var curLba = startSector
-                var rem = fullBytes
-                val chunkBuf = ByteBuffer.allocate(maxChunkBytes * 2)
-                while (rem > 0) {
-                    val thisChunk = minOf(rem, maxChunkBytes)
-                    chunkBuf.clear()
-                    chunkBuf.limit(thisChunk)
-                    safeScsiRead(curLba, chunkBuf)
-                    chunkBuf.flip()
-                    fullBuf.put(chunkBuf)
-                    curLba += thisChunk / sectorSize
-                    rem -= thisChunk
-                }
+                    var curLba = startSector
+                    var rem = fullBytes
+                    var failed = false
+                    while (rem > 0) {
+                        val thisChunk = minOf(rem, maxChunkBytes)
+                        reusableChunkBuf.clear()
+                        reusableChunkBuf.limit(thisChunk)
+                        try {
+                            safeScsiRead(curLba, reusableChunkBuf)
+                            reusableChunkBuf.flip()
+                            fullBuf.put(reusableChunkBuf)
+                            curLba += thisChunk / sectorSize
+                            rem -= thisChunk
+                        } catch (_: ChunkDegradedException) {
+                            failed = true
+                            break
+                        }
+                    }
+                    if (failed) {
+                        continue
+                    }
 
-                fullBuf.position(offInSector)
-                val oldLimit = src.limit()
-                src.limit(src.position() + toWrite)
-                fullBuf.put(src)
-                src.limit(oldLimit)
-                fullBuf.clear()
+                    fullBuf.position(offInSector)
+                    val srcStartPos = src.position()
+                    val oldLimit = src.limit()
+                    src.limit(srcStartPos + remainingBytes)
+                    fullBuf.put(src)
+                    src.limit(oldLimit)
+                    fullBuf.clear()
 
-                curLba = startSector
-                rem = fullBytes
-                while (rem > 0) {
-                    val thisChunk = minOf(rem, maxChunkBytes)
-                    chunkBuf.clear()
-                    fullBuf.limit(fullBuf.position() + thisChunk)
-                    chunkBuf.put(fullBuf)
-                    chunkBuf.flip()
-                    safeScsiWrite(curLba, chunkBuf)
-                    curLba += thisChunk / sectorSize
-                    rem -= thisChunk
+                    curLba = startSector
+                    rem = fullBytes
+                    while (rem > 0) {
+                        val thisChunk = minOf(rem, maxChunkBytes)
+                        reusableChunkBuf.clear()
+                        fullBuf.limit(fullBuf.position() + thisChunk)
+                        reusableChunkBuf.put(fullBuf)
+                        reusableChunkBuf.flip()
+                        try {
+                            safeScsiWrite(curLba, reusableChunkBuf)
+                            curLba += thisChunk / sectorSize
+                            rem -= thisChunk
+                        } catch (_: ChunkDegradedException) {
+                            failed = true
+                            break
+                        }
+                    }
+                    if (failed) {
+                        src.position(srcStartPos)
+                        continue
+                    }
+                    remainingBytes = 0
                 }
             }
         }
@@ -869,6 +966,22 @@ object UsbStorageManager {
 
         @Volatile
         var running = true
+
+        private var reusableDataBuf = ByteBuffer.allocate(256 * 1024)
+
+        private fun acquireDataBuf(len: Int): ByteBuffer {
+            val existing = reusableDataBuf
+            return if (existing.capacity() >= len) {
+                existing.clear()
+                existing.limit(len)
+                existing
+            } else {
+                val newBuf = ByteBuffer.allocate(maxOf(len, existing.capacity() * 2))
+                newBuf.limit(len)
+                reusableDataBuf = newBuf
+                newBuf
+            }
+        }
 
         override fun run() {
             Log.i(TAG, "UsbBlockDeviceWorker starting for LBA ${partitionDriver.startLba}, pfd=${workerPfd.fd}")
@@ -887,7 +1000,6 @@ object UsbStorageManager {
 
                 while (running) {
                     val cmd = inStream.read()
-                    Log.i(TAG, "UsbBlockDeviceWorker received cmd=$cmd")
                     if (cmd == -1 || cmd == CMD_EXIT) break
 
                     when (cmd) {
@@ -895,10 +1007,9 @@ object UsbStorageManager {
                             readFully(inStream, headerBuf, 0, 12)
                             val offset = readLongLE(headerBuf, 0)
                             val len = readIntLE(headerBuf, 8)
-                            Log.i(TAG, "UsbBlockDeviceWorker CMD_READ offset=$offset, len=$len")
                             if (len <= 0) break
 
-                            val dataBuf = ByteBuffer.allocate(len)
+                            val dataBuf = acquireDataBuf(len)
                             try {
                                 partitionDriver.read(offset, dataBuf)
                                 dataBuf.flip()
@@ -906,7 +1017,6 @@ object UsbStorageManager {
                                 outStream.write(statusBuf, 0, 4)
                                 outStream.write(dataBuf.array(), dataBuf.arrayOffset(), len)
                                 outStream.flush()
-                                Log.i(TAG, "UsbBlockDeviceWorker CMD_READ success sent $len bytes")
                             } catch (e: Exception) {
                                 Log.e(TAG, "Worker CMD_READ error at offset $offset len $len", e)
                                 writeIntLE(statusBuf, 0, -5) // -EIO
@@ -920,7 +1030,7 @@ object UsbStorageManager {
                             val len = readIntLE(headerBuf, 8)
                             if (len <= 0) break
 
-                            val dataBuf = ByteBuffer.allocate(len)
+                            val dataBuf = acquireDataBuf(len)
                             readFully(inStream, dataBuf.array(), dataBuf.arrayOffset(), len)
                             try {
                                 partitionDriver.write(offset, dataBuf)

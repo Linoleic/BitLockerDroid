@@ -97,7 +97,7 @@
     <string name="settings_header_advanced">高级选项</string>
     <string name="settings_advanced_title">高级选项</string>
     <string name="settings_advanced_desc">Root 权限控制、特有功能与系统诊断</string>
-    <string name="settings_header_root_mode">Root 运行模式</string>
+    <string name="settings_header_root_mode">Root 权限控制</string>
     <string name="settings_use_root">使用 Root 权限</string>
     <string name="settings_use_root_desc">允许应用通过 su 提权直接访问内核块设备，可提供显著更高的读写性能与高级挂载支持；关闭后将以免 Root 模式运行</string>
     <string name="settings_root_features_header">Root 特有功能</string>
@@ -220,12 +220,15 @@
     <string name="benchmark_intro">基准测试将通过底层驱动进行全链路读取与延时探测，并诊断 OTG 物理协议，全过程严格只读，不影响数据安全。</string>
     <string name="benchmark_results">基准测试结果</string>
     <string name="benchmark_seq_read">连续读取速率</string>
+    <string name="benchmark_seq_write">连续写入速率</string>
     <string name="benchmark_4k_latency">4K 随机读取延时</string>
     <string name="benchmark_link_speed">物理链路协议</string>
     <string name="benchmark_restart">重新测速</string>
     <string name="benchmark_start">开始测速</string>
     <string name="benchmark_step_seq">连续读取测速中…</string>
     <string name="benchmark_step_seq_progress">连续读取测速中 (%1$d MB / %2$d MB)…</string>
+    <string name="benchmark_step_write">连续写入测速中…</string>
+    <string name="benchmark_step_write_progress">连续写入测速中 (%1$d MB / %2$d MB)…</string>
     <string name="benchmark_step_4k">4K 随机读取延时测试中…</string>
     <string name="benchmark_step_4k_progress">4K 随机延时测试 (%1$d/%2$d)…</string>
     <string name="benchmark_step_link">检测硬件链路速率…</string>
@@ -233,6 +236,23 @@
     <string name="benchmark_usb_superspeed_plus">USB 3.1+ (10 Gbps 超高速)</string>
     <string name="benchmark_usb_superspeed">USB 3.0 (5 Gbps 高速)</string>
     <string name="benchmark_done">测速完成</string>
+    <string name="benchmark_opt_all">全项测试</string>
+    <string name="benchmark_opt_readonly">仅测试读取</string>
+    <string name="benchmark_opt_writeonly">仅测试写入</string>
+    <string name="benchmark_item_seq_read_title">连续读取</string>
+    <string name="benchmark_item_seq_read_sub">512KB 分块 · 16MB 数据</string>
+    <string name="benchmark_item_seq_write_title">连续写入</string>
+    <string name="benchmark_item_seq_write_sub">256KB 分块 · 8MB 数据</string>
+    <string name="benchmark_item_rand_read_title">4K 随机读取</string>
+    <string name="benchmark_item_rand_read_sub">4KB 随机寻道 · 50次采样</string>
+    <string name="benchmark_item_rand_write_title">4K 随机写入</string>
+    <string name="benchmark_item_rand_write_sub">4KB 随机覆盖 · 25次采样</string>
+    <string name="benchmark_item_run_single">单测</string>
+    <string name="benchmark_run_selected">开始测试 (已选 %1$d 项)</string>
+    <string name="benchmark_step_4k_write">4K 随机写入测试中…</string>
+    <string name="benchmark_step_4k_write_progress">4K 随机写入测试 (%1$d/%2$d)…</string>
+    <string name="benchmark_4k_write_latency">4K 随机写入延时</string>
+    <string name="benchmark_readonly_badge">只读保护</string>
 
     <!-- 凭据管理与密码详情 -->
     <string name="done">完成</string>
@@ -393,6 +413,38 @@
     <string name="lan_share_active_conns">连接数: %1$d</string>
     <string name="lan_share_no_ip_warning">未检测到可用局域网 IP，请先连接 Wi-Fi 或开启手机热点</string>
     <string name="lan_share_plaintext_warning">当前为未加密 HTTP 传输：同一网络内的任何人都有可能截获传输的文件，请仅在可信网络中使用。</string>
-    <string name="lan_share_password_required">启用访问密码保护后必须设置非空密码</string>
     <string name="lan_share_bind_failed">无法绑定端口 %1$d–%2$d，该端口区间可能已被其他程序占用，请更换端口后重试。</string>
+
+    <!-- 硬件加速与性能 -->
+    <string name="settings_header_hw_accel">硬件加速与性能</string>
+    <string name="settings_hw_aes_title">ARMv8 硬件 AES 指令加速</string>
+    <string name="settings_hw_aes_desc">利用 CPU 硬件指令集进行 AES-XTS 与 AES-CBC 加解密，最高可提升 4 倍吞吐。关闭后将平滑降级至软件查表模式。</string>
+    <string name="settings_hw_aes_status">硬件 AES 指令集状态</string>
+    <string name="settings_hw_aes_status_desc">ARMv8-A 密码学扩展指令集 (AESE/AESD/AESIMC/PMULL)</string>
+    <string name="settings_hw_aes_supported">已支持 (ARMv8 CE)</string>
+    <string name="settings_hw_aes_unsupported">未支持 (CPU 缺少硬件指令)</string>
+    <string name="settings_hw_aes_active">已激活 (硬件直解)</string>
+    <string name="settings_hw_aes_disabled">已停用 (软件查表模式)</string>
+    <string name="settings_hw_sha2_title">ARMv8 硬件 SHA-256 指令加速</string>
+    <string name="settings_hw_sha2_desc">利用 CPU 硬件指令集加速 BitLocker 密钥拉伸 (1,048,576 轮) 与元数据校验，使解锁耗时从秒级骤降至数十毫秒。关闭后将平滑降级至软件模式。</string>
+    <string name="settings_hw_sha2_status">硬件 SHA-256 指令集状态</string>
+    <string name="settings_hw_sha2_status_desc">ARMv8-A 密码学扩展指令集 (SHA256H/SHA256H2/SHA256SU0/SHA256SU1)</string>
+    <string name="settings_hw_sha2_supported">已支持 (ARMv8 CE)</string>
+    <string name="settings_hw_sha2_unsupported">未支持 (CPU 缺少硬件指令)</string>
+    <string name="settings_hw_sha2_active">已激活 (硬件直解)</string>
+    <string name="settings_hw_sha2_disabled">已停用 (软件模式)</string>
+    <string name="settings_hw_crypto_title">ARMv8 硬件密码学加速</string>
+    <string name="settings_hw_crypto_desc">利用 CPU 硬件指令集同时加速 AES-XTS/CBC 数据加解密与 SHA-256 密钥拉伸，显著提升读写吞吐并消除解锁耗时。关闭后将平滑降级至纯软件模式。</string>
+    <string name="settings_hw_crypto_status">硬件密码学指令集状态</string>
+    <string name="settings_hw_crypto_status_desc">ARMv8-A 密码学扩展 (AES + SHA-256 硬件支持)</string>
+    <string name="settings_hw_crypto_active">已激活 (AES + SHA-256 硬件直解)</string>
+    <string name="settings_hw_crypto_disabled">已停用 (软件模式)</string>
+    <string name="settings_hw_crypto_unsupported">未支持 (CPU 缺少硬件指令)</string>
+    <string name="settings_hw_crypto_dialog_desc">ARMv8-A 密码学扩展指令集 (AES + SHA-256 硬件支持)</string>
+    <string name="settings_hw_accel_summary">AES: %1$s · SHA-256: %2$s</string>
+    <string name="settings_hw_state_enabled">已开启</string>
+    <string name="settings_hw_state_disabled">已关闭</string>
+    <string name="settings_hw_badge_all_enabled">全部启用</string>
+    <string name="settings_hw_badge_partial">部分启用 (1/2)</string>
+    <string name="settings_hw_badge_disabled">已停用</string>
 </resources>

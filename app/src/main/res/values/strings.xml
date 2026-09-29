@@ -97,7 +97,7 @@
     <string name="settings_header_advanced">Advanced Options</string>
     <string name="settings_advanced_title">Advanced Options</string>
     <string name="settings_advanced_desc">Root access control, exclusive features, and system diagnostics</string>
-    <string name="settings_header_root_mode">Root Access Mode</string>
+    <string name="settings_header_root_mode">Root Permission Control</string>
     <string name="settings_use_root">Enable Root Access</string>
     <string name="settings_use_root_desc">Allow escalating privileges via su to access kernel block devices directly, providing significantly higher read/write performance and advanced mount support. Disabling forces Non-Root mode.</string>
     <string name="settings_root_features_header">Root-Exclusive Features</string>
@@ -220,12 +220,15 @@
     <string name="benchmark_intro">Benchmark tests sequential read, 4K latency, and physical link speed via the native driver. Entirely read-only and non-destructive.</string>
     <string name="benchmark_results">Benchmark Results</string>
     <string name="benchmark_seq_read">Sequential Read Speed</string>
+    <string name="benchmark_seq_write">Sequential Write Speed</string>
     <string name="benchmark_4k_latency">4K Random Read Latency</string>
     <string name="benchmark_link_speed">Physical Link Protocol</string>
     <string name="benchmark_restart">Rerun Benchmark</string>
     <string name="benchmark_start">Start Benchmark</string>
     <string name="benchmark_step_seq">Testing sequential read…</string>
     <string name="benchmark_step_seq_progress">Testing sequential read (%1$d MB / %2$d MB)…</string>
+    <string name="benchmark_step_write">Testing sequential write…</string>
+    <string name="benchmark_step_write_progress">Testing sequential write (%1$d MB / %2$d MB)…</string>
     <string name="benchmark_step_4k">Testing 4K random latency…</string>
     <string name="benchmark_step_4k_progress">Testing 4K random latency (%1$d/%2$d)…</string>
     <string name="benchmark_step_link">Detecting hardware link speed…</string>
@@ -233,6 +236,23 @@
     <string name="benchmark_usb_superspeed_plus">USB 3.1+ (10 Gbps SuperSpeed+)</string>
     <string name="benchmark_usb_superspeed">USB 3.0 (5 Gbps SuperSpeed)</string>
     <string name="benchmark_done">Benchmark completed</string>
+    <string name="benchmark_opt_all">All Tests</string>
+    <string name="benchmark_opt_readonly">Read Only</string>
+    <string name="benchmark_opt_writeonly">Write Only</string>
+    <string name="benchmark_item_seq_read_title">Sequential Read</string>
+    <string name="benchmark_item_seq_read_sub">512KB Blocks · 16MB Total</string>
+    <string name="benchmark_item_seq_write_title">Sequential Write</string>
+    <string name="benchmark_item_seq_write_sub">256KB Blocks · 8MB Total</string>
+    <string name="benchmark_item_rand_read_title">4K Random Read</string>
+    <string name="benchmark_item_rand_read_sub">4KB Cluster Seeks · 50 Samples</string>
+    <string name="benchmark_item_rand_write_title">4K Random Write</string>
+    <string name="benchmark_item_rand_write_sub">4KB Overwrites · 25 Samples</string>
+    <string name="benchmark_item_run_single">Test</string>
+    <string name="benchmark_run_selected">Run Selected (%1$d)</string>
+    <string name="benchmark_step_4k_write">Testing 4K random write…</string>
+    <string name="benchmark_step_4k_write_progress">Testing 4K random write (%1$d/%2$d)…</string>
+    <string name="benchmark_4k_write_latency">4K Random Write Latency</string>
+    <string name="benchmark_readonly_badge">Read-Only</string>
 
     <!-- Credentials Manager & Show Password Dialogs -->
     <string name="done">Done</string>
@@ -395,4 +415,37 @@
     <string name="lan_share_plaintext_warning">Unencrypted HTTP: anyone on this network can intercept the transferred files. Use only on trusted networks.</string>
     <string name="lan_share_password_required">A non-empty password is required when access protection is enabled</string>
     <string name="lan_share_bind_failed">Could not bind ports %1$d–%2$d. The range may already be in use — pick a different port and try again.</string>
+
+    <!-- Hardware Acceleration & Performance -->
+    <string name="settings_header_hw_accel">Hardware Acceleration &amp; Performance</string>
+    <string name="settings_hw_aes_title">ARMv8 Hardware AES Acceleration</string>
+    <string name="settings_hw_aes_desc">Accelerates AES-XTS and AES-CBC via CPU ARMv8 Cryptography Extensions (up to 4x throughput boost). Falls back smoothly to software mode when disabled.</string>
+    <string name="settings_hw_aes_status">Hardware AES Status</string>
+    <string name="settings_hw_aes_status_desc">ARMv8-A Cryptography Extensions (AESE/AESD/AESIMC/PMULL)</string>
+    <string name="settings_hw_aes_supported">Supported (ARMv8 CE)</string>
+    <string name="settings_hw_aes_unsupported">Unsupported (CPU lacks HW instructions)</string>
+    <string name="settings_hw_aes_active">Active (Hardware Mode)</string>
+    <string name="settings_hw_aes_disabled">Disabled (Software Mode)</string>
+    <string name="settings_hw_sha2_title">ARMv8 Hardware SHA-256 Acceleration</string>
+    <string name="settings_hw_sha2_desc">Accelerates BitLocker key stretching (1,048,576 rounds) and metadata verification via CPU ARMv8 Cryptography Extensions (SHA256H/H2/SU0/SU1). Unlocking completes in tens of milliseconds.</string>
+    <string name="settings_hw_sha2_status">Hardware SHA-256 Status</string>
+    <string name="settings_hw_sha2_status_desc">ARMv8-A Cryptography Extensions (SHA256H/SHA256H2/SHA256SU0/SHA256SU1)</string>
+    <string name="settings_hw_sha2_supported">Supported (ARMv8 CE)</string>
+    <string name="settings_hw_sha2_unsupported">Unsupported (CPU lacks HW instructions)</string>
+    <string name="settings_hw_sha2_active">Active (Hardware Mode)</string>
+    <string name="settings_hw_sha2_disabled">Disabled (Software Mode)</string>
+    <string name="settings_hw_crypto_title">ARMv8 Hardware Cryptography Acceleration</string>
+    <string name="settings_hw_crypto_desc">Accelerates AES-XTS/CBC data encryption and SHA-256 key stretching via CPU ARMv8 Cryptography Extensions. Falls back smoothly to software mode when disabled.</string>
+    <string name="settings_hw_crypto_status">Hardware Cryptography Status</string>
+    <string name="settings_hw_crypto_status_desc">ARMv8-A Cryptography Extensions (AES + SHA-256)</string>
+    <string name="settings_hw_crypto_active">Active (AES + SHA-256 Hardware Mode)</string>
+    <string name="settings_hw_crypto_disabled">Disabled (Software Mode)</string>
+    <string name="settings_hw_crypto_unsupported">Unsupported (CPU lacks HW instructions)</string>
+    <string name="settings_hw_crypto_dialog_desc">ARMv8-A Cryptography Extensions (AES + SHA-256)</string>
+    <string name="settings_hw_accel_summary">AES: %1$s · SHA-256: %2$s</string>
+    <string name="settings_hw_state_enabled">Enabled</string>
+    <string name="settings_hw_state_disabled">Disabled</string>
+    <string name="settings_hw_badge_all_enabled">All Enabled</string>
+    <string name="settings_hw_badge_partial">Partial (1/2)</string>
+    <string name="settings_hw_badge_disabled">Disabled</string>
 </resources>

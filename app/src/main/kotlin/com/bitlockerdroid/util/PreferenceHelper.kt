@@ -370,6 +370,68 @@ object PreferenceHelper {
             } catch (_: Exception) {}
         }
 
+    fun isUseHardwareAes(context: Context): Boolean =
+        prefs(context).getBoolean("use_hardware_aes", true)
+
+    fun setUseHardwareAes(context: Context, enabled: Boolean): Boolean {
+        val ret = prefs(context).edit().putBoolean("use_hardware_aes", enabled).commit()
+        try { NativeBridge.nativeSetHardwareAesEnabled(enabled) } catch (_: Exception) {}
+        return ret
+    }
+
+    var useHardwareAes: Boolean
+        get() = try { prefs(ContextProvider.app).getBoolean("use_hardware_aes", true) } catch (_: Exception) { true }
+        set(v) {
+            try {
+                prefs(ContextProvider.app).edit().putBoolean("use_hardware_aes", v).commit()
+                NativeBridge.nativeSetHardwareAesEnabled(v)
+            } catch (_: Exception) {}
+        }
+
+    fun isUseHardwareSha2(context: Context): Boolean =
+        prefs(context).getBoolean("use_hardware_sha2", true)
+
+    fun setUseHardwareSha2(context: Context, enabled: Boolean): Boolean {
+        val ret = prefs(context).edit().putBoolean("use_hardware_sha2", enabled).commit()
+        try { NativeBridge.nativeSetHardwareSha2Enabled(enabled) } catch (_: Exception) {}
+        return ret
+    }
+
+    var useHardwareSha2: Boolean
+        get() = try { prefs(ContextProvider.app).getBoolean("use_hardware_sha2", true) } catch (_: Exception) { true }
+        set(v) {
+            try {
+                prefs(ContextProvider.app).edit().putBoolean("use_hardware_sha2", v).commit()
+                NativeBridge.nativeSetHardwareSha2Enabled(v)
+            } catch (_: Exception) {}
+        }
+
+    fun isUseHardwareCrypto(context: Context): Boolean =
+        prefs(context).getBoolean("use_hardware_crypto", true)
+
+    fun setUseHardwareCrypto(context: Context, enabled: Boolean): Boolean {
+        val ret = prefs(context).edit()
+            .putBoolean("use_hardware_crypto", enabled)
+            .putBoolean("use_hardware_aes", enabled)
+            .putBoolean("use_hardware_sha2", enabled)
+            .commit()
+        NativeBridge.setHardwareCryptoEnabled(enabled)
+        return ret
+    }
+
+    var useHardwareCrypto: Boolean
+        get() = try { prefs(ContextProvider.app).getBoolean("use_hardware_crypto", true) } catch (_: Exception) { true }
+        set(v) {
+            try {
+                prefs(ContextProvider.app).edit()
+                    .putBoolean("use_hardware_crypto", v)
+                    .putBoolean("use_hardware_aes", v)
+                    .putBoolean("use_hardware_sha2", v)
+                    .commit()
+                NativeBridge.setHardwareCryptoEnabled(v)
+            } catch (_: Exception) {}
+        }
+
     // ------- theme & personalization -------
 
     const val THEME_SYSTEM = "system"

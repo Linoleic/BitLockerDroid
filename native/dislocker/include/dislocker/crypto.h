@@ -67,6 +67,16 @@ void sha256(const uint8_t *data, size_t len, uint8_t out[32]);
 
 uint32_t crc32_buf(const uint8_t *data, uint32_t len);
 
+/* ---------------- ARMv8 Cryptographic Extensions ---------------- */
+int dislocker_is_armv8_ce_supported(void);
+int dislocker_is_armv8_ce_enabled(void);
+void dislocker_set_armv8_ce_enabled(int enabled);
+
+int dislocker_is_armv8_sha2_supported(void);
+int dislocker_is_armv8_sha2_enabled(void);
+void dislocker_set_armv8_sha2_enabled(int enabled);
+int bitlocker_stretch_key_rounds_armv8ce(void *ch, uint8_t *result, uint32_t rounds);
+
 #ifdef __cplusplus
 }
 #endif
