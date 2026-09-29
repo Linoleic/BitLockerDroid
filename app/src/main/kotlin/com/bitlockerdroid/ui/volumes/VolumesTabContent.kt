@@ -8,7 +8,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -63,6 +62,8 @@ fun VolumesTabContent(
             .widthIn(max = 720.dp)
     }
 
+    val painters = rememberVolumeCardPainters()
+
     Column(modifier = Modifier.fillMaxSize()) {
         AnimatedVisibility(visible = isRefreshing) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -98,7 +99,7 @@ fun VolumesTabContent(
                     }
                     items(
                         items = detectedVolumes,
-                        key = { "detected_${it.devicePath}" },
+                        key = { it.devicePath },
                         contentType = { "detected_volume" }
                     ) { detected ->
                         val hasSavedCredential = remember(detected.guid, savedCredentialGuids) {
@@ -113,6 +114,7 @@ fun VolumesTabContent(
                             volume = detected,
                             hasSavedCredential = hasSavedCredential,
                             canBiometric = canBiometric,
+                            painters = painters,
                             onMountReadOnlyChange = onMountReadOnlyChange,
                             onUnlock = onUnlock,
                             onBiometricUnlock = onBiometricUnlock,
@@ -135,7 +137,7 @@ fun VolumesTabContent(
                     }
                     items(
                         items = unlockedVolumes,
-                        key = { "unlocked_${it.devicePath}" },
+                        key = { it.devicePath },
                         contentType = { "unlocked_volume" }
                     ) { volume ->
                         val vMount = activeMounts[volume.devicePath]
@@ -154,6 +156,7 @@ fun VolumesTabContent(
                             volume = volume,
                             vMount = vMount,
                             shareState = shareState,
+                            painters = painters,
                             isVirtualMountSupported = isVirtualMountSupported,
                             onMountReadOnlyChange = onMountReadOnlyChange,
                             onOpen = onOpen,
@@ -183,7 +186,7 @@ fun VolumesTabContent(
                     }
                     items(
                         items = unencryptedVolumes,
-                        key = { "unencrypted_${it.id}" },
+                        key = { it.id },
                         contentType = { "unencrypted_volume" }
                     ) { unenc ->
                         val onOpen = remember(unenc.id, onOpenUnencrypted) { { onOpenUnencrypted(unenc) } }

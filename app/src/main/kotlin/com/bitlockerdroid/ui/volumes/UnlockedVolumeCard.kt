@@ -38,6 +38,8 @@ import com.bitlockerdroid.ui.theme.WarningAmber
 import com.bitlockerdroid.util.DeviceIdentity
 import com.bitlockerdroid.util.PreferenceHelper
 
+import androidx.compose.ui.graphics.Color
+
 private data class CapacityStats(
     val fraction: Float,
     val percent: Int,
@@ -53,6 +55,7 @@ fun UnlockedVolumeCard(
     vMount: VirtualMountInfo? = null,
     shareState: com.bitlockerdroid.share.LanShareState? = null,
     isVirtualMountSupported: Boolean = false,
+    painters: VolumeCardPainters? = null,
     onMountReadOnlyChange: (Boolean) -> Unit,
     onOpen: () -> Unit,
     onLock: () -> Unit,
@@ -69,16 +72,14 @@ fun UnlockedVolumeCard(
     val clipboardManager = LocalClipboardManager.current
     var detailsExpanded by remember { mutableStateOf(false) }
 
-    val copyPainter = painterResource(id = R.drawable.ic_content_copy)
-    val ejectPainter = painterResource(id = R.drawable.ic_eject)
-    val lanSharePainter = painterResource(id = R.drawable.ic_lan_share)
-    val repairPainter = painterResource(id = R.drawable.ic_repair)
-    val shieldCheckPainter = painterResource(id = R.drawable.ic_shield_check)
+    val effectivePainters = painters ?: rememberVolumeCardPainters()
+    val copyPainter = effectivePainters.copy
+    val ejectPainter = effectivePainters.eject
+    val lanSharePainter = effectivePainters.lanShare
+    val repairPainter = effectivePainters.repair
+    val shieldCheckPainter = effectivePainters.shieldCheck
 
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
-    val cardBorder = remember(outlineColor) {
-        BorderStroke(1.dp, outlineColor.copy(alpha = 0.45f))
-    }
 
     val displayName = remember(volume.label, volume.deviceName, volume.guid) {
         DeviceIdentity.getDisplayName(
@@ -100,14 +101,11 @@ fun UnlockedVolumeCard(
         } else null
     }
 
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = cardBorder
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(20.dp))
+            .border(1.dp, outlineColor.copy(alpha = 0.45f), RoundedCornerShape(20.dp))
     ) {
         Column(
             modifier = Modifier.padding(18.dp)
@@ -188,7 +186,7 @@ fun UnlockedVolumeCard(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
-                        IconButton(
+                        AppIconButton(
                             onClick = {
                                 clipboardManager.setText(AnnotatedString(volume.guid))
                                 Toast.makeText(context, R.string.guid_copied, Toast.LENGTH_SHORT).show()
@@ -237,7 +235,7 @@ fun UnlockedVolumeCard(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
-                        IconButton(
+                        AppIconButton(
                             onClick = {
                                 clipboardManager.setText(AnnotatedString(volume.recoveryKeyId))
                                 Toast.makeText(context, R.string.recovery_id_copied, Toast.LENGTH_SHORT).show()
@@ -286,7 +284,7 @@ fun UnlockedVolumeCard(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
-                        TextButton(
+                        AppButton(
                             onClick = {
                                 Thread {
                                     VirtualStorageMountManager.unmount(volume.devicePath)
@@ -296,9 +294,10 @@ fun UnlockedVolumeCard(
                                     }
                                 }.start()
                             },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                             modifier = Modifier.height(28.dp),
-                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                            containerColor = Color.Transparent,
+                            contentColor = MaterialTheme.colorScheme.error
                         ) {
                             Text(
                                 text = stringResource(R.string.unmount_virtual_mount),
@@ -307,7 +306,7 @@ fun UnlockedVolumeCard(
                             )
                         }
                         Spacer(modifier = Modifier.width(4.dp))
-                        IconButton(
+                        AppIconButton(
                             onClick = {
                                 clipboardManager.setText(AnnotatedString(vMount.mountPoint))
                                 Toast.makeText(context, R.string.mount_path_copied, Toast.LENGTH_SHORT).show()
@@ -325,7 +324,7 @@ fun UnlockedVolumeCard(
                 }
             } else if (isVirtualMountSupported) {
                 Spacer(modifier = Modifier.height(8.dp))
-                OutlinedButton(
+                AppButton(
                     onClick = {
                         Thread {
                             val res = VirtualStorageMountManager.mountRemembered(context, volume.devicePath, volume.guid)
@@ -350,6 +349,9 @@ fun UnlockedVolumeCard(
                         }.start()
                     },
                     modifier = Modifier.fillMaxWidth(),
+                    containerColor = Color.Transparent,
+                    contentColor = MaterialTheme.colorScheme.primary,
+                    borderColor = MaterialTheme.colorScheme.outlineVariant,
                     shape = RoundedCornerShape(10.dp)
                 ) {
                     Icon(
@@ -396,10 +398,12 @@ fun UnlockedVolumeCard(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
-                        TextButton(
+                        AppButton(
                             onClick = onLanShareClick,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                            modifier = Modifier.height(28.dp)
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(28.dp),
+                            containerColor = Color.Transparent,
+                            contentColor = MaterialTheme.colorScheme.primary
                         ) {
                             Text(
                                 text = stringResource(R.string.lan_share_manage_action),
@@ -408,13 +412,14 @@ fun UnlockedVolumeCard(
                             )
                         }
                         Spacer(modifier = Modifier.width(4.dp))
-                        TextButton(
+                        AppButton(
                             onClick = {
                                 com.bitlockerdroid.share.LanShareManager.stopSharing(context, effectiveShareGuid)
                             },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                             modifier = Modifier.height(28.dp),
-                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                            containerColor = Color.Transparent,
+                            contentColor = MaterialTheme.colorScheme.error
                         ) {
                             Text(
                                 text = stringResource(R.string.lan_share_stop_action),
@@ -423,7 +428,7 @@ fun UnlockedVolumeCard(
                             )
                         }
                         Spacer(modifier = Modifier.width(4.dp))
-                        IconButton(
+                        AppIconButton(
                             onClick = {
                                 clipboardManager.setText(AnnotatedString(shareState.primaryUrl))
                                 Toast.makeText(context, R.string.lan_share_copied, Toast.LENGTH_SHORT).show()
@@ -440,9 +445,12 @@ fun UnlockedVolumeCard(
                     }
                 }
             } else {
-                OutlinedButton(
+                AppButton(
                     onClick = onLanShareClick,
                     modifier = Modifier.fillMaxWidth(),
+                    containerColor = Color.Transparent,
+                    contentColor = MaterialTheme.colorScheme.primary,
+                    borderColor = MaterialTheme.colorScheme.outlineVariant,
                     shape = RoundedCornerShape(10.dp)
                 ) {
                     Icon(
@@ -577,13 +585,11 @@ fun UnlockedVolumeCard(
                             )
                         }
                         Spacer(modifier = Modifier.width(8.dp))
-                        FilledTonalButton(
+                        AppButton(
                             onClick = onRepairClick,
                             shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = WarningAmber.copy(alpha = 0.22f),
-                                contentColor = WarningAmber
-                            ),
+                            containerColor = WarningAmber.copy(alpha = 0.22f),
+                            contentColor = WarningAmber,
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                             modifier = Modifier.height(32.dp)
                         ) {
@@ -606,11 +612,11 @@ fun UnlockedVolumeCard(
             Spacer(modifier = Modifier.height(14.dp))
 
             // Expandable Hardware & Volume Metadata Section
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                onClick = { detailsExpanded = !detailsExpanded }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+                    .clickable { detailsExpanded = !detailsExpanded }
             ) {
                 Row(
                     modifier = Modifier
@@ -730,10 +736,13 @@ fun UnlockedVolumeCard(
                             )
 
                             Spacer(modifier = Modifier.height(4.dp))
-                            OutlinedButton(
+                            AppButton(
                                 onClick = onDiagnosticClick,
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth(),
+                                containerColor = Color.Transparent,
+                                contentColor = MaterialTheme.colorScheme.primary,
+                                borderColor = MaterialTheme.colorScheme.outlineVariant,
                                 contentPadding = PaddingValues(vertical = 6.dp)
                             ) {
                                 Icon(
@@ -749,10 +758,13 @@ fun UnlockedVolumeCard(
                             }
 
                             Spacer(modifier = Modifier.height(6.dp))
-                            OutlinedButton(
+                            AppButton(
                                 onClick = onDisasterClick,
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth(),
+                                containerColor = Color.Transparent,
+                                contentColor = MaterialTheme.colorScheme.primary,
+                                borderColor = MaterialTheme.colorScheme.outlineVariant,
                                 contentPadding = PaddingValues(vertical = 6.dp)
                             ) {
                                 Icon(
@@ -834,10 +846,13 @@ fun UnlockedVolumeCard(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        OutlinedButton(
+                        AppButton(
                             onClick = onBenchmarkClick,
                             enabled = !isEjecting,
                             shape = RoundedCornerShape(12.dp),
+                            containerColor = Color.Transparent,
+                            contentColor = MaterialTheme.colorScheme.primary,
+                            borderColor = MaterialTheme.colorScheme.outlineVariant,
                             modifier = Modifier.weight(1f)
                         ) {
                             Text(
@@ -847,13 +862,13 @@ fun UnlockedVolumeCard(
                             )
                         }
 
-                        OutlinedButton(
+                        AppButton(
                             onClick = onLock,
                             enabled = !isEjecting,
                             shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.primary
-                            ),
+                            containerColor = Color.Transparent,
+                            contentColor = MaterialTheme.colorScheme.primary,
+                            borderColor = MaterialTheme.colorScheme.outlineVariant,
                             modifier = Modifier.weight(1f)
                         ) {
                             if (isEjecting) {
@@ -884,10 +899,12 @@ fun UnlockedVolumeCard(
                         }
                     }
 
-                    Button(
+                    AppButton(
                         onClick = onOpen,
                         enabled = !isEjecting,
                         shape = RoundedCornerShape(12.dp),
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
@@ -902,21 +919,24 @@ fun UnlockedVolumeCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    OutlinedButton(
+                    AppButton(
                         onClick = onBenchmarkClick,
                         enabled = !isEjecting,
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        containerColor = Color.Transparent,
+                        contentColor = MaterialTheme.colorScheme.primary,
+                        borderColor = MaterialTheme.colorScheme.outlineVariant
                     ) {
                         Text(text = stringResource(R.string.benchmark_btn))
                     }
 
-                    OutlinedButton(
+                    AppButton(
                         onClick = onLock,
                         enabled = !isEjecting,
                         shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.primary
-                        )
+                        containerColor = Color.Transparent,
+                        contentColor = MaterialTheme.colorScheme.primary,
+                        borderColor = MaterialTheme.colorScheme.outlineVariant
                     ) {
                         if (isEjecting) {
                             CircularProgressIndicator(
@@ -937,10 +957,12 @@ fun UnlockedVolumeCard(
                         }
                     }
 
-                    Button(
+                    AppButton(
                         onClick = onOpen,
                         enabled = !isEjecting,
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
                     ) {
                         Text(text = stringResource(R.string.open))
                     }
@@ -986,7 +1008,7 @@ private fun VolumeDetailRow(
             )
             if (onCopy != null) {
                 Spacer(modifier = Modifier.width(4.dp))
-                IconButton(
+                AppIconButton(
                     onClick = onCopy,
                     modifier = Modifier.size(24.dp)
                 ) {

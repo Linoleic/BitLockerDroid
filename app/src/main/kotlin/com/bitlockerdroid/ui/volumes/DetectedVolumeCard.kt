@@ -1,8 +1,8 @@
 package com.bitlockerdroid.ui.volumes
 
 import android.widget.Toast
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -36,6 +36,7 @@ fun DetectedVolumeCard(
     volume: DetectedVolume,
     hasSavedCredential: Boolean = false,
     canBiometric: Boolean = false,
+    painters: VolumeCardPainters? = null,
     onMountReadOnlyChange: (Boolean) -> Unit,
     onUnlock: () -> Unit,
     onBiometricUnlock: (() -> Unit)? = null,
@@ -44,13 +45,10 @@ fun DetectedVolumeCard(
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
-    val copyPainter = painterResource(id = R.drawable.ic_content_copy)
+    val effectivePainters = painters ?: rememberVolumeCardPainters()
+    val copyPainter = effectivePainters.copy
     var isReadOnly by remember(volume.devicePath, volume.isReadOnly) {
         mutableStateOf(volume.isReadOnly)
-    }
-
-    val cardBorder = remember {
-        BorderStroke(1.dp, WarningAmber.copy(alpha = 0.4f))
     }
 
     val displayName = remember(volume.deviceName) {
@@ -63,14 +61,11 @@ fun DetectedVolumeCard(
         if (volume.capacity > 0L) DeviceIdentity.formatSize(volume.capacity) else null
     }
 
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = WarningAmber.copy(alpha = 0.08f)
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = cardBorder
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(WarningAmber.copy(alpha = 0.08f), RoundedCornerShape(20.dp))
+            .border(1.dp, WarningAmber.copy(alpha = 0.4f), RoundedCornerShape(20.dp))
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -114,34 +109,38 @@ fun DetectedVolumeCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Button(
+                        AppButton(
                             onClick = onBiometricUnlock,
                             shape = RoundedCornerShape(12.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                         ) {
                             Icon(
-                                painter = painterResource(id = R.drawable.ic_fingerprint),
+                                painter = effectivePainters.fingerprint,
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(text = stringResource(R.string.biometric_unlock_button), fontSize = 12.sp)
                         }
-                        OutlinedButton(
+                        AppButton(
                             onClick = onUnlock,
                             shape = RoundedCornerShape(12.dp),
+                            containerColor = Color.Transparent,
+                            contentColor = MaterialTheme.colorScheme.primary,
+                            borderColor = MaterialTheme.colorScheme.outlineVariant,
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                         ) {
                             Text(text = stringResource(R.string.detected_unlock), fontSize = 12.sp)
                         }
                     }
                 } else {
-                    Button(
+                    AppButton(
                         onClick = onUnlock,
                         shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = WarningAmber)
+                        containerColor = WarningAmber,
+                        contentColor = Color.White
                     ) {
-                        Text(text = stringResource(R.string.detected_unlock), color = Color.White)
+                        Text(text = stringResource(R.string.detected_unlock))
                     }
                 }
             }
@@ -177,7 +176,7 @@ fun DetectedVolumeCard(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
-                        IconButton(
+                        AppIconButton(
                             onClick = {
                                 clipboardManager.setText(AnnotatedString(volume.guid))
                                 Toast.makeText(context, R.string.guid_copied, Toast.LENGTH_SHORT).show()
@@ -226,7 +225,7 @@ fun DetectedVolumeCard(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
-                        IconButton(
+                        AppIconButton(
                             onClick = {
                                 clipboardManager.setText(AnnotatedString(volume.recoveryKeyId))
                                 Toast.makeText(context, R.string.recovery_id_copied, Toast.LENGTH_SHORT).show()
@@ -287,14 +286,17 @@ fun DetectedVolumeCard(
             Spacer(modifier = Modifier.height(10.dp))
 
             // Disaster Recovery & Low-level Protection Action
-            OutlinedButton(
+            AppButton(
                 onClick = onDisasterClick,
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.fillMaxWidth(),
+                containerColor = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.primary,
+                borderColor = MaterialTheme.colorScheme.outlineVariant,
                 contentPadding = PaddingValues(vertical = 6.dp)
             ) {
                 Icon(
-                    painter = painterResource(id = R.drawable.ic_shield_check),
+                    painter = effectivePainters.shieldCheck,
                     contentDescription = null,
                     modifier = Modifier.size(16.dp),
                     tint = MaterialTheme.colorScheme.primary

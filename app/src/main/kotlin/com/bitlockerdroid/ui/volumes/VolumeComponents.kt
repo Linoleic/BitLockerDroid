@@ -2,6 +2,8 @@ package com.bitlockerdroid.ui.volumes
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -12,6 +14,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -172,3 +175,110 @@ fun EmptyStateView(
         }
     }
 }
+
+/** Pre-cached painters bundle to avoid looking up VectorDrawables during list scrolling */
+@androidx.compose.runtime.Immutable
+data class VolumeCardPainters(
+    val copy: androidx.compose.ui.graphics.painter.Painter,
+    val eject: androidx.compose.ui.graphics.painter.Painter,
+    val lanShare: androidx.compose.ui.graphics.painter.Painter,
+    val repair: androidx.compose.ui.graphics.painter.Painter,
+    val shieldCheck: androidx.compose.ui.graphics.painter.Painter,
+    val fingerprint: androidx.compose.ui.graphics.painter.Painter
+)
+
+@Composable
+fun rememberVolumeCardPainters(): VolumeCardPainters {
+    val copy = androidx.compose.ui.res.painterResource(id = R.drawable.ic_content_copy)
+    val eject = androidx.compose.ui.res.painterResource(id = R.drawable.ic_eject)
+    val lanShare = androidx.compose.ui.res.painterResource(id = R.drawable.ic_lan_share)
+    val repair = androidx.compose.ui.res.painterResource(id = R.drawable.ic_repair)
+    val shieldCheck = androidx.compose.ui.res.painterResource(id = R.drawable.ic_shield_check)
+    val fingerprint = androidx.compose.ui.res.painterResource(id = R.drawable.ic_fingerprint)
+    return androidx.compose.runtime.remember {
+        VolumeCardPainters(
+            copy = copy,
+            eject = eject,
+            lanShare = lanShare,
+            repair = repair,
+            shieldCheck = shieldCheck,
+            fingerprint = fingerprint
+        )
+    }
+}
+
+/**
+ * Lightweight, zero-Surface button component.
+ * Avoids GraphicsLayerOwnerLayer and offscreen clipping overhead during scroll.
+ */
+@Composable
+fun AppButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    containerColor: Color = MaterialTheme.colorScheme.primary,
+    contentColor: Color = MaterialTheme.colorScheme.onPrimary,
+    borderColor: Color? = null,
+    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(12.dp),
+    contentPadding: PaddingValues = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+    content: @Composable RowScope.() -> Unit
+) {
+    val clickModifier = if (enabled) {
+        Modifier.clickable(
+            onClick = onClick,
+            role = Role.Button
+        )
+    } else Modifier
+
+    val borderModifier = if (borderColor != null) {
+        Modifier.border(1.dp, borderColor, shape)
+    } else Modifier
+
+    val bg = if (enabled) containerColor else containerColor.copy(alpha = 0.38f)
+    val fg = if (enabled) contentColor else contentColor.copy(alpha = 0.38f)
+
+    Box(
+        modifier = modifier
+            .background(bg, shape)
+            .then(borderModifier)
+            .then(clickModifier)
+            .padding(contentPadding),
+        contentAlignment = Alignment.Center
+    ) {
+        androidx.compose.runtime.CompositionLocalProvider(LocalContentColor provides fg) {
+            ProvideTextStyle(
+                value = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    content = content
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun AppIconButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    contentDescription: String? = null,
+    content: @Composable () -> Unit
+) {
+    val clickModifier = if (enabled) {
+        Modifier.clickable(
+            onClick = onClick,
+            role = Role.Button
+        )
+    } else Modifier
+
+    Box(
+        modifier = modifier.then(clickModifier),
+        contentAlignment = Alignment.Center
+    ) {
+        content()
+    }
+}
+

@@ -1,7 +1,7 @@
 package com.bitlockerdroid.ui.volumes
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -27,18 +27,12 @@ fun UnencryptedVolumeCard(
     modifier: Modifier = Modifier
 ) {
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
-    val cardBorder = remember(outlineColor) {
-        BorderStroke(1.dp, outlineColor.copy(alpha = 0.45f))
-    }
 
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = cardBorder
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(20.dp))
+            .border(1.dp, outlineColor.copy(alpha = 0.45f), RoundedCornerShape(20.dp))
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
             // Header
@@ -158,7 +152,7 @@ fun UnencryptedVolumeCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End
             ) {
-                Button(
+                AppButton(
                     onClick = onOpen,
                     shape = RoundedCornerShape(12.dp),
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp)
