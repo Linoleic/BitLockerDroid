@@ -6,6 +6,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -612,11 +613,16 @@ fun UnlockedVolumeCard(
             Spacer(modifier = Modifier.height(14.dp))
 
             // Expandable Hardware & Volume Metadata Section
+            val detailsInteraction = remember { MutableInteractionSource() }
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
-                    .clickable { detailsExpanded = !detailsExpanded }
+                    .clickable(
+                        interactionSource = detailsInteraction,
+                        indication = ripple(),
+                        onClick = { detailsExpanded = !detailsExpanded }
+                    )
             ) {
                 Row(
                     modifier = Modifier

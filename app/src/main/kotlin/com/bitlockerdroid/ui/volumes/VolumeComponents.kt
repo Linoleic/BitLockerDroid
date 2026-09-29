@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -12,6 +13,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
@@ -223,8 +225,11 @@ fun AppButton(
     contentPadding: PaddingValues = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
     content: @Composable RowScope.() -> Unit
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     val clickModifier = if (enabled) {
         Modifier.clickable(
+            interactionSource = interactionSource,
+            indication = ripple(),
             onClick = onClick,
             role = Role.Button
         )
@@ -267,8 +272,11 @@ fun AppIconButton(
     contentDescription: String? = null,
     content: @Composable () -> Unit
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     val clickModifier = if (enabled) {
         Modifier.clickable(
+            interactionSource = interactionSource,
+            indication = ripple(bounded = false, radius = 18.dp),
             onClick = onClick,
             role = Role.Button
         )
