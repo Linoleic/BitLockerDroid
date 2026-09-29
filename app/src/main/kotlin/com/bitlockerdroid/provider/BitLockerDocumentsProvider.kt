@@ -381,6 +381,17 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             out.putInt("count", names.size)
             return out
         }
+        if (method == "set_pipelined_write") {
+            val enabled = if (extras != null && extras.containsKey("enabled")) {
+                extras.getBoolean("enabled")
+            } else {
+                arg == "true" || arg == "1"
+            }
+            com.bitlockerdroid.util.PreferenceHelper.setUsePipelinedWrite(appContext, enabled)
+            val out = Bundle()
+            out.putBoolean("use_pipelined_write", com.bitlockerdroid.usb.UsbStorageManager.usePipelinedWrite)
+            return out
+        }
         if (method == "run_benchmark") {
             val dev = arg ?: extras?.getString("device_path") ?: ""
             var core = (if (dev.isNotEmpty()) UnlockManager.get(dev) ?: UnlockManager.activeSessions.find { it.devicePath == dev } else null)
@@ -391,6 +402,10 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                     ?: UnlockManager.activeSessions.firstOrNull()
             }
             if (core == null) return null
+
+            if (extras != null && extras.containsKey("use_pipelined_write")) {
+                com.bitlockerdroid.usb.UsbStorageManager.usePipelinedWrite = extras.getBoolean("use_pipelined_write")
+            }
 
             val testTypeArg = extras?.getString("test_type") ?: extras?.getString("options") ?: "all"
             val selectedTests = when (testTypeArg.lowercase()) {

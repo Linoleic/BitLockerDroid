@@ -39,6 +39,8 @@ class BitLockerApplication : Application() {
             try {
                 com.bitlockerdroid.util.NativeBridge.setHardwareCryptoEnabled(hwCrypto)
             } catch (_: Throwable) {}
+            com.bitlockerdroid.usb.UsbStorageManager.usePipelinedWrite =
+                com.bitlockerdroid.util.PreferenceHelper.isUsePipelinedWrite(applicationContext)
             com.bitlockerdroid.util.RootAccess.ensureDaemonInstalled(applicationContext)
             com.bitlockerdroid.util.RootAccess.ensureFuseDaemonInstalled(applicationContext)
             try {
