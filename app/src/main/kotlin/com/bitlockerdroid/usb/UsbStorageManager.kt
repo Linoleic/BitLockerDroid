@@ -27,6 +27,8 @@ import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
 
 /**
  * Non-Root USB Mass Storage Manager.
@@ -75,9 +77,9 @@ object UsbStorageManager {
         val worker: UsbBlockDeviceWorker
     ) : AutoCloseable {
         override fun close() {
-            worker.running = false
+            worker.closeWorker()
             try { workerPfd.close() } catch (_: Exception) {}
-            try { worker.join(1000) } catch (_: Exception) {}
+            try { worker.join(2000) } catch (_: Exception) {}
         }
     }
 
@@ -958,6 +960,7 @@ object UsbStorageManager {
 
     /**
      * Dedicated background worker servicing binary pread/pwrite requests over Unix domain socketpair.
+     * Implements a 2-stage Ping-Pong overlapping write pipeline to break the stop-and-wait BOT latency barrier.
      */
     class UsbBlockDeviceWorker(
         val partitionDriver: PartitionBlockDeviceDriver,
@@ -967,10 +970,36 @@ object UsbStorageManager {
         @Volatile
         var running = true
 
-        private var reusableDataBuf = ByteBuffer.allocate(256 * 1024)
+        private val writeExecutor = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "UsbAsyncWriter-${partitionDriver.startLba}").apply { isDaemon = true }
+        }
 
-        private fun acquireDataBuf(len: Int): ByteBuffer {
-            val existing = reusableDataBuf
+        private class WriteSlot(val id: Int) {
+            var buffer: ByteBuffer = ByteBuffer.allocate(256 * 1024)
+            var offset: Long = 0L
+            var length: Int = 0
+            var future: Future<*>? = null
+
+            fun ensureCapacity(len: Int) {
+                if (buffer.capacity() < len) {
+                    buffer = ByteBuffer.allocate(maxOf(len, buffer.capacity() * 2))
+                }
+                buffer.clear()
+                buffer.limit(len)
+            }
+        }
+
+        private val slotA = WriteSlot(0)
+        private val slotB = WriteSlot(1)
+        private var activeSlot = slotA
+
+        @Volatile
+        private var deferredError: Int = 0
+
+        private var readBuf = ByteBuffer.allocate(256 * 1024)
+
+        private fun acquireReadBuf(len: Int): ByteBuffer {
+            val existing = readBuf
             return if (existing.capacity() >= len) {
                 existing.clear()
                 existing.limit(len)
@@ -978,9 +1007,40 @@ object UsbStorageManager {
             } else {
                 val newBuf = ByteBuffer.allocate(maxOf(len, existing.capacity() * 2))
                 newBuf.limit(len)
-                reusableDataBuf = newBuf
+                readBuf = newBuf
                 newBuf
             }
+        }
+
+        private fun drainWrites(): Boolean {
+            var ok = true
+            try {
+                slotA.future?.get()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error draining slotA in worker", e)
+                deferredError = -5
+                ok = false
+            } finally {
+                slotA.future = null
+            }
+
+            try {
+                slotB.future?.get()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error draining slotB in worker", e)
+                deferredError = -5
+                ok = false
+            } finally {
+                slotB.future = null
+            }
+            return ok && (deferredError == 0)
+        }
+
+        fun closeWorker() {
+            running = false
+            interrupt()
+            try { drainWrites() } catch (_: Exception) {}
+            try { writeExecutor.shutdownNow() } catch (_: Exception) {}
         }
 
         override fun run() {
@@ -1004,12 +1064,15 @@ object UsbStorageManager {
 
                     when (cmd) {
                         CMD_READ -> {
+                            // Ensure in-flight writes are flushed for read-after-write consistency
+                            drainWrites()
+
                             readFully(inStream, headerBuf, 0, 12)
                             val offset = readLongLE(headerBuf, 0)
                             val len = readIntLE(headerBuf, 8)
                             if (len <= 0) break
 
-                            val dataBuf = acquireDataBuf(len)
+                            val dataBuf = acquireReadBuf(len)
                             try {
                                 partitionDriver.read(offset, dataBuf)
                                 dataBuf.flip()
@@ -1030,26 +1093,65 @@ object UsbStorageManager {
                             val len = readIntLE(headerBuf, 8)
                             if (len <= 0) break
 
-                            val dataBuf = acquireDataBuf(len)
-                            readFully(inStream, dataBuf.array(), dataBuf.arrayOffset(), len)
-                            try {
-                                partitionDriver.write(offset, dataBuf)
+                            // 1. Wait for active slot's previous write to complete before reusing its buffer
+                            val curSlot = activeSlot
+                            curSlot.future?.let { f ->
+                                try {
+                                    f.get()
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Worker deferred write error on slot ${curSlot.id}", e)
+                                    deferredError = -5
+                                } finally {
+                                    curSlot.future = null
+                                }
+                            }
+
+                            // 2. Read incoming payload from socket into active slot's buffer
+                            curSlot.ensureCapacity(len)
+                            readFully(inStream, curSlot.buffer.array(), curSlot.buffer.arrayOffset(), len)
+                            curSlot.offset = offset
+                            curSlot.length = len
+                            curSlot.buffer.position(0)
+                            curSlot.buffer.limit(len)
+
+                            // 3. Propagate deferred error if earlier background write failed
+                            if (deferredError != 0) {
+                                val err = deferredError
+                                deferredError = 0
+                                writeIntLE(statusBuf, 0, err) // -5 (-EIO)
+                                outStream.write(statusBuf, 0, 4)
+                                outStream.flush()
+                            } else {
+                                // 4. Dispatch active slot to background async writer thread
+                                curSlot.future = writeExecutor.submit {
+                                    try {
+                                        partitionDriver.write(curSlot.offset, curSlot.buffer)
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Async partition write error at offset ${curSlot.offset} len ${curSlot.length}", e)
+                                        deferredError = -5
+                                        throw e
+                                    }
+                                }
+
+                                // 5. Immediately send ACK to C driver so it can start preparing/encrypting the NEXT chunk!
                                 writeIntLE(statusBuf, 0, len)
                                 outStream.write(statusBuf, 0, 4)
                                 outStream.flush()
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Worker CMD_WRITE error at offset $offset len $len", e)
-                                writeIntLE(statusBuf, 0, -5) // -EIO
-                                outStream.write(statusBuf, 0, 4)
-                                outStream.flush()
+
+                                // 6. Ping-pong flip to the other slot
+                                activeSlot = if (activeSlot === slotA) slotB else slotA
                             }
                         }
                         CMD_SYNC -> {
-                            writeIntLE(statusBuf, 0, 0)
+                            drainWrites()
+                            val err = deferredError
+                            deferredError = 0
+                            writeIntLE(statusBuf, 0, err)
                             outStream.write(statusBuf, 0, 4)
                             outStream.flush()
                         }
                         CMD_SIZE -> {
+                            drainWrites()
                             writeLongLE(sizeBuf, 0, partitionDriver.sizeBytes)
                             outStream.write(sizeBuf, 0, 8)
                             outStream.flush()
@@ -1064,6 +1166,8 @@ object UsbStorageManager {
                 // Pipe closed during session shutdown
             } finally {
                 running = false
+                try { drainWrites() } catch (_: Exception) {}
+                try { writeExecutor.shutdown() } catch (_: Exception) {}
                 try { inStream.close() } catch (_: Exception) {}
                 try { outStream.close() } catch (_: Exception) {}
                 try { workerPfd.close() } catch (_: Exception) {}
