@@ -2,7 +2,6 @@ package com.bitlockerdroid.ui.volumes
 
 import android.content.Context
 import android.widget.Toast
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -20,7 +19,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -71,6 +69,12 @@ fun UnlockedVolumeCard(
     val clipboardManager = LocalClipboardManager.current
     var detailsExpanded by remember { mutableStateOf(false) }
 
+    val copyPainter = painterResource(id = R.drawable.ic_content_copy)
+    val ejectPainter = painterResource(id = R.drawable.ic_eject)
+    val lanSharePainter = painterResource(id = R.drawable.ic_lan_share)
+    val repairPainter = painterResource(id = R.drawable.ic_repair)
+    val shieldCheckPainter = painterResource(id = R.drawable.ic_shield_check)
+
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
     val cardBorder = remember(outlineColor) {
         BorderStroke(1.dp, outlineColor.copy(alpha = 0.45f))
@@ -106,9 +110,7 @@ fun UnlockedVolumeCard(
         border = cardBorder
     ) {
         Column(
-            modifier = Modifier
-                .padding(18.dp)
-                .animateContentSize()
+            modifier = Modifier.padding(18.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -117,8 +119,7 @@ fun UnlockedVolumeCard(
                 Box(
                     modifier = Modifier
                         .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(SuccessGreen.copy(alpha = 0.15f)),
+                        .background(SuccessGreen.copy(alpha = 0.15f), RoundedCornerShape(12.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -148,19 +149,15 @@ fun UnlockedVolumeCard(
                 }
 
                 // Mounted Badge
-                Box(
+                Text(
+                    text = stringResource(R.string.mounted),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = SuccessGreen,
+                    fontWeight = FontWeight.Bold,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(SuccessGreen.copy(alpha = 0.12f))
+                        .background(SuccessGreen.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
                         .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = stringResource(R.string.mounted),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = SuccessGreen,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
+                )
             }
 
             // Full GUID Section with copy button
@@ -169,8 +166,7 @@ fun UnlockedVolumeCard(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
                 ) {
                     Row(
                         modifier = Modifier
@@ -200,7 +196,7 @@ fun UnlockedVolumeCard(
                             modifier = Modifier.size(28.dp)
                         ) {
                             Icon(
-                                painter = painterResource(id = R.drawable.ic_content_copy),
+                                painter = copyPainter,
                                 contentDescription = stringResource(R.string.copy_guid),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(16.dp)
@@ -216,8 +212,7 @@ fun UnlockedVolumeCard(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
                 ) {
                     Row(
                         modifier = Modifier
@@ -250,7 +245,7 @@ fun UnlockedVolumeCard(
                             modifier = Modifier.size(28.dp)
                         ) {
                             Icon(
-                                painter = painterResource(id = R.drawable.ic_content_copy),
+                                painter = copyPainter,
                                 contentDescription = stringResource(R.string.copy_recovery_id),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(16.dp)
@@ -266,8 +261,7 @@ fun UnlockedVolumeCard(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
                 ) {
                     Row(
                         modifier = Modifier
@@ -321,7 +315,7 @@ fun UnlockedVolumeCard(
                             modifier = Modifier.size(28.dp)
                         ) {
                             Icon(
-                                painter = painterResource(id = R.drawable.ic_content_copy),
+                                painter = copyPainter,
                                 contentDescription = stringResource(R.string.copy_mount_path),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(16.dp)
@@ -377,8 +371,7 @@ fun UnlockedVolumeCard(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
                 ) {
                     Row(
                         modifier = Modifier
@@ -438,7 +431,7 @@ fun UnlockedVolumeCard(
                             modifier = Modifier.size(28.dp)
                         ) {
                             Icon(
-                                painter = painterResource(id = R.drawable.ic_content_copy),
+                                painter = copyPainter,
                                 contentDescription = stringResource(R.string.lan_share_copy_url),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(16.dp)
@@ -453,7 +446,7 @@ fun UnlockedVolumeCard(
                     shape = RoundedCornerShape(10.dp)
                 ) {
                     Icon(
-                        painter = painterResource(id = R.drawable.ic_lan_share),
+                        painter = lanSharePainter,
                         contentDescription = null,
                         modifier = Modifier.size(16.dp),
                         tint = MaterialTheme.colorScheme.primary
@@ -500,27 +493,53 @@ fun UnlockedVolumeCard(
             Spacer(modifier = Modifier.height(12.dp))
 
             // Badges row: FileSystem, Cipher, Size, Writable
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                if (volume.fsType.isNotBlank()) {
-                    MetaChip(text = volume.fsType)
-                }
-                if (volume.cipher.isNotBlank()) {
-                    MetaChip(text = volume.cipher)
-                }
-                MetaChip(text = formattedTotalSize)
-                MetaChip(
-                    text = if (volume.canWrite) stringResource(R.string.writable) else stringResource(R.string.read_only),
-                    color = if (volume.canWrite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-                )
-                if (volume.isDirty) {
+            if (!isCompact) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (volume.fsType.isNotBlank()) {
+                        MetaChip(text = volume.fsType)
+                    }
+                    if (volume.cipher.isNotBlank()) {
+                        MetaChip(text = volume.cipher)
+                    }
+                    MetaChip(text = formattedTotalSize)
                     MetaChip(
-                        text = stringResource(R.string.dirty_volume_warning_chip),
-                        color = WarningAmber
+                        text = if (volume.canWrite) stringResource(R.string.writable) else stringResource(R.string.read_only),
+                        color = if (volume.canWrite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                     )
+                    if (volume.isDirty) {
+                        MetaChip(
+                            text = stringResource(R.string.dirty_volume_warning_chip),
+                            color = WarningAmber
+                        )
+                    }
+                }
+            } else {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    if (volume.fsType.isNotBlank()) {
+                        MetaChip(text = volume.fsType)
+                    }
+                    if (volume.cipher.isNotBlank()) {
+                        MetaChip(text = volume.cipher)
+                    }
+                    MetaChip(text = formattedTotalSize)
+                    MetaChip(
+                        text = if (volume.canWrite) stringResource(R.string.writable) else stringResource(R.string.read_only),
+                        color = if (volume.canWrite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                    )
+                    if (volume.isDirty) {
+                        MetaChip(
+                            text = stringResource(R.string.dirty_volume_warning_chip),
+                            color = WarningAmber
+                        )
+                    }
                 }
             }
 
@@ -530,8 +549,7 @@ fun UnlockedVolumeCard(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(WarningAmber.copy(alpha = 0.12f))
+                        .background(WarningAmber.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
                         .border(1.dp, WarningAmber.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
                 ) {
                     Row(
@@ -570,7 +588,7 @@ fun UnlockedVolumeCard(
                             modifier = Modifier.height(32.dp)
                         ) {
                             Icon(
-                                painter = painterResource(R.drawable.ic_repair),
+                                painter = repairPainter,
                                 contentDescription = null,
                                 modifier = Modifier.size(14.dp)
                             )
@@ -588,12 +606,11 @@ fun UnlockedVolumeCard(
             Spacer(modifier = Modifier.height(14.dp))
 
             // Expandable Hardware & Volume Metadata Section
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
-                    .clickable { detailsExpanded = !detailsExpanded }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                onClick = { detailsExpanded = !detailsExpanded }
             ) {
                 Row(
                     modifier = Modifier
@@ -626,8 +643,7 @@ fun UnlockedVolumeCard(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f), RoundedCornerShape(10.dp))
                             .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
                     ) {
                         Column(
@@ -721,7 +737,7 @@ fun UnlockedVolumeCard(
                                 contentPadding = PaddingValues(vertical = 6.dp)
                             ) {
                                 Icon(
-                                    painter = painterResource(R.drawable.ic_repair),
+                                    painter = repairPainter,
                                     contentDescription = null,
                                     modifier = Modifier.size(16.dp)
                                 )
@@ -740,7 +756,7 @@ fun UnlockedVolumeCard(
                                 contentPadding = PaddingValues(vertical = 6.dp)
                             ) {
                                 Icon(
-                                    painter = painterResource(R.drawable.ic_shield_check),
+                                    painter = shieldCheckPainter,
                                     contentDescription = null,
                                     modifier = Modifier.size(16.dp),
                                     tint = MaterialTheme.colorScheme.primary
@@ -769,8 +785,7 @@ fun UnlockedVolumeCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(roBgColor)
+                    .background(roBgColor, RoundedCornerShape(12.dp))
                     .border(1.dp, roBorderColor, RoundedCornerShape(12.dp))
             ) {
                 Row(
@@ -855,7 +870,7 @@ fun UnlockedVolumeCard(
                                 )
                             } else {
                                 Icon(
-                                    painter = painterResource(id = R.drawable.ic_eject),
+                                    painter = ejectPainter,
                                     contentDescription = null,
                                     modifier = Modifier.size(16.dp)
                                 )
@@ -913,7 +928,7 @@ fun UnlockedVolumeCard(
                             Text(text = stringResource(R.string.safe_ejecting))
                         } else {
                             Icon(
-                                painter = painterResource(id = R.drawable.ic_eject),
+                                painter = ejectPainter,
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp)
                             )

@@ -2,8 +2,8 @@ package com.bitlockerdroid.ui.volumes
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -77,111 +77,121 @@ fun VolumesTabContent(
                 modifier = Modifier.weight(1f)
             )
         } else {
-            val scrollState = rememberScrollState()
-            Column(
+            LazyColumn(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth()
-                    .verticalScroll(scrollState)
-                    .padding(16.dp),
+                    .fillMaxWidth(),
+                contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Section 1: Detected Locked Volumes
                 if (detectedVolumes.isNotEmpty()) {
-                    Box(modifier = cardModifier) {
-                        SectionHeader(
-                            title = stringResource(R.string.detected_volumes_header),
-                            count = detectedVolumes.size,
-                            isWarning = true
-                        )
-                    }
-                    detectedVolumes.forEach { detected ->
-                        key("detected_${detected.devicePath}") {
-                            val hasSavedCredential = remember(detected.guid, savedCredentialGuids) {
-                                !detected.guid.isNullOrBlank() && detected.guid.lowercase() in savedCredentialGuids
-                            }
-                            val onUnlock = remember(detected.devicePath, onUnlockDetected) { { onUnlockDetected(detected.devicePath) } }
-                            val onBiometricUnlock = remember(detected.devicePath, onBiometricUnlockDetected) {
-                                if (onBiometricUnlockDetected != null) { { onBiometricUnlockDetected(detected.devicePath) } } else null
-                            }
-                            val onDisaster = remember(detected.devicePath) { { disasterDetectedTarget = detected } }
-                            DetectedVolumeCard(
-                                volume = detected,
-                                hasSavedCredential = hasSavedCredential,
-                                canBiometric = canBiometric,
-                                onMountReadOnlyChange = onMountReadOnlyChange,
-                                onUnlock = onUnlock,
-                                onBiometricUnlock = onBiometricUnlock,
-                                onDisasterClick = onDisaster,
-                                modifier = cardModifier
+                    item(key = "header_detected", contentType = "header") {
+                        Box(modifier = cardModifier) {
+                            SectionHeader(
+                                title = stringResource(R.string.detected_volumes_header),
+                                count = detectedVolumes.size,
+                                isWarning = true
                             )
                         }
+                    }
+                    items(
+                        items = detectedVolumes,
+                        key = { "detected_${it.devicePath}" },
+                        contentType = { "detected_volume" }
+                    ) { detected ->
+                        val hasSavedCredential = remember(detected.guid, savedCredentialGuids) {
+                            !detected.guid.isNullOrBlank() && detected.guid.lowercase() in savedCredentialGuids
+                        }
+                        val onUnlock = remember(detected.devicePath, onUnlockDetected) { { onUnlockDetected(detected.devicePath) } }
+                        val onBiometricUnlock = remember(detected.devicePath, onBiometricUnlockDetected) {
+                            if (onBiometricUnlockDetected != null) { { onBiometricUnlockDetected(detected.devicePath) } } else null
+                        }
+                        val onDisaster = remember(detected.devicePath) { { disasterDetectedTarget = detected } }
+                        DetectedVolumeCard(
+                            volume = detected,
+                            hasSavedCredential = hasSavedCredential,
+                            canBiometric = canBiometric,
+                            onMountReadOnlyChange = onMountReadOnlyChange,
+                            onUnlock = onUnlock,
+                            onBiometricUnlock = onBiometricUnlock,
+                            onDisasterClick = onDisaster,
+                            modifier = cardModifier
+                        )
                     }
                 }
 
                 // Section 2: Unlocked Volumes
                 if (unlockedVolumes.isNotEmpty()) {
-                    Box(modifier = cardModifier) {
-                        SectionHeader(
-                            title = stringResource(R.string.unlocked_volumes_header),
-                            count = unlockedVolumes.size,
-                            isWarning = false
-                        )
-                    }
-                    unlockedVolumes.forEach { volume ->
-                        key("unlocked_${volume.devicePath}") {
-                            val vMount = activeMounts[volume.devicePath]
-                                ?: activeMounts.values.firstOrNull { !volume.guid.isNullOrBlank() && it.volumeGuid.equals(volume.guid, ignoreCase = true) }
-                            val effectiveShareGuid = volume.guid ?: volume.devicePath
-                            val shareState = shareStates[effectiveShareGuid]
-                            val onOpen = remember(volume.devicePath, onOpenVolume) { { onOpenVolume(volume.devicePath) } }
-                            val onLock = remember(volume.devicePath, onLockVolume) { { onLockVolume(volume.devicePath) } }
-                            val onBenchmark = remember(volume.devicePath) { { benchmarkTarget = volume.devicePath } }
-                            val onLanShare = remember(volume.devicePath) { { lanShareTarget = volume } }
-                            val onRepair = remember(volume.devicePath) { { repairTarget = volume } }
-                            val onDiagnostic = remember(volume.devicePath) { { diagnosticTarget = volume } }
-                            val onDisaster = remember(volume.devicePath) { { disasterUnlockedTarget = volume } }
-
-                            UnlockedVolumeCard(
-                                volume = volume,
-                                vMount = vMount,
-                                shareState = shareState,
-                                isVirtualMountSupported = isVirtualMountSupported,
-                                onMountReadOnlyChange = onMountReadOnlyChange,
-                                onOpen = onOpen,
-                                onLock = onLock,
-                                onBenchmarkClick = onBenchmark,
-                                onLanShareClick = onLanShare,
-                                onRepairClick = onRepair,
-                                onDiagnosticClick = onDiagnostic,
-                                onDisasterClick = onDisaster,
-                                isEjecting = ejectingPaths.contains(volume.devicePath),
-                                isCompact = isCompact,
-                                modifier = cardModifier
+                    item(key = "header_unlocked", contentType = "header") {
+                        Box(modifier = cardModifier) {
+                            SectionHeader(
+                                title = stringResource(R.string.unlocked_volumes_header),
+                                count = unlockedVolumes.size,
+                                isWarning = false
                             )
                         }
+                    }
+                    items(
+                        items = unlockedVolumes,
+                        key = { "unlocked_${it.devicePath}" },
+                        contentType = { "unlocked_volume" }
+                    ) { volume ->
+                        val vMount = activeMounts[volume.devicePath]
+                            ?: activeMounts.values.firstOrNull { !volume.guid.isNullOrBlank() && it.volumeGuid.equals(volume.guid, ignoreCase = true) }
+                        val effectiveShareGuid = volume.guid ?: volume.devicePath
+                        val shareState = shareStates[effectiveShareGuid]
+                        val onOpen = remember(volume.devicePath, onOpenVolume) { { onOpenVolume(volume.devicePath) } }
+                        val onLock = remember(volume.devicePath, onLockVolume) { { onLockVolume(volume.devicePath) } }
+                        val onBenchmark = remember(volume.devicePath) { { benchmarkTarget = volume.devicePath } }
+                        val onLanShare = remember(volume.devicePath) { { lanShareTarget = volume } }
+                        val onRepair = remember(volume.devicePath) { { repairTarget = volume } }
+                        val onDiagnostic = remember(volume.devicePath) { { diagnosticTarget = volume } }
+                        val onDisaster = remember(volume.devicePath) { { disasterUnlockedTarget = volume } }
+
+                        UnlockedVolumeCard(
+                            volume = volume,
+                            vMount = vMount,
+                            shareState = shareState,
+                            isVirtualMountSupported = isVirtualMountSupported,
+                            onMountReadOnlyChange = onMountReadOnlyChange,
+                            onOpen = onOpen,
+                            onLock = onLock,
+                            onBenchmarkClick = onBenchmark,
+                            onLanShareClick = onLanShare,
+                            onRepairClick = onRepair,
+                            onDiagnosticClick = onDiagnostic,
+                            onDisasterClick = onDisaster,
+                            isEjecting = ejectingPaths.contains(volume.devicePath),
+                            isCompact = isCompact,
+                            modifier = cardModifier
+                        )
                     }
                 }
 
                 // Section 3: Unencrypted Volumes
                 if (unencryptedVolumes.isNotEmpty()) {
-                    Box(modifier = cardModifier) {
-                        SectionHeader(
-                            title = stringResource(R.string.unencrypted_volumes_header),
-                            count = unencryptedVolumes.size,
-                            isWarning = false
-                        )
-                    }
-                    unencryptedVolumes.forEach { unenc ->
-                        key("unencrypted_${unenc.id}") {
-                            val onOpen = remember(unenc.id, onOpenUnencrypted) { { onOpenUnencrypted(unenc) } }
-                            UnencryptedVolumeCard(
-                                volume = unenc,
-                                onOpen = onOpen,
-                                modifier = cardModifier
+                    item(key = "header_unencrypted", contentType = "header") {
+                        Box(modifier = cardModifier) {
+                            SectionHeader(
+                                title = stringResource(R.string.unencrypted_volumes_header),
+                                count = unencryptedVolumes.size,
+                                isWarning = false
                             )
                         }
+                    }
+                    items(
+                        items = unencryptedVolumes,
+                        key = { "unencrypted_${it.id}" },
+                        contentType = { "unencrypted_volume" }
+                    ) { unenc ->
+                        val onOpen = remember(unenc.id, onOpenUnencrypted) { { onOpenUnencrypted(unenc) } }
+                        UnencryptedVolumeCard(
+                            volume = unenc,
+                            onOpen = onOpen,
+                            modifier = cardModifier
+                        )
                     }
                 }
             }

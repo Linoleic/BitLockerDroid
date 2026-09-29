@@ -1,10 +1,10 @@
 package com.bitlockerdroid.ui.volumes
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
@@ -12,6 +12,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -33,37 +35,32 @@ fun SectionHeader(title: String, count: Int, isWarning: Boolean) {
             color = if (isWarning) WarningAmber else MaterialTheme.colorScheme.primary
         )
         Spacer(modifier = Modifier.width(8.dp))
-        Box(
+        Text(
+            text = count.toString(),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = if (isWarning) WarningAmber else MaterialTheme.colorScheme.onPrimaryContainer,
             modifier = Modifier
-                .clip(RoundedCornerShape(12.dp))
-                .background(if (isWarning) WarningAmber.copy(alpha = 0.15f) else MaterialTheme.colorScheme.primaryContainer)
+                .background(
+                    if (isWarning) WarningAmber.copy(alpha = 0.15f) else MaterialTheme.colorScheme.primaryContainer,
+                    RoundedCornerShape(12.dp)
+                )
                 .padding(horizontal = 8.dp, vertical = 2.dp)
-        ) {
-            Text(
-                text = count.toString(),
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                color = if (isWarning) WarningAmber else MaterialTheme.colorScheme.onPrimaryContainer
-            )
-        }
+        )
     }
 }
 
 @Composable
 fun MetaChip(text: String, color: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
-    Box(
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Medium,
+        color = color,
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
             .padding(horizontal = 8.dp, vertical = 4.dp)
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Medium,
-            color = color
-        )
-    }
+    )
 }
 
 @Composable
@@ -73,20 +70,23 @@ fun VolumeCapacityBar(
     trackColor: Color = MaterialTheme.colorScheme.surfaceVariant,
     modifier: Modifier = Modifier
 ) {
-    Box(
+    val clampedProgress = progress.coerceIn(0f, 1f)
+    Canvas(
         modifier = modifier
             .fillMaxWidth()
             .height(6.dp)
-            .clip(RoundedCornerShape(3.dp))
-            .background(trackColor)
     ) {
-        if (progress > 0f) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(fraction = progress.coerceIn(0f, 1f))
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(color)
+        val cornerRadius = CornerRadius(size.height / 2f, size.height / 2f)
+        drawRoundRect(
+            color = trackColor,
+            size = size,
+            cornerRadius = cornerRadius
+        )
+        if (clampedProgress > 0f) {
+            drawRoundRect(
+                color = color,
+                size = Size(size.width * clampedProgress, size.height),
+                cornerRadius = cornerRadius
             )
         }
     }

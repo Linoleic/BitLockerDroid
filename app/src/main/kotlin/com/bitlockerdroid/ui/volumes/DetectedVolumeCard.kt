@@ -15,7 +15,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -45,6 +44,7 @@ fun DetectedVolumeCard(
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
+    val copyPainter = painterResource(id = R.drawable.ic_content_copy)
     var isReadOnly by remember(volume.devicePath, volume.isReadOnly) {
         mutableStateOf(volume.isReadOnly)
     }
@@ -77,8 +77,7 @@ fun DetectedVolumeCard(
                 Box(
                     modifier = Modifier
                         .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(WarningAmber.copy(alpha = 0.2f)),
+                        .background(WarningAmber.copy(alpha = 0.2f), RoundedCornerShape(12.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -153,8 +152,7 @@ fun DetectedVolumeCard(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(WarningAmber.copy(alpha = 0.12f))
+                        .background(WarningAmber.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
                 ) {
                     Row(
                         modifier = Modifier
@@ -187,7 +185,7 @@ fun DetectedVolumeCard(
                             modifier = Modifier.size(28.dp)
                         ) {
                             Icon(
-                                painter = painterResource(id = R.drawable.ic_content_copy),
+                                painter = copyPainter,
                                 contentDescription = stringResource(R.string.copy_guid),
                                 tint = WarningAmber,
                                 modifier = Modifier.size(16.dp)
@@ -203,8 +201,7 @@ fun DetectedVolumeCard(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(WarningAmber.copy(alpha = 0.12f))
+                        .background(WarningAmber.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
                 ) {
                     Row(
                         modifier = Modifier
@@ -237,7 +234,7 @@ fun DetectedVolumeCard(
                             modifier = Modifier.size(28.dp)
                         ) {
                             Icon(
-                                painter = painterResource(id = R.drawable.ic_content_copy),
+                                painter = copyPainter,
                                 contentDescription = stringResource(R.string.copy_recovery_id),
                                 tint = WarningAmber,
                                 modifier = Modifier.size(16.dp)
@@ -253,8 +250,7 @@ fun DetectedVolumeCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(WarningAmber.copy(alpha = 0.12f))
+                    .background(WarningAmber.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
             ) {
                 Row(
                     modifier = Modifier

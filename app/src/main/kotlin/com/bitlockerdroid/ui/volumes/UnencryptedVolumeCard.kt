@@ -11,7 +11,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,8 +49,7 @@ fun UnencryptedVolumeCard(
                 Box(
                     modifier = Modifier
                         .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), RoundedCornerShape(12.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -84,19 +82,15 @@ fun UnencryptedVolumeCard(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                Box(
+                Text(
+                    text = stringResource(R.string.unencrypted_volume_status),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Medium,
+                    color = SuccessGreen,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(SuccessGreen.copy(alpha = 0.12f))
+                        .background(SuccessGreen.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
                         .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = stringResource(R.string.unencrypted_volume_status),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Medium,
-                        color = SuccessGreen
-                    )
-                }
+                )
             }
 
             Spacer(modifier = Modifier.height(14.dp))
