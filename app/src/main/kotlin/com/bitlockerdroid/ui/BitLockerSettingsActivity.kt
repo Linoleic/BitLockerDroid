@@ -72,6 +72,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
     private var useRootAccessState = mutableStateOf(true)
     private var useHardwareAesState = mutableStateOf(PreferenceHelper.useHardwareAes)
     private var useHardwareSha2State = mutableStateOf(PreferenceHelper.useHardwareSha2)
+    private var usePipelinedWriteState = mutableStateOf(PreferenceHelper.usePipelinedWrite)
     private var showHardwareAccelerationDialogState = mutableStateOf(false)
     private var virtualMountState = mutableStateOf(false)
     private var suppressCorruptNotificationState = mutableStateOf(false)
@@ -99,6 +100,10 @@ class BitLockerSettingsActivity : FragmentActivity() {
         useHardwareSha2State.value = enabled
         PreferenceHelper.useHardwareSha2 = enabled
         PreferenceHelper.useHardwareCrypto = useHardwareAesState.value && enabled
+    }
+    private val onUsePipelinedWriteChangeAction: (Boolean) -> Unit = { enabled ->
+        usePipelinedWriteState.value = enabled
+        PreferenceHelper.usePipelinedWrite = enabled
     }
     private val onOpenHardwareAccelerationAction: () -> Unit = {
         showHardwareAccelerationDialogState.value = true
@@ -231,6 +236,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
             val useRootAccess by useRootAccessState
             val useHardwareAes by useHardwareAesState
             val useHardwareSha2 by useHardwareSha2State
+            val usePipelinedWrite by usePipelinedWriteState
             val showHardwareAccelerationDialog by showHardwareAccelerationDialogState
             val rootSolution by rootSolutionState
             val showRootControlDialog by showRootControlDialogState
@@ -255,6 +261,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     useRootAccess = useRootAccess,
                     useHardwareAes = useHardwareAes,
                     useHardwareSha2 = useHardwareSha2,
+                    usePipelinedWrite = usePipelinedWrite,
                     showHardwareAccelerationDialog = showHardwareAccelerationDialog,
                     rootSolution = rootSolution,
                     showRootControlDialog = showRootControlDialog,
@@ -269,6 +276,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     onUseRootAccessChange = onUseRootAccessChangeAction,
                     onUseHardwareAesChange = onUseHardwareAesChangeAction,
                     onUseHardwareSha2Change = onUseHardwareSha2ChangeAction,
+                    onUsePipelinedWriteChange = onUsePipelinedWriteChangeAction,
                     onOpenRootControl = onOpenRootControlAction,
                     onCloseRootControl = onCloseRootControlAction,
                     onOpenHardwareAcceleration = onOpenHardwareAccelerationAction,
@@ -322,6 +330,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
         useRootAccessState.value = PreferenceHelper.useRootAccess
         useHardwareAesState.value = PreferenceHelper.isUseHardwareAes(this)
         useHardwareSha2State.value = PreferenceHelper.isUseHardwareSha2(this)
+        usePipelinedWriteState.value = PreferenceHelper.isUsePipelinedWrite(this)
         virtualMountState.value = PreferenceHelper.virtualMountEnabled
         suppressCorruptNotificationState.value = PreferenceHelper.suppressCorruptNotification
         refreshRememberedCredentials()
@@ -668,6 +677,7 @@ fun MainAppScreen(
     useRootAccess: Boolean = true,
     useHardwareAes: Boolean = true,
     useHardwareSha2: Boolean = true,
+    usePipelinedWrite: Boolean = true,
     showHardwareAccelerationDialog: Boolean = false,
     showRootControlDialog: Boolean = false,
     showSystemDiagnosticsDialog: Boolean = false,
@@ -682,6 +692,7 @@ fun MainAppScreen(
     onUseRootAccessChange: (Boolean) -> Unit = {},
     onUseHardwareAesChange: (Boolean) -> Unit = {},
     onUseHardwareSha2Change: (Boolean) -> Unit = {},
+    onUsePipelinedWriteChange: (Boolean) -> Unit = {},
     onOpenRootControl: () -> Unit = {},
     onCloseRootControl: () -> Unit = {},
     onOpenHardwareAcceleration: () -> Unit = {},
@@ -833,10 +844,12 @@ fun MainAppScreen(
                     rootSolution = rootSolution,
                     useHardwareAes = useHardwareAes,
                     useHardwareSha2 = useHardwareSha2,
+                    usePipelinedWrite = usePipelinedWrite,
                     onOpenCredentialsManager = { showCredentialsDialog = true },
                     onOpenRootControl = onOpenRootControl,
                     onOpenHardwareAcceleration = onOpenHardwareAcceleration,
                     onOpenSystemDiagnostics = onOpenSystemDiagnostics,
+                    onUsePipelinedWriteChange = onUsePipelinedWriteChange,
                     onThemeModeChange = onThemeModeChange,
                     onLanguageChange = onLanguageChange
                 )

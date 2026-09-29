@@ -36,10 +36,12 @@ fun SettingsTabContent(
     rootSolution: RootAccess.RootSolutionInfo,
     useHardwareAes: Boolean = PreferenceHelper.useHardwareAes,
     useHardwareSha2: Boolean = PreferenceHelper.useHardwareSha2,
+    usePipelinedWrite: Boolean = PreferenceHelper.usePipelinedWrite,
     onOpenCredentialsManager: () -> Unit,
     onOpenRootControl: () -> Unit = {},
     onOpenHardwareAcceleration: () -> Unit = {},
     onOpenSystemDiagnostics: () -> Unit = {},
+    onUsePipelinedWriteChange: (Boolean) -> Unit = {},
     onThemeModeChange: (ThemeMode) -> Unit,
     onLanguageChange: (String) -> Unit
 ) {
@@ -306,7 +308,20 @@ fun SettingsTabContent(
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
                 )
 
-                // 3. 系统环境与诊断
+                // 3. USB 写入双缓冲流水线
+                SettingsSwitchItem(
+                    title = stringResource(R.string.settings_pipelined_write_title),
+                    description = stringResource(R.string.settings_pipelined_write_desc),
+                    checked = usePipelinedWrite,
+                    onCheckedChange = onUsePipelinedWriteChange
+                )
+
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                )
+
+                // 4. 系统环境与诊断
                 val selinuxStatus = remember { com.bitlockerdroid.util.RootAccess.getSelinuxStatus() }
 
                 SettingsClickableItem(

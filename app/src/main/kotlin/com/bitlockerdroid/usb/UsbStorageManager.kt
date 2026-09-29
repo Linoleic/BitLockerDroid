@@ -50,6 +50,9 @@ object UsbStorageManager {
     private const val CMD_SYNC = 3
     private const val CMD_SIZE = 4
 
+    @Volatile
+    var usePipelinedWrite: Boolean = true
+
     data class UsbPartitionInfo(
         val deviceId: Int,
         val partitionIndex: Int,
@@ -1093,53 +1096,74 @@ object UsbStorageManager {
                             val len = readIntLE(headerBuf, 8)
                             if (len <= 0) break
 
-                            // 1. Wait for active slot's previous write to complete before reusing its buffer
-                            val curSlot = activeSlot
-                            curSlot.future?.let { f ->
-                                try {
-                                    f.get()
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "Worker deferred write error on slot ${curSlot.id}", e)
-                                    deferredError = -5
-                                } finally {
-                                    curSlot.future = null
-                                }
-                            }
-
-                            // 2. Read incoming payload from socket into active slot's buffer
-                            curSlot.ensureCapacity(len)
-                            readFully(inStream, curSlot.buffer.array(), curSlot.buffer.arrayOffset(), len)
-                            curSlot.offset = offset
-                            curSlot.length = len
-                            curSlot.buffer.position(0)
-                            curSlot.buffer.limit(len)
-
-                            // 3. Propagate deferred error if earlier background write failed
-                            if (deferredError != 0) {
-                                val err = deferredError
-                                deferredError = 0
-                                writeIntLE(statusBuf, 0, err) // -5 (-EIO)
-                                outStream.write(statusBuf, 0, 4)
-                                outStream.flush()
-                            } else {
-                                // 4. Dispatch active slot to background async writer thread
-                                curSlot.future = writeExecutor.submit {
+                            if (usePipelinedWrite) {
+                                // 1. Wait for active slot's previous write to complete before reusing its buffer
+                                val curSlot = activeSlot
+                                curSlot.future?.let { f ->
                                     try {
-                                        partitionDriver.write(curSlot.offset, curSlot.buffer)
+                                        f.get()
                                     } catch (e: Exception) {
-                                        Log.e(TAG, "Async partition write error at offset ${curSlot.offset} len ${curSlot.length}", e)
+                                        Log.e(TAG, "Worker deferred write error on slot ${curSlot.id}", e)
                                         deferredError = -5
-                                        throw e
+                                    } finally {
+                                        curSlot.future = null
                                     }
                                 }
 
-                                // 5. Immediately send ACK to C driver so it can start preparing/encrypting the NEXT chunk!
-                                writeIntLE(statusBuf, 0, len)
-                                outStream.write(statusBuf, 0, 4)
-                                outStream.flush()
+                                // 2. Read incoming payload from socket into active slot's buffer
+                                curSlot.ensureCapacity(len)
+                                readFully(inStream, curSlot.buffer.array(), curSlot.buffer.arrayOffset(), len)
+                                curSlot.offset = offset
+                                curSlot.length = len
+                                curSlot.buffer.position(0)
+                                curSlot.buffer.limit(len)
 
-                                // 6. Ping-pong flip to the other slot
-                                activeSlot = if (activeSlot === slotA) slotB else slotA
+                                // 3. Propagate deferred error if earlier background write failed
+                                if (deferredError != 0) {
+                                    val err = deferredError
+                                    deferredError = 0
+                                    writeIntLE(statusBuf, 0, err) // -5 (-EIO)
+                                    outStream.write(statusBuf, 0, 4)
+                                    outStream.flush()
+                                } else {
+                                    // 4. Dispatch active slot to background async writer thread
+                                    curSlot.future = writeExecutor.submit {
+                                        try {
+                                            partitionDriver.write(curSlot.offset, curSlot.buffer)
+                                        } catch (e: Exception) {
+                                            Log.e(TAG, "Async partition write error at offset ${curSlot.offset} len ${curSlot.length}", e)
+                                            deferredError = -5
+                                            throw e
+                                        }
+                                    }
+
+                                    // 5. Immediately send ACK to C driver so it can start preparing/encrypting the NEXT chunk!
+                                    writeIntLE(statusBuf, 0, len)
+                                    outStream.write(statusBuf, 0, 4)
+                                    outStream.flush()
+
+                                    // 6. Ping-pong flip to the other slot
+                                    activeSlot = if (activeSlot === slotA) slotB else slotA
+                                }
+                            } else {
+                                // Synchronous single-buffer fallback
+                                drainWrites()
+                                val curSlot = activeSlot
+                                curSlot.ensureCapacity(len)
+                                readFully(inStream, curSlot.buffer.array(), curSlot.buffer.arrayOffset(), len)
+                                curSlot.buffer.position(0)
+                                curSlot.buffer.limit(len)
+                                try {
+                                    partitionDriver.write(offset, curSlot.buffer)
+                                    writeIntLE(statusBuf, 0, len)
+                                    outStream.write(statusBuf, 0, 4)
+                                    outStream.flush()
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Sync CMD_WRITE error at offset $offset len $len", e)
+                                    writeIntLE(statusBuf, 0, -5) // -EIO
+                                    outStream.write(statusBuf, 0, 4)
+                                    outStream.flush()
+                                }
                             }
                         }
                         CMD_SYNC -> {
