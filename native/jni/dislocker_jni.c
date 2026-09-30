@@ -40,6 +40,9 @@
 
 static void jni_throw(JNIEnv *env, const char *class_name, const char *msg)
 {
+	if ((*env)->ExceptionCheck(env)) {
+		return;
+	}
 	jclass cls = (*env)->FindClass(env, class_name);
 	if (cls) {
 		(*env)->ThrowNew(env, cls, msg);

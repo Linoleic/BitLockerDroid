@@ -381,6 +381,11 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             out.putInt("count", names.size)
             return out
         }
+        if (method == "get_pipelined_write") {
+            val out = Bundle()
+            out.putBoolean("use_pipelined_write", com.bitlockerdroid.usb.UsbStorageManager.usePipelinedWrite)
+            return out
+        }
         if (method == "set_pipelined_write") {
             val enabled = if (extras != null && extras.containsKey("enabled")) {
                 extras.getBoolean("enabled")
