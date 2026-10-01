@@ -27,7 +27,6 @@
     <string name="open">Open</string>
     <string name="open_failed">Cannot open this volume</string>
     <string name="locked">Volume locked</string>
-    <string name="view_log">View log</string>
     <string name="scan">Scan</string>
     <string name="use_password">Use password</string>
     <string name="unlocked_volumes_header">Mounted Volumes</string>

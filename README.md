@@ -164,7 +164,7 @@ User-space SCSI/BOT Stack (UsbMassStorageDriver)         Direct I/O High-Perform
 
 | Dimension | Supported Range / Specification | Notes |
 |---|---|---|
-| **Operating System** | Android 13.0+ (API 33 ~ 37) | Requires Android 13.0 or newer (`minSdk 33`); verified on HyperOS 4+ (Android 17 / API 37) and HyperOS 3 (Android 16 / API 36) |
+| **Operating System** | Android 13.0+ (API 33 ~ 37) | Requires Android 13.0 or newer (`minSdk 33`); verified on HyperOS 4 (Android 17 / API 37) and HyperOS 3 (Android 16 / API 36) |
 | **CPU Architectures** | `arm64-v8a`, `armeabi-v7a`, `x86_64` | Full 64-bit and 32-bit native ABI binaries (ARMv8 CE hardware crypto is arm64-v8a only) |
 | **Root Schemes** | **Non-Root** / **KernelSU** / **Magisk** / **APatch** | Zero setup for non-root; higher performance with Root |
 | **Supported Filesystems** | **NTFS**, **exFAT**, **FAT32** | Full browse, create, modify, rename, and delete capabilities |

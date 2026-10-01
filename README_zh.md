@@ -164,7 +164,7 @@ Android 原生“文件”应用 (DocumentsUI)                系统全局绝对
 
 | 维度 | 规格要求 / 支持范围 | 说明 |
 |---|---|---|
-| **操作系统** | Android 13.0+ (API 33 ~ 37) | 要求 Android 13.0 及以上（`minSdk 33`）；已在 HyperOS 4+（Android 17 / API 37）与 HyperOS 3（Android 16 / API 36）实机验证 |
+| **操作系统** | Android 13.0+ (API 33 ~ 37) | 要求 Android 13.0 及以上（`minSdk 33`）；已在 HyperOS 4（Android 17 / API 37）与 HyperOS 3（Android 16 / API 36）实机验证 |
 | **处理器架构** | `arm64-v8a`, `armeabi-v7a`, `x86_64` | 提供 64 位与 32 位原生 ABI 支持（ARMv8 CE 硬件加速仅在 arm64-v8a 生效） |
 | **Root 方案** | **免 Root** / **KernelSU** / **Magisk** / **APatch** | 免 Root 零门槛；Root 模式性能更优 |
 | **受支持文件系统** | **NTFS**, **exFAT**, **FAT32** | 完整增删改查、重命名与大文件读写 |

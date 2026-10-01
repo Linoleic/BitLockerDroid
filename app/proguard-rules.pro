@@ -1,6 +1,4 @@
-# libxposed (modern API 102) module rules
--dontwarn io.github.libxposed.annotation.**
--adaptresourcefilecontents META-INF/xposed/java_init.list
--keep,allowoptimization,allowobfuscation public class * extends io.github.libxposed.api.XposedModule {
-    public <init>();
-}
+# R8 / ProGuard rules for :app
+#
+# Note: `isMinifyEnabled = false` in app/build.gradle.kts, so these rules are
+# currently inert. Add app-specific keep rules here if minification is enabled.

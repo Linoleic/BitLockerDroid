@@ -29,7 +29,6 @@
     <string name="open">打开</string>
     <string name="open_failed">无法在文件管理器中定位该卷</string>
     <string name="locked">卷已锁定并释放句柄</string>
-    <string name="view_log">查看日志</string>
     <string name="scan">扫描设备</string>
     <string name="scanning">正在扫描设备…</string>
     <string name="scan_completed">扫描完成，发现 %1$d 个 BitLocker 卷</string>

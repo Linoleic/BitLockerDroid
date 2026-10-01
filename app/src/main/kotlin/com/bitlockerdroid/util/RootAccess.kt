@@ -4,8 +4,8 @@ import android.util.Log
 import com.bitlockerdroid.R
 
 /**
- * Runs shell commands via KernelSU / Magisk `su` so the module app can read
- * block devices that SELinux normally blocks for unprivileged apps.
+ * Runs shell commands via KernelSU / Magisk `su` so the app can read block
+ * devices that SELinux normally blocks for unprivileged apps.
  *
  * The user must grant root to com.bitlockerdroid in the KernelSU manager.
  */

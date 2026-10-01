@@ -9,15 +9,12 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Writes a rolling debug log to a file on the device so the module can be
+ * Writes a rolling debug log to a file on the device so the app can be
  * diagnosed without logcat.
  *
- * Two writers coexist:
- *  - In the module app process, the log goes to the app's files dir
- *    (readable via the file manager / `adb shell run-as`).
- *  - In system_server (where the LSPosed hooks run) there is no app context,
- *    so we fall back to /data/local/tmp/bitlockerdroid.log, which the system
- *    process can write.
+ * Every line is appended to `<filesDir>/logs/bitlocker.log` (app-private,
+ * readable via the in-app viewer, `adb shell run-as` or root) and mirrored to
+ * logcat under the [TAG] tag.
  *
  * The file is capped (old lines are truncated from the top) to avoid unbounded
  * growth.
@@ -48,8 +45,8 @@ object LogFile {
     }
 
     /**
-     * Appends a line to the log. `scope` identifies the process writer,
-     * e.g. "hook" (system_server) or "app".
+     * Appends a line to the log. `scope` identifies the writer, e.g. "app",
+     * "provider" or "benchmark".
      */
     fun write(scope: String, message: String) {
         val line = buildLine(scope, message)
@@ -64,9 +61,9 @@ object LogFile {
             }
         }
 
-        // Also mirror to logcat. Use INFO level: debug (Log.d) is suppressed
-        // in the system_server process on user builds, which made the hook
-        // activity invisible in logcat.
+        // Also mirror to logcat. INFO (rather than DEBUG) keeps the entries
+        // visible on user builds and lets `adb logcat -s BitLockerLog` capture
+        // them without root.
         Log.i(TAG, "[$scope] $message")
     }
 

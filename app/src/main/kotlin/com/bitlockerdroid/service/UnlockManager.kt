@@ -162,9 +162,9 @@ object UnlockManager {
     /**
      * Volumes that carry a BitLocker signature but are not unlocked yet.
      * Persists across reformats because the entry is keyed by the block node
-     * path, and re-registered on each successful signature scan (the prompt may
-     * be suppressed if the system hook's in-memory "confirmed" set survived the
-     * reformat). Visible in the management UI so the user can unlock manually.
+     * path and re-registered on each successful signature scan, so a stale
+     * entry may keep a reformatted drive listed. Visible in the management UI
+     * so the user can unlock manually.
      */
     val detectedVolumes: List<DetectedVolume>
         get() = synchronized(lock) {
