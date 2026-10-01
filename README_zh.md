@@ -210,6 +210,13 @@ cd BitLockerDroid
   **A**: 同一存储设备在重置或多处备份时可能有多组 48 位恢复密钥。解锁弹窗会显示当前卷的恢复标识符，与微软账户网页端（[account.microsoft.com/devices/recoverykey](https://account.microsoft.com/devices/recoverykey)）查到的标识符比对一致后再输入，避免无效尝试。
 - **Q: 为什么部分第三方应用在挂载后找不到 `/storage/XXXX-XXXX`？**  
   **A**: 全局挂载将 FUSE 挂载点注入至 PID 1 挂载命名空间，支持标准 POSIX 路径的应用（如 MT 管理器、Termux、VLC 等）可无障碍访问。部分仅依赖 Android MediaStore 媒体库的简易图库不会主动扫描外置非内建路径。
+- **Q: 为什么免 Root 模式下的传输速率明显低于 Root 模式？**  
+  **A**: 速率差距是由 Android 沙箱安全模型与 I/O 链路层级的本质差异决定的：  
+  1. **驱动层级与分片开销**：Root 模式直接访问 Linux 内核块设备节点（`/dev/block/*`），走内核原生 `uas` / `usb-storage` 驱动与硬件 DMA；而免 Root 模式受限于 Android 权限沙箱，只能通过用户态 `usbfs` (`/dev/bus/usb/*`) 交互。受内核 `MAX_USBFS_BUFFER_SIZE` 限制，单次大块传输必须被切片为多个 16 KB 的 `UsbRequest`，引发密集的 `ioctl` 系统调用与上下文切换。  
+  2. **协议机制差异**：内核驱动可开启 UAS 并发命令排队（NCQ）；免 Root 模式在用户态模拟传统的半双工 BOT 协议，每个扇区读写都必须经历 CBW（命令）、数据、CSW（状态确认）三阶段停等握手，无法做到总线零间隙传输。  
+  3. **IPC 与 JNI 跨层开销**：免 Root 模式依赖 SAF（Storage Access Framework）提供文件访问，数据流经由 `ProxyFileDescriptor` 产生同步 Binder IPC 进程间通信；且底层扇区 I/O 需在 Native C 驱动与 Java 用户态之间频繁反向 JNI 回调。Root 模式则直接挂载至全局虚拟文件系统，应用直接通过标准 Linux 路径读写，彻底绕过 Binder 中继。  
+  4. **闪存写放大与缺乏页缓存**：Root 模式享有 Linux 内核 Page Cache 与 I/O 调度器（合并小写入）；免 Root 模式下文件系统元数据更新（如 FAT32 的 FAT 表）会频繁即时落盘，在 U 盘主控层引发严重的物理擦写循环与写放大，导致小块与持续写入速率受限。  
+  BitLockerDroid 已通过自研 4 级异步 URB 环形流水线、双缓冲乒乓写队列与 ARMv8 CE 硬件加速，将免 Root 读取吞吐推至 35 ~ 50 MB/s（普通 BOT 仅约 15 MB/s）；若追求极致速率（100+ MB/s 读取，30+ MB/s 写入），建议切换至 Root 模式。
 
 ---
 
