@@ -16,10 +16,10 @@
 |---|---|---|
 | **操作系统** | Linux (Ubuntu 20.04+ / WSL2) 或 macOS | 提供完整的 Android 与宿主机 C 原生构建支持 |
 | **JDK** | OpenJDK 17 | Android Gradle 插件 (AGP 8.3+) 强制要求 |
-| **Android SDK** | Platforms: `android-34`<br>Build-Tools: `34.0.0` | 对应工程 `compileSdk = 34` 与 `targetSdk = 34` |
+| **Android SDK** | Platforms: `android-34`<br>Build-Tools: `35.0.0` | 对应工程 `compileSdk = 34` / `targetSdk = 34` 与 `buildToolsVersion = "35.0.0"` |
 | **Android NDK** | `26.3.11579264` (NDK r26d) | 与 `app/build.gradle.kts` 内配置一致 |
 | **CMake** | 3.22.1+ | 可通过 Android SDK Manager 或系统包管理器获取 |
-| **Gradle** | 8.4 | 由项目根目录的 `./gradlew` 自动拉取和分发 |
+| **Gradle** | 8.9 | 由项目根目录的 `./gradlew` 自动拉取和分发（见 `gradle/wrapper/gradle-wrapper.properties`） |
 
 ---
 
@@ -47,7 +47,7 @@ export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
 ```bash
 sdkmanager --sdk_root="$ANDROID_HOME" \
     "platforms;android-34" \
-    "build-tools;34.0.0" \
+    "build-tools;35.0.0" \
     "platform-tools" \
     "cmake;3.22.1" \
     "ndk;26.3.11579264"
@@ -124,6 +124,7 @@ app/build/outputs/apk/release/app-release.apk
 包含以下架构的原生动态库（`libdislocker.so` 等）：
 - `arm64-v8a`
 - `armeabi-v7a`
+- `x86_64`
 
 ### 3.4 清理构建缓存
 

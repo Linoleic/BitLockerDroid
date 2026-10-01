@@ -1,7 +1,7 @@
 # BitLockerDroid ADB 调试与自动化测试接口指南
 
 > **Provider Authority**: `com.bitlockerdroid.provider`  
-> **适用版本**: v1.0+ (`fix/security-and-architecture-hardening`)  
+> **适用版本**: v1.0+ (`main`)  
 > **适用场景**: 自动化 CI/CD 测试、无头解锁、文件系统读写验证、硬件加速基准测速与调试定位。
 
 ---

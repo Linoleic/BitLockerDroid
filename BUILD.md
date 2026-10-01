@@ -16,10 +16,10 @@ The following development tools and SDK packages are required:
 |---|---|---|
 | **Operating System** | Linux (Ubuntu 20.04+ / WSL2) or macOS | Full support for Android and host-side native C builds |
 | **JDK** | OpenJDK 17 | Required by Android Gradle Plugin (AGP 8.3+) |
-| **Android SDK** | Platforms: `android-34`<br>Build-Tools: `34.0.0` | Matches `compileSdk = 34` and `targetSdk = 34` |
+| **Android SDK** | Platforms: `android-34`<br>Build-Tools: `35.0.0` | Matches `compileSdk = 34` / `targetSdk = 34`, and `buildToolsVersion = "35.0.0"` |
 | **Android NDK** | `26.3.11579264` (NDK r26d) | Configured in `app/build.gradle.kts` |
 | **CMake** | 3.22.1+ | Available via Android SDK Manager or system package manager |
-| **Gradle** | 8.4 | Automatically provisioned via `./gradlew` |
+| **Gradle** | 8.9 | Automatically provisioned via `./gradlew` (see `gradle/wrapper/gradle-wrapper.properties`) |
 
 ---
 
@@ -47,7 +47,7 @@ Install SDK packages and NDK using `sdkmanager`:
 ```bash
 sdkmanager --sdk_root="$ANDROID_HOME" \
     "platforms;android-34" \
-    "build-tools;34.0.0" \
+    "build-tools;35.0.0" \
     "platform-tools" \
     "cmake;3.22.1" \
     "ndk;26.3.11579264"
@@ -124,6 +124,7 @@ Output path: `app/build/outputs/apk/debug/app-debug.apk`.
 Native libraries (`libdislocker.so`, etc.) are compiled for:
 - `arm64-v8a`
 - `armeabi-v7a`
+- `x86_64`
 
 ### 3.4 Clean Build Artifacts
 

@@ -20,6 +20,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          # versionCode is derived from `git rev-list --count HEAD`, so a shallow
+          # clone (the default fetch-depth=1) would produce versionCode=1 and
+          # collide with locally built APKs (INSTALL_FAILED_VERSION_DOWNGRADE).
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
