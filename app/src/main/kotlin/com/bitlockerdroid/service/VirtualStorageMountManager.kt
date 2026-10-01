@@ -82,6 +82,23 @@ object VirtualStorageMountManager {
     }
 
     /**
+     * Unbinds USB Mass Storage devices from the kernel usb-storage driver so that
+     * user-space UsbManager / usbfs can claim the interfaces without driver busy errors.
+     */
+    fun unbindUsbStorage() {
+        if (!RootAccess.hasSu()) return
+        try {
+            val script = "for dev in /sys/bus/usb/devices/*; do " +
+                    "if [ -f \"\$dev/bInterfaceClass\" ] && [ \"\$(cat \"\$dev/bInterfaceClass\" 2>/dev/null)\" = \"08\" ]; then " +
+                    "if [ -d \"\$dev/driver\" ] && readlink \"\$dev/driver\" | grep -q 'usb-storage'; then " +
+                    "name=\$(basename \"\$dev\"); " +
+                    "echo -n \"\$name\" > /sys/bus/usb/drivers/usb-storage/unbind 2>/dev/null; " +
+                    "fi; fi; done"
+            RootAccess.exec(script, 3000)
+        } catch (_: Throwable) {}
+    }
+
+    /**
      * Resolves a block device path for a given device path and volume GUID.
      * If [devicePath] is already a /dev/block/ node, returns it.
      * If [devicePath] is a usb:// URI, searches kernel block nodes matching [guid].

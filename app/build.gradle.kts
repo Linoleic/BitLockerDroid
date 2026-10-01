@@ -7,6 +7,21 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+fun getGitCommitCount(): Int {
+    return try {
+        val process = ProcessBuilder("git", "rev-list", "--count", "HEAD")
+            .directory(rootDir)
+            .redirectOutput(ProcessBuilder.Redirect.PIPE)
+            .redirectError(ProcessBuilder.Redirect.PIPE)
+            .start()
+        val count = process.inputStream.bufferedReader().readText().trim().toInt()
+        process.waitFor()
+        count.coerceAtLeast(1)
+    } catch (_: Exception) {
+        70
+    }
+}
+
 android {
     namespace = "com.bitlockerdroid"
     compileSdk = 34
@@ -16,7 +31,7 @@ android {
         applicationId = "com.bitlockerdroid"
         minSdk = 33
         targetSdk = 34
-        versionCode = 7
+        versionCode = getGitCommitCount()
         versionName = "1.0.4"
 
         ndk {

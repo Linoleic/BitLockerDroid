@@ -478,6 +478,9 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             try {
                 com.bitlockerdroid.service.VirtualStorageMountManager.unmountAll()
             } catch (_: Throwable) {}
+            if (!target) {
+                com.bitlockerdroid.service.VirtualStorageMountManager.unbindUsbStorage()
+            }
             PreferenceHelper.useRootAccess = target
             com.bitlockerdroid.util.RootAccess.invalidateCache()
             com.bitlockerdroid.util.AppRestarter.restartApp(appContext)

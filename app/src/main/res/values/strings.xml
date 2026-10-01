@@ -107,7 +107,7 @@
     <string name="settings_root_not_granted">Root Not Granted</string>
     <string name="settings_root_required_hint">Requires Root privilege to be enabled and granted</string>
     <string name="settings_pipelined_write_title">USB Pipelined Write Buffer</string>
-    <string name="settings_pipelined_write_desc">Enables two-stage Direct memory Ping-Pong write buffering to eliminate stop-and-wait latency between IPC and USB hardware in non-root mode, significantly boosting write throughput</string>
+    <string name="settings_pipelined_write_desc">Enables two-stage ping-pong memory buffering to overlap IPC and USB write transfers in non-root mode, helping reduce stop-and-wait latency (actual speed depends on storage media performance)</string>
     <string name="settings_selinux_status">SELinux Status</string>
 
     <!-- General UI & Headers -->

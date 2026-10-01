@@ -107,7 +107,7 @@
     <string name="settings_root_not_granted">未获取 Root</string>
     <string name="settings_root_required_hint">需要开启并授权 Root 权限方可使用</string>
     <string name="settings_pipelined_write_title">USB 写入双缓冲流水线</string>
-    <string name="settings_pipelined_write_desc">启用两级 Direct 内存乒乓写缓冲，消除非 Root 模式下 IPC 与 USB 硬件写入的停等延迟，大幅提升连续写入吞吐量</string>
+    <string name="settings_pipelined_write_desc">启用两级内存乒乓缓冲与异步写入，在后台重叠 IPC 与底层 USB 数据传输，有助于缓解免 Root 模式下的写入停顿（实际速度受介质写入性能限制）</string>
     <string name="settings_selinux_status">SELinux 运行状态</string>
 
     <!-- 通用 UI 与标头 -->

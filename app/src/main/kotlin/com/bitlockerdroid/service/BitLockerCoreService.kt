@@ -59,7 +59,12 @@ class BitLockerCoreService : Service() {
                     Thread.sleep(delayMs)
                 } catch (_: Exception) {}
                 context?.let {
-                    BitLockerDetector.scanAndDetect(it)
+                    try {
+                        BitLockerDetector.scanAndDetect(it)
+                    } catch (e: Throwable) {
+                        LogFile.write("app", "Unhandled exception in BitLocker-UsbScan: ${e.message}")
+                        android.util.Log.e("BitLockerCoreService", "Unhandled exception in BitLocker-UsbScan", e)
+                    }
                 }
             }, "BitLocker-UsbScan").start()
         }

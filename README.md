@@ -53,7 +53,7 @@ The application provides two distinct driver architectures, seamlessly switchabl
 | **Privilege Requirement** | USB device permission only; no Root required | Root permission (su) |
 | **Device Support** | USB OTG external storage devices | USB OTG devices, multi-partition disks, kernel block nodes |
 | **I/O Channel** | Android USB Host API + user-space SCSI driver | Linux kernel block device nodes (`/dev/block/vold/*`) |
-| **Read Throughput** | Sequential read ~15 to 19 MB/s | Sequential read up to 163+ MB/s |
+| **Read Throughput** | Sequential read ~35 to 50 MB/s | Sequential read up to 140+ MB/s |
 | **Mount Form** | SAF DocumentsProvider (system Files app) | SAF DocumentsProvider + Global FUSE (`/storage/XXXX-XXXX`) |
 | **Dirty Repair & Diagnostics** | Read-only structural diagnostics & clean unmount | 1-Click Dirty Bit reset & deep structural integrity diagnostics |
 | **System False Alerts** | Notification listener suppresses system format prompts | Privileged suppression of false format notifications |
@@ -62,24 +62,34 @@ The application provides two distinct driver architectures, seamlessly switchabl
 
 ## Read/Write Benchmark & Performance
 
-The following benchmarks were collected from 6 independent BitLocker partitions configured with different filesystems and encryption ciphers on the same physical USB 3.0 flash drive:
+The following benchmarks were evaluated across 6 independent BitLocker partitions on a physical USB 3.0 flash drive under Android 16 (Snapdragon 8 Gen 2), with 10 independent samples averaged per test condition (N=10). For comprehensive multi-dimensional data tables, see **[perf_test.md](perf_test.md)**.
 
-| Partition | Filesystem | Cipher Mode | Non-Root Seq Read | Root Seq Read | Speedup | Non-Root 4K Latency (IOPS) | Root 4K Latency (IOPS) |
+### Sequential Throughput & Random Latency (10-Sample Average)
+
+| Partition & Cipher | Filesystem | Non-Root HW Pipeline | Non-Root HW No Pipeline | Root HW Mode | Root Speedup | Non-Root 4K Latency | Root 4K Latency |
 |---|---|---|---|---|---|---|---|
-| **NT+X** | **NTFS** | **AES-XTS-128** | 16.14 MB/s | **163.94 MB/s** | **10.16x** | 1.10 ms (909 IOPS) | **0.69 ms** (1451 IOPS) |
-| **EX+X** | **exFAT** | **AES-XTS-128** | 18.90 MB/s | **101.13 MB/s** | **5.35x** | 1.25 ms (798 IOPS) | **0.74 ms** (1357 IOPS) |
-| **EX+C** | **exFAT** | **AES-CBC-128** | 16.00 MB/s | **89.53 MB/s** | **5.60x** | 1.10 ms (908 IOPS) | **0.81 ms** (1241 IOPS) |
-| **32+C** | **FAT32** | **AES-CBC-128** | 14.87 MB/s | **66.26 MB/s** | **4.46x** | 1.11 ms (904 IOPS) | **0.63 ms** (1581 IOPS) |
-| **32+X** | **FAT32** | **AES-XTS-128** | 16.67 MB/s | **43.90 MB/s** | **2.63x** | 1.39 ms (720 IOPS) | **1.83 ms** (545 IOPS) |
-| **NT+C** | **NTFS** | **AES-CBC-128** | 16.55 MB/s | **41.03 MB/s** | **2.48x** | 1.21 ms (826 IOPS) | **0.99 ms** (1006 IOPS) |
+| **NTFS (AES-XTS)** | NTFS | 50.05 MB/s (Read) / 18.73 MB/s (Write) | 41.76 MB/s (Read) / 13.12 MB/s (Write) | **122.19 MB/s** (Read) / **21.30 MB/s** (Write) | **2.44x** (Read) | 1.25 ms (860 IOPS) | **1.10 ms** (954 IOPS) |
+| **NTFS (AES-CBC)** | NTFS | 34.87 MB/s (Read) / 14.72 MB/s (Write) | 41.24 MB/s (Read) / 11.86 MB/s (Write) | **95.04 MB/s** (Read) / **26.29 MB/s** (Write) | **2.73x** (Read) | 1.46 ms (720 IOPS) | **0.99 ms** (1078 IOPS) |
+| **exFAT (AES-XTS)** | exFAT | 48.24 MB/s (Read) / 20.80 MB/s (Write) | 41.29 MB/s (Read) / 16.34 MB/s (Write) | **97.40 MB/s** (Read) / **20.34 MB/s** (Write) | **2.02x** (Read) | 1.11 ms (937 IOPS) | **0.93 ms** (1124 IOPS) |
+| **exFAT (AES-CBC)** | exFAT | 46.59 MB/s (Read) / 20.14 MB/s (Write) | 38.95 MB/s (Read) / 11.74 MB/s (Write) | **95.98 MB/s** (Read) / **31.63 MB/s** (Write) | **2.06x** (Read) | 1.24 ms (837 IOPS) | **0.98 ms** (1097 IOPS) |
+| **FAT32 (AES-XTS)** | FAT32 | 36.87 MB/s (Read) / 1.76 MB/s (Write) | 39.80 MB/s (Read) / 1.37 MB/s (Write) | **93.83 MB/s** (Read) / **19.60 MB/s** (Write) | **2.55x** (Read) | 1.49 ms (703 IOPS) | **0.92 ms** (1140 IOPS) |
+| **FAT32 (AES-CBC)** | FAT32 | 42.90 MB/s (Read) / 1.70 MB/s (Write) | 40.78 MB/s (Read) / 1.39 MB/s (Write) | **140.66 MB/s** (Read) / **18.71 MB/s** (Write) | **3.28x** (Read) | 1.46 ms (715 IOPS) | **0.92 ms** (1152 IOPS) |
 
-- **Throughput Analysis**: Non-Root mode is constrained by repeated user-space to kernel-space buffer copies and USB Host queue scheduling in the Android Framework. Root mode bypasses intermediate layers and accesses block devices directly via asynchronous kernel I/O, delivering 2.5x to 10x throughput improvements.
-- **Stability Verified**: All combinations passed rigorous stress testing including recursive directory walks, file creation/modification, SHA-256 verification readback, and safe deletion.
+### Key Benchmark Takeaways
+
+- **ARMv8 CE Hardware Acceleration**: Reduces 1,048,576 rounds of SHA-256 PBKDF2 key stretching from 494.52 ms down to 104.03 ms (**4.75x speedup**), achieving instantaneous password verification.
+- **Double-Buffering Pipeline Gain**: In Non-Root mode, the asynchronous write pipeline boosts continuous write throughput by up to **+39.5%** (12.97 MB/s vs 9.30 MB/s) and accelerates large 50MB file transfers by **+24.3%** (8.14 MB/s vs 6.55 MB/s).
+- **Root Mode Kernel Direct I/O**: Direct kernel block device access achieves an average sequential read throughput of **107.52 MB/s** (**2.49x** over Non-Root) and 50MB file write throughput of **34.52 MB/s** (**4.24x** over Non-Root).
+- **Data Integrity**: 100% of read and write transfer cycles across all formats passed end-to-end MD5 and SHA-256 hash consistency checks.
+- For complete raw and categorized benchmark tables, refer to **[perf_test.md](perf_test.md)**.
 
 ---
 
 ## Key Features
 
+- **ARMv8 CE Hardware Cryptography Acceleration**: Harnesses ARMv8-A Cryptography Extensions (`PMULL`, `AES`, `SHA2`) for native hardware execution of AES-XTS, AES-CBC, and PBKDF2 SHA-256 key stretching (accelerating volume unlock by 4.75x, down to ~104 ms). Includes automatic runtime CPU capability detection (`getauxval(AT_HWCAP)`), vector self-tests, and graceful software fallback.
+- **Double-Buffered Asynchronous Write Pipeline**: Decouples SAF document streaming from underlying USB Mass Storage protocol transfer via background ring buffering, improving continuous write throughput by up to 39.5% and reducing 4K random write latency.
+- **16 KB Page Alignment (Android 15+)**: Fully conforms to the Google Android 15+ 16 KB ELF page size standard (`-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON` and `useLegacyPackaging = false`), ensuring maximum virtual memory mapping efficiency and future-proof compatibility.
 - **Transparent Filesystem Read/Write**: Custom optimized `libntfs-3g` (with sector write barriers protecting `-FVE-FS-` metadata), exFAT driver (supporting files >4GB), and `FatFs` (full Long File Name / LFN support). Delivers complete CRUD operations and native system search integration.
 - **Accurate Multi-Partition Scanning**: Analyzes hardware topology to distinguish parent disk devices from partition nodes, preventing duplicate drive listings and supporting concurrent auto-unlocking.
 - **Dirty Volume Repair & Structural Diagnostics**:
@@ -159,6 +169,8 @@ User-space SCSI/BOT Stack (UsbMassStorageDriver)         Direct I/O High-Perform
 | **Root Schemes** | **Non-Root** / **KernelSU** / **Magisk** / **APatch** | Zero setup for non-root; higher performance with Root |
 | **Supported Filesystems** | **NTFS**, **exFAT**, **FAT32** | Full browse, create, modify, rename, and delete capabilities |
 | **Encryption Ciphers** | AES-XTS (128/256-bit), AES-CBC (128/256-bit) | Covers Windows 10/11 defaults and Windows 7 legacy volumes |
+| **Hardware Crypto** | ARMv8-A Cryptography Extensions (PMULL, AES, SHA2) | Dynamic runtime detection; 4.75x faster unlock; pure software fallback |
+| **Page Size Alignment** | 16 KB and 4 KB page sizes | Native libraries built with Android 15+ 16 KB ELF page alignment |
 | **Authentication Types** | User Password, 48-digit Recovery Key | Displays Recovery Key ID for verification against Microsoft account |
 | **Hardware Form Factors** | USB flash drives, Portable SSDs (PSSD), External HDDs, SD cards | Single-partition and multi-partition drives |
 | **Physical Interfaces** | USB Type-C OTG, USB-A adapters, Hubs/Docks | USB 2.0 / USB 3.0 (5 Gbps) / USB 3.1+ (10 Gbps) links |

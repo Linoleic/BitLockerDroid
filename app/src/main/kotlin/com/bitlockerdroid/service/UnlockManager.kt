@@ -117,11 +117,15 @@ object UnlockManager {
                 if (!g.isNullOrBlank() && !seenGuids.add(g.lowercase())) {
                     continue
                 }
-                val fsName = when (core.reader) {
-                    is com.bitlockerdroid.ntfs.NtfsReader -> "NTFS"
-                    is com.bitlockerdroid.ntfs.ExFatReader -> "exFAT"
-                    is com.bitlockerdroid.ntfs.Fat32Reader -> "FAT32"
-                    else -> "Unknown"
+                val fsName = try {
+                    when (core.reader) {
+                        is com.bitlockerdroid.ntfs.NtfsReader -> "NTFS"
+                        is com.bitlockerdroid.ntfs.ExFatReader -> "exFAT"
+                        is com.bitlockerdroid.ntfs.Fat32Reader -> "FAT32"
+                        else -> "Unknown"
+                    }
+                } catch (_: Throwable) {
+                    "Unknown"
                 }
                 val devInfo = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(path)
                 val space = core.getSpaceInfo()

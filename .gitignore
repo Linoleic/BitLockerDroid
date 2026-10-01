@@ -3,10 +3,7 @@
 # ============================================================
 dev_private/
 backup.txt
-PROJECT_STATUS.md
-DEVELOPMENT_HANDOVER.md
 local.properties
-INSTALL.md
 tools/
 
 # ============================================================
