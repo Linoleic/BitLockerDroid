@@ -89,7 +89,7 @@ The following benchmarks were evaluated across 6 independent BitLocker partition
 
 - **ARMv8 CE Hardware Cryptography Acceleration**: Harnesses ARMv8-A Cryptography Extensions (`PMULL`, `AES`, `SHA2`) for native hardware execution of AES-XTS, AES-CBC, and PBKDF2 SHA-256 key stretching (accelerating volume unlock by 4.75x, down to ~104 ms). Includes automatic runtime CPU capability detection (`getauxval(AT_HWCAP)`), vector self-tests, and graceful software fallback.
 - **Double-Buffered Asynchronous Write Pipeline**: Decouples SAF document streaming from underlying USB Mass Storage protocol transfer via background ring buffering, improving continuous write throughput by up to 39.5% and reducing 4K random write latency.
-- **16 KB Page Alignment (Android 15+)**: Fully conforms to the Google Android 15+ 16 KB ELF page size standard (`-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON` and `useLegacyPackaging = false`), ensuring maximum virtual memory mapping efficiency and future-proof compatibility.
+- **16 KB Page Alignment (Android 15+)**: Fully conforms to the Google Android 15+ 16 KB ELF page size standard — `useLegacyPackaging = false` plus an explicit `-Wl,-z,max-page-size=16384` link option on every native CMake target (the `ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES` CMake flag is a no-op under the pinned NDK r26d). Ensures maximum virtual memory mapping efficiency and future-proof compatibility.
 - **Transparent Filesystem Read/Write**: Custom optimized `libntfs-3g` (with sector write barriers protecting `-FVE-FS-` metadata), exFAT driver (supporting files >4GB), and `FatFs` (full Long File Name / LFN support). Delivers complete CRUD operations and native system search integration.
 - **Accurate Multi-Partition Scanning**: Analyzes hardware topology to distinguish parent disk devices from partition nodes, preventing duplicate drive listings and supporting concurrent auto-unlocking.
 - **Dirty Volume Repair & Structural Diagnostics**:
@@ -164,7 +164,7 @@ User-space SCSI/BOT Stack (UsbMassStorageDriver)         Direct I/O High-Perform
 
 | Dimension | Supported Range / Specification | Notes |
 |---|---|---|
-| **Operating System** | Android 13.0+ (API 33 ~ 37) | Requires Android 13.0 or newer (`minSdk 33`); forward-compatible with current Android releases (verified through Android 17 / API 37) |
+| **Operating System** | Android 13.0+ (API 33 ~ 37) | Requires Android 13.0 or newer (`minSdk 33`); verified on HyperOS 4+ (Android 17 / API 37) and HyperOS 3 (Android 16 / API 36) |
 | **CPU Architectures** | `arm64-v8a`, `armeabi-v7a`, `x86_64` | Full 64-bit and 32-bit native ABI binaries (ARMv8 CE hardware crypto is arm64-v8a only) |
 | **Root Schemes** | **Non-Root** / **KernelSU** / **Magisk** / **APatch** | Zero setup for non-root; higher performance with Root |
 | **Supported Filesystems** | **NTFS**, **exFAT**, **FAT32** | Full browse, create, modify, rename, and delete capabilities |
@@ -218,6 +218,9 @@ For full environment prerequisites, NDK CMake builds, host verification tools, a
   3. **Binder IPC & JNI Trampoline**: Non-Root mode exposes decrypted files via Android's Storage Access Framework (SAF), where `ProxyFileDescriptor` incurs synchronous Binder IPC overhead across process boundaries. Additionally, low-level sector I/O must repeatedly bounce across the JNI boundary between the native C filesystem driver and Kotlin user-space USB handlers. Root mode bypasses Binder entirely by exposing a global POSIX FUSE mount point.  
   4. **Flash Write Amplification & Lack of Kernel Page Cache**: Root mode benefits from the Linux kernel Page Cache and `blk-mq` I/O scheduler, which coalesces fragmented sector updates before flushing. In Non-Root mode, filesystem metadata updates (such as FAT32 cluster table writes) penetrate directly to storage, triggering severe flash write amplification and controller garbage collection on USB drives.  
   BitLockerDroid mitigates these constraints via a custom 4-stage asynchronous URB pipeline, double-buffered ping-pong write queue, and ARMv8 CE hardware cryptography acceleration, boosting Non-Root sequential reads to 35 ~ 50 MB/s (up from the typical ~15 MB/s BOT ceiling). For peak hardware performance (100+ MB/s reads, 30+ MB/s writes), switching to Root mode is recommended.
+
+- **Q: Something went wrong on my device — how can I report it?**  
+  **A**: Open a [GitHub Issue](https://github.com/Linoleic/BitLockerDroid/issues) and, if convenient, **attach the diagnostic log** — it is the fastest way to pin down driver or file-system problems. In the app, go to **Settings → Advanced Options → System & Diagnostics → Diagnostic Log**, tap **Copy Log**, then paste it into the issue (or save it as a `.txt` and attach the file). The log never contains your password or recovery key, but it does include volume GUIDs, device paths and file names, so please give it a quick review before posting. The OS build is recorded automatically, so the exact device model is optional.
 
 ---
 

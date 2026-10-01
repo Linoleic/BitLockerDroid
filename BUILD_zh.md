@@ -126,6 +126,8 @@ app/build/outputs/apk/release/app-release.apk
 - `armeabi-v7a`
 - `x86_64`
 
+> **16 KB 页面**：每个原生 CMake 目标都显式设置了 `-Wl,-z,max-page-size=16384`。不要依赖 `-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON`——它在锁定的 NDK r26d 下并不生效。**新增** CMake 目标必须自行加上该链接选项，否则会静默产出 4 KB 对齐的动态库，在 16 KB 页设备上无法加载。
+
 ### 3.4 清理构建缓存
 
 ```bash

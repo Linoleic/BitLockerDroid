@@ -29,4 +29,9 @@ Steps to reproduce the behavior:
 A clear and concise description of what you expected to happen.
 
 **Logs & Screenshots**
-If applicable, add screenshots or attach relevant log snippets from the in-app log viewer or logcat (`BitLockerLog`).
+If convenient, please attach the diagnostic log — it is the single most useful thing for diagnosing driver or file-system issues:
+1. Open the app → **Settings → Advanced Options → System & Diagnostics → Diagnostic Log**
+2. Tap **Copy Log**, then paste it here — or save it as a `.txt` file and attach it
+3. Alternative (adb): `adb logcat -s BitLockerLog`
+
+The log never contains your password or recovery key, but it does include volume GUIDs, device paths and file names — please give it a quick review before posting.

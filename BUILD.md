@@ -126,6 +126,8 @@ Native libraries (`libdislocker.so`, etc.) are compiled for:
 - `armeabi-v7a`
 - `x86_64`
 
+> **16 KB page size**: every native CMake target sets `-Wl,-z,max-page-size=16384` explicitly. Do not rely on `-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON` — it is a no-op under the pinned NDK r26d. Any **new** CMake target must add that link option itself, otherwise it silently ships a 4 KB-aligned library that fails to load on 16 KB-page devices.
+
 ### 3.4 Clean Build Artifacts
 
 ```bash

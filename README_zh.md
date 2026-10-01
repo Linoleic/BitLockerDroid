@@ -89,7 +89,7 @@
 
 - **ARMv8 CE 硬件密码学加速**：充分调用 ARMv8-A 硬件密码学扩展指令集（`PMULL`, `AES`, `SHA2`），原生硬件加速 AES-XTS、AES-CBC 扇区加解密与 PBKDF2 SHA-256 密钥拉伸（解锁提速 4.75 倍，耗时仅需 ~104 ms）。支持 `getauxval(AT_HWCAP)` 运行时 CPU 指令集探测、测试向量自检以及纯软件后备平滑降级。
 - **双缓冲异步写入流水线**：将 SAF 文档数据接收与底层 USB 传输解耦，利用双缓冲环形流水线交叠并发处理，连续写入吞吐提升高达 39.5%，有效抑制移动闪存写入抖动。
-- **Android 15+ 16 KB 页面对齐**：原生 C/C++ 共享库全面适配 Google 16 KB 页面大小规范（`-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON` 与 `useLegacyPackaging = false`），确保未来 Android 版本的卓越内存映射性能与合规性。
+- **Android 15+ 16 KB 页面对齐**：原生 C/C++ 共享库全面适配 Google 16 KB 页面大小规范 —— 采用 `useLegacyPackaging = false`，并在每个原生 CMake 目标上显式添加 `-Wl,-z,max-page-size=16384` 链接选项（`ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES` 这个 CMake 开关在锁定的 NDK r26d 下并不生效）。确保未来 Android 版本的卓越内存映射性能与合规性。
 - **全主流文件系统透明读写**：内置裁剪优化的 `libntfs-3g`（集成卷头扇区写屏障）、exFAT 驱动（支持 >4GB 大文件）与 `FatFs`（支持长文件名 LFN），提供完整的增删改查及系统级快速检索。
 - **单盘多分区精准识别**：基于硬件拓扑层级分析，准确辨识父级磁盘与子分区节点，杜绝裸设备与分区重复识别；支持多分区独立或并发自动解锁。
 - **脏卷一键修复与结构深度诊断**：
@@ -164,7 +164,7 @@ Android 原生“文件”应用 (DocumentsUI)                系统全局绝对
 
 | 维度 | 规格要求 / 支持范围 | 说明 |
 |---|---|---|
-| **操作系统** | Android 13.0+ (API 33 ~ 37) | 要求 Android 13.0 及以上（`minSdk 33`），实测兼容至 Android 17 (API 37) |
+| **操作系统** | Android 13.0+ (API 33 ~ 37) | 要求 Android 13.0 及以上（`minSdk 33`）；已在 HyperOS 4+（Android 17 / API 37）与 HyperOS 3（Android 16 / API 36）实机验证 |
 | **处理器架构** | `arm64-v8a`, `armeabi-v7a`, `x86_64` | 提供 64 位与 32 位原生 ABI 支持（ARMv8 CE 硬件加速仅在 arm64-v8a 生效） |
 | **Root 方案** | **免 Root** / **KernelSU** / **Magisk** / **APatch** | 免 Root 零门槛；Root 模式性能更优 |
 | **受支持文件系统** | **NTFS**, **exFAT**, **FAT32** | 完整增删改查、重命名与大文件读写 |
@@ -217,6 +217,9 @@ cd BitLockerDroid
   3. **IPC 与 JNI 跨层开销**：免 Root 模式依赖 SAF（Storage Access Framework）提供文件访问，数据流经由 `ProxyFileDescriptor` 产生同步 Binder IPC 进程间通信；且底层扇区 I/O 需在 Native C 驱动与 Java 用户态之间频繁反向 JNI 回调。Root 模式则直接挂载至全局虚拟文件系统，应用直接通过标准 Linux 路径读写，彻底绕过 Binder 中继。  
   4. **闪存写放大与缺乏页缓存**：Root 模式享有 Linux 内核 Page Cache 与 I/O 调度器（合并小写入）；免 Root 模式下文件系统元数据更新（如 FAT32 的 FAT 表）会频繁即时落盘，在 U 盘主控层引发严重的物理擦写循环与写放大，导致小块与持续写入速率受限。  
   BitLockerDroid 已通过自研 4 级异步 URB 环形流水线、双缓冲乒乓写队列与 ARMv8 CE 硬件加速，将免 Root 读取吞吐推至 35 ~ 50 MB/s（普通 BOT 仅约 15 MB/s）；若追求极致速率（100+ MB/s 读取，30+ MB/s 写入），建议切换至 Root 模式。
+
+- **Q: 使用时设备出现问题，该怎么反馈？**  
+  **A**: 欢迎到 [GitHub Issues](https://github.com/Linoleic/BitLockerDroid/issues) 提交；**方便的话请附上诊断日志**，这是定位驱动与文件系统问题最快的方式。应用内进入「**设置 → 高级选项 → 系统环境与诊断 → 运行诊断日志**」，点「**复制日志**」后粘贴到 Issue 正文（也可另存为 `.txt` 文件作为附件上传）。日志**不含密码与恢复密钥本体**，但会包含卷 GUID、设备路径与文件名，提交前请先过一眼。系统版本会自动记录，无需特意填写机型。
 
 ---
 
