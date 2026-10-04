@@ -21,7 +21,8 @@
 
 - [Introduction](#introduction)
 - [Dual-Mode Architecture](#dual-mode-architecture)
-- [Read/Write Benchmark & Performance](#readwrite-benchmark--performance)
+- [Theoretical Performance & Architecture](#theoretical-performance--architecture)
+- [Measured Benchmark Data](#measured-benchmark-data)
 - [Key Features](#key-features)
 - [System Architecture](#system-architecture)
 - [Technical Specifications & Compatibility](#technical-specifications--compatibility)
@@ -53,63 +54,44 @@ The application provides two distinct driver architectures, seamlessly switchabl
 | **Privilege Requirement** | USB device permission only; no Root required | Root permission (su) |
 | **Device Support** | USB OTG external storage devices | USB OTG devices, multi-partition disks, kernel block nodes |
 | **I/O Channel** | Android USB Host API + user-space SCSI driver | Linux kernel block device nodes (`/dev/block/vold/*`) |
-| **Read Throughput** | Sequential read ~35 to 50 MB/s | Sequential read up to 140+ MB/s |
+| **Theoretical Performance** | Constrained by userspace usbfs packetization & half-duplex BOT protocol; double-buffering pipeline mitigates flash write jitter | Direct Linux kernel block nodes & hardware DMA with UAS queueing; theoretically approaches physical bus & crypto limits |
 | **Mount Form** | SAF DocumentsProvider (system Files app) | SAF DocumentsProvider + Global FUSE (`/storage/XXXX-XXXX`) |
 | **Dirty Repair & Diagnostics** | Read-only structural diagnostics & clean unmount | 1-Click Dirty Bit reset & deep structural integrity diagnostics |
 | **System False Alerts** | Notification listener suppresses system format prompts | Privileged suppression of false format notifications |
 
 ---
 
-## Read/Write Benchmark & Performance
+## Theoretical Performance & Architecture
 
-The following benchmarks were evaluated across 6 independent BitLocker partitions on a physical USB 3.0 flash drive under Android 16 (Snapdragon 8 Gen 2), with 10 independent samples averaged per test condition (N=10). For comprehensive multi-dimensional data tables, see **[perf_test.md](perf_test.md)**.
+The throughput and cryptographic efficiency of BitLockerDroid are governed by its underlying driver architecture and hardware acceleration:
 
-### Sequential Throughput & Random Latency (10-Sample Average)
+- **ARMv8 CE Hardware Cryptography**: The ARMv8-A Cryptography Extensions (`PMULL`, `AES`, `SHA2`) execute cryptographic primitives via dedicated single-cycle hardware instructions. This eliminates the heavy CPU cycle overhead and L1/L2 cache pollution of software table lookups, theoretically boosting PBKDF2 key stretching and sector decryption throughput by several multiples for near-instantaneous authentication.
+- **Multi-Threaded Parallel Block Decryption**: The Native C core engine integrates a dynamic multi-core worker thread pool. For large sequential I/O requests, sector ciphertext blocks are partitioned and dispatched across available CPU cores in parallel. Theoretical compute throughput scales linearly with CPU core count, preventing single-core bottlenecks during 4K/8K media streaming and large file transfers.
+- **Double-Buffered Asynchronous Pipeline**: To overcome the stop-and-wait overhead inherent to the half-duplex BOT protocol in Non-Root mode, a userspace ping-pong ring buffer overlaps upper SAF data streaming with underlying USB bus transfers, theoretically maximizing bus utilization and mitigating flash write amplification.
+- **Root Mode Zero-Overhead Direct I/O**: Direct interaction with Linux kernel block device nodes (`/dev/block/*`), system Page Cache, and hardware DMA controllers completely bypasses Android sandbox `usbfs` packetization and Binder IPC. Native support for UAS (USB Attached SCSI) concurrent command queuing allows throughput to approach the physical bus and media ceiling.
 
-| Partition & Cipher | Filesystem | Non-Root HW Pipeline | Non-Root HW No Pipeline | Root HW Mode | Root Speedup | Non-Root 4K Latency | Root 4K Latency |
-|---|---|---|---|---|---|---|---|
-| **NTFS (AES-XTS)** | NTFS | 50.05 MB/s (Read) / 18.73 MB/s (Write) | 41.76 MB/s (Read) / 13.12 MB/s (Write) | **122.19 MB/s** (Read) / **21.30 MB/s** (Write) | **2.44x** (Read) | 1.25 ms (860 IOPS) | **1.10 ms** (954 IOPS) |
-| **NTFS (AES-CBC)** | NTFS | 34.87 MB/s (Read) / 14.72 MB/s (Write) | 41.24 MB/s (Read) / 11.86 MB/s (Write) | **95.04 MB/s** (Read) / **26.29 MB/s** (Write) | **2.73x** (Read) | 1.46 ms (720 IOPS) | **0.99 ms** (1078 IOPS) |
-| **exFAT (AES-XTS)** | exFAT | 48.24 MB/s (Read) / 20.80 MB/s (Write) | 41.29 MB/s (Read) / 16.34 MB/s (Write) | **97.40 MB/s** (Read) / **20.34 MB/s** (Write) | **2.02x** (Read) | 1.11 ms (937 IOPS) | **0.93 ms** (1124 IOPS) |
-| **exFAT (AES-CBC)** | exFAT | 46.59 MB/s (Read) / 20.14 MB/s (Write) | 38.95 MB/s (Read) / 11.74 MB/s (Write) | **95.98 MB/s** (Read) / **31.63 MB/s** (Write) | **2.06x** (Read) | 1.24 ms (837 IOPS) | **0.98 ms** (1097 IOPS) |
-| **FAT32 (AES-XTS)** | FAT32 | 36.87 MB/s (Read) / 1.76 MB/s (Write) | 39.80 MB/s (Read) / 1.37 MB/s (Write) | **93.83 MB/s** (Read) / **19.60 MB/s** (Write) | **2.55x** (Read) | 1.49 ms (703 IOPS) | **0.92 ms** (1140 IOPS) |
-| **FAT32 (AES-CBC)** | FAT32 | 42.90 MB/s (Read) / 1.70 MB/s (Write) | 40.78 MB/s (Read) / 1.39 MB/s (Write) | **140.66 MB/s** (Read) / **18.71 MB/s** (Write) | **3.28x** (Read) | 1.46 ms (715 IOPS) | **0.92 ms** (1152 IOPS) |
+---
 
-### Key Benchmark Takeaways
+## Measured Benchmark Data
 
-- **ARMv8 CE Hardware Acceleration**: Reduces 1,048,576 rounds of SHA-256 PBKDF2 key stretching from 494.52 ms down to 104.03 ms (**4.75x speedup**), achieving instantaneous password verification.
-- **Double-Buffering Pipeline Gain**: In Non-Root mode, the asynchronous write pipeline boosts continuous write throughput by up to **+39.5%** (12.97 MB/s vs 9.30 MB/s) and accelerates large 50MB file transfers by **+24.3%** (8.14 MB/s vs 6.55 MB/s).
-- **Root Mode Kernel Direct I/O**: Direct kernel block device access achieves an average sequential read throughput of **107.52 MB/s** (**2.49x** over Non-Root) and 50MB file write throughput of **34.52 MB/s** (**4.24x** over Non-Root).
-- **Data Integrity**: 100% of read and write transfer cycles across all formats passed end-to-end MD5 and SHA-256 hash consistency checks.
-- For complete raw and categorized benchmark tables, refer to **[perf_test.md](perf_test.md)**.
+*(Currently no content)*
+
+> [!NOTE]
+> Empirical benchmarks must be conducted strictly following the standardized methodology defined in **[Performance Evaluation Specification (perf_eval.md)](perf_eval.md)** (including tiered storage classification, warm-up discard, kernel Page Cache isolation, N≥10 sampling, and hash consistency validation). Standardized benchmark datasets across target devices will be populated upon completion of full-matrix regression runs.
 
 ---
 
 ## Key Features
 
-- **ARMv8 CE Hardware Cryptography Acceleration**: Harnesses ARMv8-A Cryptography Extensions (`PMULL`, `AES`, `SHA2`) for native hardware execution of AES-XTS, AES-CBC, and PBKDF2 SHA-256 key stretching (accelerating volume unlock by 4.75x, down to ~104 ms). Includes automatic runtime CPU capability detection (`getauxval(AT_HWCAP)`), vector self-tests, and graceful software fallback.
-- **Double-Buffered Asynchronous Write Pipeline**: Decouples SAF document streaming from underlying USB Mass Storage protocol transfer via background ring buffering, improving continuous write throughput by up to 39.5% and reducing 4K random write latency.
-- **16 KB Page Alignment (Android 15+)**: Fully conforms to the Google Android 15+ 16 KB ELF page size standard — `useLegacyPackaging = false` plus an explicit `-Wl,-z,max-page-size=16384` link option on every native CMake target (the `ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES` CMake flag is a no-op under the pinned NDK r26d). Ensures maximum virtual memory mapping efficiency and future-proof compatibility.
-- **Transparent Filesystem Read/Write**: Custom optimized `libntfs-3g` (with sector write barriers protecting `-FVE-FS-` metadata), exFAT driver (supporting files >4GB), and `FatFs` (full Long File Name / LFN support). Delivers complete CRUD operations and native system search integration.
-- **Accurate Multi-Partition Scanning**: Analyzes hardware topology to distinguish parent disk devices from partition nodes, preventing duplicate drive listings and supporting concurrent auto-unlocking.
-- **Dirty Volume Repair & Structural Diagnostics**:
-  - **1-Click Dirty Bit Reset**: Instantly resets unclean unmount flags across NTFS, FAT32, and exFAT partitions caused by hot-unplugging, restoring full read/write access without requiring a PC.
-  - **Deep Structural Integrity Diagnostics**: Sub-50ms non-destructive metadata integrity scan covering NTFS (MFT USN/Fixup torn-write validation, `$MFTMirr` consistency, `$INDEX_ROOT` B-Tree index), FAT32 (Sector 0 vs Sector 6 backup boot sector, FSInfo signature, FAT1 vs FAT2 consistency, directory loop detection), and exFAT (Microsoft-compliant 11-sector cyclic redundancy boot checksum, Sector 12 backup comparison, `MediaFailure` hardware flag, root directory stream parsing).
-  - **Pre-Flight Safety Barrier**: Automatically validates volume health prior to dirty bit reset. Displays high-risk warning banners and prevents accidental writes if true structural corruption is detected.
-- **Data Safety & Eject Protection**: Hardware-level read-only protection toggle intercepts all write operations at driver level. Safe eject forces two-level cache flush and clears filesystem Dirty Bits to prevent Windows from prompting "Scan and fix drive". Warns on unclean unmounted volumes.
-- **Global POSIX Virtual Mount**: In Root mode, injects a FUSE mount into the PID 1 mount namespace (`/storage/XXXX-XXXX`), enabling direct access via standard Linux paths in MT Manager, Termux, media players, and terminal utilities.
-- **Non-Destructive Drive Benchmark**: Built-in read-only benchmark tool to measure sequential read throughput (MB/s), 4K random read latency (IOPS), and negotiated USB bus speed (USB 2.0 / USB 3.0 5Gbps / USB 3.1+ 10Gbps).
-- **Biometric Credential Vault**: Safeguards BitLocker passwords and recovery keys using Android Keystore hardware-backed encryption. Features an independent toggle in Settings, requiring biometric (fingerprint/face) or lockscreen credentials to inspect saved credentials. Dynamically enforces window `FLAG_SECURE` to prevent sensitive key leakage in screenshots, screen recordings, or recent apps overview.
-- **Metadata Backup & Image Export**:
-  - **Precise FVE Metadata Backup & Emergency Restore (`.fvemeta`)**: Extracts Sector 0 (VBR) and all three 64KB FVE metadata blocks into an integrity-verified container (SHA-256 and CRC-32). Allows emergency low-level sector writeback if volume headers become corrupted.
-  - **Strict Capacity Safety Barrier**: During metadata restoration, the engine strictly compares the physical partition capacity and sector size against the backup header. If any mismatch is detected, writes are unconditionally blocked to protect other drives and partitions.
-  - **Dual-Mode Volume Dump Service**: Streams either a decrypted virtual volume image (`.img`) directly mountable on PC without BitLocker, or a raw encrypted block partition (`.raw`) for forensic backup. Equipped with an Android Foreground Service (`dataSync`), partial WakeLock, real-time throughput monitoring (MB/s), ETA calculation, and clean cancellation.
-- **LAN Wireless Sharing (Dual Web & WebDAV Protocols)**:
-  - **Zero-Client Native OS Mounting**: Fully compliant WebDAV server allows Windows ("Map Network Drive"), macOS Finder ("Connect to Server"), and iOS/iPadOS "Files" to mount the decrypted volume directly as a network disk with fast read/write throughput.
-  - **Modern Responsive Web Portal**: Automatically hosts an adaptive light/dark web interface with QR code quick access, folder hierarchy navigation, multi-threaded resume (HTTP 206 Partial Content), inline multimedia streaming, and drag-and-drop batch file uploads.
-  - **Granular Security & Lifecycle Guard**: Configurable custom port, read-only tamper protection, and HTTP Basic authentication; protected by Android Foreground Service (`dataSync`), High-Performance Wi-Fi Lock, and CPU WakeLock, with automatic cleanup on drive detachment or unexpected unmount.
-- **Native Unencrypted Volume Coexistence**: Intelligently identifies unencrypted USB flash drives (FAT32, exFAT, NTFS), relinquishing USB Host exclusivity to Android OS in non-root mode to prevent redundant permission prompts; clearly displays volume status and disk usage with 1-click navigation to system file managers.
-- **False Alert Filter**: Automatically filters Android system notifications falsely claiming the encrypted drive is corrupted or needs formatting.
+- **Transparent Full-Featured Filesystem Access**: Custom-tailored `libntfs-3g`, `exFAT`, and `FatFs` drivers provide complete CRUD operations (browse, create, rename, delete) on NTFS, exFAT, and FAT32 partitions with full large-file (>4GB) and long-file-name (LFN) support.
+- **Native OS Integration & Global Virtual Mounting**:
+  - **Standard SAF Integration**: Seamlessly manage files directly within the native Android system "Files" application;
+  - **Global POSIX Mount (Root)**: Injects a FUSE virtual mount to `/storage/XXXX-XXXX`, allowing third-party apps (MT Manager, Termux, media players) to access files via standard Linux absolute paths.
+- **Multi-Factor Authentication & Biometric Vault**: Supports user passwords and 48-digit numerical recovery keys; protects stored credentials via Android Keystore hardware-backed encryption, optional biometric (fingerprint/face) authentication, and screen-capture prevention (`FLAG_SECURE`).
+- **1-Click Dirty Bit Repair & Structural Integrity Guard**: Safely resets unclean unmount flags (Dirty Bit) without requiring a PC; features pre-flight sub-50ms non-destructive metadata health diagnostics to block dangerous writes if true structural corruption is detected.
+- **Accurate Multi-Partition Topology & Hotplug**: Intelligently distinguishes parent disk devices from child partition nodes on multi-partition drives and PSSDs; coexists seamlessly with unencrypted media and automatically suppresses false system formatting warnings.
+- **Disaster Recovery Backup & Volume Image Export**: Precise extraction and emergency sector writeback for FVE volume headers (`.fvemeta`); background-service-backed export of decrypted volume images (`.img`) or raw encrypted partitions (`.raw`) with ETA and cancellation support.
+- **Zero-Client LAN Wireless Sharing (Web & WebDAV)**: Integrated WebDAV server for native network drive mounting on Windows, macOS, and iOS/iPadOS; alongside a responsive light/dark web portal with QR-code access, media streaming, and batch file uploads.
 
 ---
 
@@ -169,7 +151,7 @@ User-space SCSI/BOT Stack (UsbMassStorageDriver)         Direct I/O High-Perform
 | **Root Schemes** | **Non-Root** / **KernelSU** / **Magisk** / **APatch** | Zero setup for non-root; higher performance with Root |
 | **Supported Filesystems** | **NTFS**, **exFAT**, **FAT32** | Full browse, create, modify, rename, and delete capabilities |
 | **Encryption Ciphers** | AES-XTS (128/256-bit), AES-CBC (128/256-bit) | Covers Windows 10/11 defaults and Windows 7 legacy volumes |
-| **Hardware Crypto** | ARMv8-A Cryptography Extensions (PMULL, AES, SHA2) | Dynamic runtime detection; 4.75x faster unlock; pure software fallback |
+| **Hardware Crypto** | ARMv8-A Cryptography Extensions (PMULL, AES, SHA2) | Dynamic runtime detection; dedicated hardware acceleration; automatic software fallback |
 | **Page Size Alignment** | 16 KB and 4 KB page sizes | Native libraries built with Android 15+ 16 KB ELF page alignment |
 | **Authentication Types** | User Password, 48-digit Recovery Key | Displays Recovery Key ID for verification against Microsoft account |
 | **Hardware Form Factors** | USB flash drives, Portable SSDs (PSSD), External HDDs, SD cards | Single-partition and multi-partition drives |
@@ -217,7 +199,7 @@ For full environment prerequisites, NDK CMake builds, host verification tools, a
   2. **Protocol Overhead & Handshake Latency**: Kernel drivers leverage UAS command queuing (NCQ) for full-duplex parallel execution. Non-Root mode simulates legacy half-duplex Bulk-Only Transport (BOT) in user space, where every block transfer requires a rigid 3-phase stop-and-wait handshake (CBW -> Data Phase -> CSW), leaving physical USB bus idle time between packets.  
   3. **Binder IPC & JNI Trampoline**: Non-Root mode exposes decrypted files via Android's Storage Access Framework (SAF), where `ProxyFileDescriptor` incurs synchronous Binder IPC overhead across process boundaries. Additionally, low-level sector I/O must repeatedly bounce across the JNI boundary between the native C filesystem driver and Kotlin user-space USB handlers. Root mode bypasses Binder entirely by exposing a global POSIX FUSE mount point.  
   4. **Flash Write Amplification & Lack of Kernel Page Cache**: Root mode benefits from the Linux kernel Page Cache and `blk-mq` I/O scheduler, which coalesces fragmented sector updates before flushing. In Non-Root mode, filesystem metadata updates (such as FAT32 cluster table writes) penetrate directly to storage, triggering severe flash write amplification and controller garbage collection on USB drives.  
-  BitLockerDroid mitigates these constraints via a custom 4-stage asynchronous URB pipeline, double-buffered ping-pong write queue, and ARMv8 CE hardware cryptography acceleration, boosting Non-Root sequential reads to 35 ~ 50 MB/s (up from the typical ~15 MB/s BOT ceiling). For peak hardware performance (100+ MB/s reads, 30+ MB/s writes), switching to Root mode is recommended.
+  BitLockerDroid mitigates these constraints via a custom 4-stage asynchronous URB pipeline, double-buffered ping-pong write queue, and ARMv8 CE hardware cryptography acceleration, substantially improving Non-Root throughput efficiency; for peak bus bandwidth and minimal access latency, switching to Root mode is recommended.
 
 - **Q: Something went wrong on my device — how can I report it?**  
   **A**: Open a [GitHub Issue](https://github.com/Linoleic/BitLockerDroid/issues) and, if convenient, **attach the diagnostic log** — it is the fastest way to pin down driver or file-system problems. In the app, go to **Settings → Advanced Options → System & Diagnostics → Diagnostic Log**, tap **Copy Log**, then paste it into the issue (or save it as a `.txt` and attach the file). The log never contains your password or recovery key, but it does include volume GUIDs, device paths and file names, so please give it a quick review before posting. The OS build is recorded automatically, so the exact device model is optional.
