@@ -2,6 +2,7 @@ package com.bitlockerdroid.ui.settings
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -15,6 +16,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -31,22 +33,22 @@ fun AboutSettingsCard() {
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .clearAndSetSemantics { }
             .padding(horizontal = 18.dp, vertical = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.primaryContainer,
-            modifier = Modifier.size(50.dp)
+        Box(
+            modifier = Modifier
+                .size(50.dp)
+                .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(14.dp)),
+            contentAlignment = Alignment.Center
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = Icons.Default.Lock,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.size(26.dp)
-                )
-            }
+            Icon(
+                imageVector = Icons.Default.Lock,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.size(26.dp)
+            )
         }
         Spacer(modifier = Modifier.height(10.dp))
         Text(
@@ -63,17 +65,14 @@ fun AboutSettingsCard() {
                 "1.0.1"
             }
         }
-        Surface(
-            shape = RoundedCornerShape(6.dp),
-            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f)
-        ) {
-            Text(
-                text = "v$versionName",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-            )
-        }
+        Text(
+            text = "v$versionName",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier
+                .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+                .padding(horizontal = 8.dp, vertical = 2.dp)
+        )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = stringResource(R.string.settings_about_desc),

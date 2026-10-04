@@ -105,8 +105,19 @@
     <string name="settings_root_active">Root Active</string>
     <string name="settings_root_not_granted">Root Not Granted</string>
     <string name="settings_root_required_hint">Requires Root privilege to be enabled and granted</string>
-    <string name="settings_pipelined_write_title">USB Pipelined Write Buffer</string>
-    <string name="settings_pipelined_write_desc">Enables two-stage ping-pong memory buffering to overlap IPC and USB write transfers in non-root mode, helping reduce stop-and-wait latency (actual speed depends on storage media performance)</string>
+    <string name="settings_pipelined_write_title">USB Pipelined Write (Non-Root)</string>
+    <string name="settings_pipelined_write_desc">Enables two-stage ping-pong memory buffering and asynchronous write queues in non-Root mode to overlap IPC commands and USB transfers, reducing write stalls (handled natively by kernel block queue in Root mode).</string>
+    <string name="settings_saf_double_buffer_title">SAF Transfer Double-Buffering</string>
+    <string name="settings_saf_double_buffer_desc">Deploys a 2x512KB asynchronous double-buffered pipe between the system file manager and virtual drive, eliminating cross-process backpressure and accelerating large file transfers (effective in both Root and non-Root modes).</string>
+    <string name="settings_saf_double_buffer_short">SAF Double-Buffer</string>
+    <string name="settings_usb_pipeline_short">USB Pipeline</string>
+    <string name="settings_performance_title">Performance Optimization</string>
+    <string name="settings_performance_dialog_desc">Hardware acceleration, SAF double-buffered streaming &amp; USB write pipelining</string>
+    <string name="settings_performance_sec_hw">Hardware Cryptography Acceleration</string>
+    <string name="settings_performance_sec_pipeline">Data Transfer &amp; I/O Pipelines</string>
+    <string name="settings_performance_badge_all">All Optimized</string>
+    <string name="settings_performance_badge_partial">Partial (%1$d/%2$d)</string>
+    <string name="settings_performance_badge_off">Disabled</string>
     <string name="settings_selinux_status">SELinux Status</string>
 
     <!-- General UI & Headers -->
@@ -419,16 +430,16 @@
 
     <!-- Hardware Acceleration & Performance -->
     <string name="settings_header_hw_accel">Hardware Acceleration &amp; Performance</string>
-    <string name="settings_hw_aes_title">ARMv8 Hardware AES Acceleration</string>
-    <string name="settings_hw_aes_desc">Accelerates AES-XTS and AES-CBC via CPU ARMv8 Cryptography Extensions (up to 4x throughput boost). Falls back smoothly to software mode when disabled.</string>
+    <string name="settings_hw_aes_title">AES Hardware Acceleration (ARMv8 CE)</string>
+    <string name="settings_hw_aes_desc">Accelerates real-time sector encryption and decryption (XTS / CBC) via CPU cryptography extensions, significantly boosting throughput and lowering CPU overhead. Falls back to software mode when disabled.</string>
     <string name="settings_hw_aes_status">Hardware AES Status</string>
     <string name="settings_hw_aes_status_desc">ARMv8-A Cryptography Extensions (AESE/AESD/AESIMC/PMULL)</string>
     <string name="settings_hw_aes_supported">Supported (ARMv8 CE)</string>
     <string name="settings_hw_aes_unsupported">Unsupported (CPU lacks HW instructions)</string>
     <string name="settings_hw_aes_active">Active (Hardware Mode)</string>
     <string name="settings_hw_aes_disabled">Disabled (Software Mode)</string>
-    <string name="settings_hw_sha2_title">ARMv8 Hardware SHA-256 Acceleration</string>
-    <string name="settings_hw_sha2_desc">Accelerates BitLocker key stretching (1,048,576 rounds) and metadata verification via CPU ARMv8 Cryptography Extensions (SHA256H/H2/SU0/SU1). Unlocking completes in tens of milliseconds.</string>
+    <string name="settings_hw_sha2_title">SHA-256 Hardware Acceleration (ARMv8 CE)</string>
+    <string name="settings_hw_sha2_desc">Accelerates BitLocker key stretching (1M+ SHA-256 iterations) and metadata verification via CPU instructions, reducing volume unlock time from seconds to tens of milliseconds. Falls back to software mode when disabled.</string>
     <string name="settings_hw_sha2_status">Hardware SHA-256 Status</string>
     <string name="settings_hw_sha2_status_desc">ARMv8-A Cryptography Extensions (SHA256H/SHA256H2/SHA256SU0/SHA256SU1)</string>
     <string name="settings_hw_sha2_supported">Supported (ARMv8 CE)</string>

@@ -32,6 +32,7 @@ import com.bitlockerdroid.service.UnlockedVolume
 import com.bitlockerdroid.service.VirtualStorageMountManager
 import com.bitlockerdroid.ui.dialogs.RootControlDialog
 import com.bitlockerdroid.ui.dialogs.HardwareAccelerationDialog
+import com.bitlockerdroid.ui.dialogs.PerformanceOptimizationDialog
 import com.bitlockerdroid.ui.dialogs.SystemDiagnosticsDialog
 import com.bitlockerdroid.ui.dialogs.SwitchModeConfirmDialog
 import com.bitlockerdroid.ui.dialogs.CredentialsManagerDialog
@@ -73,6 +74,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
     private var useHardwareAesState = mutableStateOf(PreferenceHelper.useHardwareAes)
     private var useHardwareSha2State = mutableStateOf(PreferenceHelper.useHardwareSha2)
     private var usePipelinedWriteState = mutableStateOf(PreferenceHelper.usePipelinedWrite)
+    private var useSafDoubleBufferState = mutableStateOf(PreferenceHelper.useSafDoubleBuffer)
     private var showHardwareAccelerationDialogState = mutableStateOf(false)
     private var virtualMountState = mutableStateOf(false)
     private var suppressCorruptNotificationState = mutableStateOf(false)
@@ -104,6 +106,10 @@ class BitLockerSettingsActivity : FragmentActivity() {
     private val onUsePipelinedWriteChangeAction: (Boolean) -> Unit = { enabled ->
         usePipelinedWriteState.value = enabled
         PreferenceHelper.usePipelinedWrite = enabled
+    }
+    private val onUseSafDoubleBufferChangeAction: (Boolean) -> Unit = { enabled ->
+        useSafDoubleBufferState.value = enabled
+        PreferenceHelper.useSafDoubleBuffer = enabled
     }
     private val onOpenHardwareAccelerationAction: () -> Unit = {
         showHardwareAccelerationDialogState.value = true
@@ -237,6 +243,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
             val useHardwareAes by useHardwareAesState
             val useHardwareSha2 by useHardwareSha2State
             val usePipelinedWrite by usePipelinedWriteState
+            val useSafDoubleBuffer by useSafDoubleBufferState
             val showHardwareAccelerationDialog by showHardwareAccelerationDialogState
             val rootSolution by rootSolutionState
             val showRootControlDialog by showRootControlDialogState
@@ -262,6 +269,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     useHardwareAes = useHardwareAes,
                     useHardwareSha2 = useHardwareSha2,
                     usePipelinedWrite = usePipelinedWrite,
+                    useSafDoubleBuffer = useSafDoubleBuffer,
                     showHardwareAccelerationDialog = showHardwareAccelerationDialog,
                     rootSolution = rootSolution,
                     showRootControlDialog = showRootControlDialog,
@@ -277,6 +285,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     onUseHardwareAesChange = onUseHardwareAesChangeAction,
                     onUseHardwareSha2Change = onUseHardwareSha2ChangeAction,
                     onUsePipelinedWriteChange = onUsePipelinedWriteChangeAction,
+                    onUseSafDoubleBufferChange = onUseSafDoubleBufferChangeAction,
                     onOpenRootControl = onOpenRootControlAction,
                     onCloseRootControl = onCloseRootControlAction,
                     onOpenHardwareAcceleration = onOpenHardwareAccelerationAction,
@@ -331,6 +340,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
         useHardwareAesState.value = PreferenceHelper.isUseHardwareAes(this)
         useHardwareSha2State.value = PreferenceHelper.isUseHardwareSha2(this)
         usePipelinedWriteState.value = PreferenceHelper.isUsePipelinedWrite(this)
+        useSafDoubleBufferState.value = PreferenceHelper.isUseSafDoubleBuffer(this)
         virtualMountState.value = PreferenceHelper.virtualMountEnabled
         suppressCorruptNotificationState.value = PreferenceHelper.suppressCorruptNotification
         refreshRememberedCredentials()
@@ -678,6 +688,7 @@ fun MainAppScreen(
     useHardwareAes: Boolean = true,
     useHardwareSha2: Boolean = true,
     usePipelinedWrite: Boolean = true,
+    useSafDoubleBuffer: Boolean = true,
     showHardwareAccelerationDialog: Boolean = false,
     showRootControlDialog: Boolean = false,
     showSystemDiagnosticsDialog: Boolean = false,
@@ -693,6 +704,7 @@ fun MainAppScreen(
     onUseHardwareAesChange: (Boolean) -> Unit = {},
     onUseHardwareSha2Change: (Boolean) -> Unit = {},
     onUsePipelinedWriteChange: (Boolean) -> Unit = {},
+    onUseSafDoubleBufferChange: (Boolean) -> Unit = {},
     onOpenRootControl: () -> Unit = {},
     onCloseRootControl: () -> Unit = {},
     onOpenHardwareAcceleration: () -> Unit = {},
@@ -845,11 +857,14 @@ fun MainAppScreen(
                     useHardwareAes = useHardwareAes,
                     useHardwareSha2 = useHardwareSha2,
                     usePipelinedWrite = usePipelinedWrite,
-                    onOpenCredentialsManager = { showCredentialsDialog = true },
+                    useSafDoubleBuffer = useSafDoubleBuffer,
+                    onOpenCredentialsManager = remember { { showCredentialsDialog = true } },
                     onOpenRootControl = onOpenRootControl,
+                    onOpenPerformanceOptimization = onOpenHardwareAcceleration,
                     onOpenHardwareAcceleration = onOpenHardwareAcceleration,
                     onOpenSystemDiagnostics = onOpenSystemDiagnostics,
                     onUsePipelinedWriteChange = onUsePipelinedWriteChange,
+                    onUseSafDoubleBufferChange = onUseSafDoubleBufferChange,
                     onThemeModeChange = onThemeModeChange,
                     onLanguageChange = onLanguageChange
                 )
@@ -868,13 +883,17 @@ fun MainAppScreen(
             )
         }
 
-        // Hardware Acceleration Dialog
+        // Performance Optimization Dialog (Consolidated Hardware Acceleration, SAF Double-Buffer, USB Pipeline, Kernel I/O)
         if (showHardwareAccelerationDialog) {
-            HardwareAccelerationDialog(
+            PerformanceOptimizationDialog(
                 useHardwareAes = useHardwareAes,
                 onUseHardwareAesChange = onUseHardwareAesChange,
                 useHardwareSha2 = useHardwareSha2,
                 onUseHardwareSha2Change = onUseHardwareSha2Change,
+                useSafDoubleBuffer = useSafDoubleBuffer,
+                onUseSafDoubleBufferChange = onUseSafDoubleBufferChange,
+                usePipelinedWrite = usePipelinedWrite,
+                onUsePipelinedWriteChange = onUsePipelinedWriteChange,
                 onDismiss = onCloseHardwareAcceleration
             )
         }

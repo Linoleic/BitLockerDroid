@@ -1,7 +1,10 @@
 package com.bitlockerdroid.ui.settings
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -10,7 +13,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -30,13 +37,13 @@ fun SettingsGroup(
                 modifier = Modifier.padding(start = 6.dp, bottom = 8.dp)
             )
         }
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = containerColor
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer { }
+                .clearAndSetSemantics { }
+                .background(containerColor, RoundedCornerShape(20.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f), RoundedCornerShape(20.dp))
         ) {
             Column(content = content)
         }
@@ -55,24 +62,32 @@ fun SettingsSwitchItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = enabled) { onCheckedChange(!checked) }
+            .semantics(mergeDescendants = true) { }
+            .toggleable(
+                value = checked,
+                enabled = enabled,
+                role = Role.Switch,
+                onValueChange = onCheckedChange
+            )
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (icon != null) {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = if (enabled) 0.5f else 0.2f),
-                modifier = Modifier.size(36.dp)
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .background(
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = if (enabled) 0.5f else 0.2f),
+                        RoundedCornerShape(10.dp)
+                    ),
+                contentAlignment = Alignment.Center
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                    modifier = Modifier.size(20.dp)
+                )
             }
             Spacer(modifier = Modifier.width(14.dp))
         }
@@ -94,7 +109,7 @@ fun SettingsSwitchItem(
         Switch(
             checked = checked,
             enabled = enabled,
-            onCheckedChange = onCheckedChange
+            onCheckedChange = null
         )
     }
 }
@@ -111,24 +126,27 @@ fun SettingsClickableItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .semantics(mergeDescendants = true) { }
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (icon != null) {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                modifier = Modifier.size(36.dp)
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .background(
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                        RoundedCornerShape(10.dp)
+                    ),
+                contentAlignment = Alignment.Center
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
             }
             Spacer(modifier = Modifier.width(14.dp))
         }
@@ -147,18 +165,15 @@ fun SettingsClickableItem(
         }
         if (!badgeText.isNullOrBlank()) {
             Spacer(modifier = Modifier.width(8.dp))
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = badgeColor.copy(alpha = 0.12f)
-            ) {
-                Text(
-                    text = badgeText,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = badgeColor,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-            }
+            Text(
+                text = badgeText,
+                style = MaterialTheme.typography.labelSmall,
+                color = badgeColor,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .background(badgeColor.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            )
         }
         Spacer(modifier = Modifier.width(4.dp))
         Icon(
@@ -180,23 +195,26 @@ fun SettingsStatusItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .semantics(mergeDescendants = true) { }
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (icon != null) {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                modifier = Modifier.size(36.dp)
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .background(
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        RoundedCornerShape(10.dp)
+                    ),
+                contentAlignment = Alignment.Center
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
             }
             Spacer(modifier = Modifier.width(14.dp))
         }
@@ -214,17 +232,14 @@ fun SettingsStatusItem(
             )
         }
         Spacer(modifier = Modifier.width(8.dp))
-        Surface(
-            shape = RoundedCornerShape(8.dp),
-            color = badgeColor.copy(alpha = 0.12f)
-        ) {
-            Text(
-                text = badgeText,
-                style = MaterialTheme.typography.labelSmall,
-                color = badgeColor,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-            )
-        }
+        Text(
+            text = badgeText,
+            style = MaterialTheme.typography.labelSmall,
+            color = badgeColor,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier
+                .background(badgeColor.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+        )
     }
 }

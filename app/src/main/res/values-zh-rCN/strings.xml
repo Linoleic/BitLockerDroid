@@ -105,8 +105,19 @@
     <string name="settings_root_active">Root 已启用</string>
     <string name="settings_root_not_granted">未获取 Root</string>
     <string name="settings_root_required_hint">需要开启并授权 Root 权限方可使用</string>
-    <string name="settings_pipelined_write_title">USB 写入双缓冲流水线</string>
-    <string name="settings_pipelined_write_desc">启用两级内存乒乓缓冲与异步写入，在后台重叠 IPC 与底层 USB 数据传输，有助于缓解免 Root 模式下的写入停顿（实际速度受介质写入性能限制）</string>
+    <string name="settings_pipelined_write_title">USB 写入异步流水线 (免 Root)</string>
+    <string name="settings_pipelined_write_desc">在免 Root 模式下启用双层内存乒乓缓冲与异步写入队列，后台重叠 IPC 交互与底层 USB 传输，缓解写入停顿（Root 模式由底层内核块队列接管，不受此项影响）。</string>
+    <string name="settings_saf_double_buffer_title">SAF 文件传输双缓冲</string>
+    <string name="settings_saf_double_buffer_desc">在系统文件管理器与虚拟驱动器之间建立 2x512KB 异步双缓冲管道，消除跨进程写入时的阻塞反压，显著提升大文件读写速度（Root 与免 Root 模式均生效）。</string>
+    <string name="settings_saf_double_buffer_short">SAF 双缓冲</string>
+    <string name="settings_usb_pipeline_short">USB 流水线</string>
+    <string name="settings_performance_title">性能优化</string>
+    <string name="settings_performance_dialog_desc">ARMv8 硬件加速 · SAF 异步双缓冲 · USB 写入流水线</string>
+    <string name="settings_performance_sec_hw">硬件密码学加速</string>
+    <string name="settings_performance_sec_pipeline">数据传输与 I/O 流水线</string>
+    <string name="settings_performance_badge_all">全部已优化</string>
+    <string name="settings_performance_badge_partial">部分开启 (%1$d/%2$d)</string>
+    <string name="settings_performance_badge_off">已停用</string>
     <string name="settings_selinux_status">SELinux 运行状态</string>
 
     <!-- 通用 UI 与标头 -->
@@ -418,16 +429,16 @@
 
     <!-- 硬件加速与性能 -->
     <string name="settings_header_hw_accel">硬件加速与性能</string>
-    <string name="settings_hw_aes_title">ARMv8 硬件 AES 指令加速</string>
-    <string name="settings_hw_aes_desc">利用 CPU 硬件指令集进行 AES-XTS 与 AES-CBC 加解密，最高可提升 4 倍吞吐。关闭后将平滑降级至软件查表模式。</string>
+    <string name="settings_hw_aes_title">AES 硬件加速 (ARMv8 CE)</string>
+    <string name="settings_hw_aes_desc">利用 CPU 硬件密码学指令（AESE/AESD）加速扇区实时加解密（XTS / CBC），大幅提升读写吞吐并显著降低 CPU 负载。关闭后平滑回退至软件算法。</string>
     <string name="settings_hw_aes_status">硬件 AES 指令集状态</string>
     <string name="settings_hw_aes_status_desc">ARMv8-A 密码学扩展指令集 (AESE/AESD/AESIMC/PMULL)</string>
     <string name="settings_hw_aes_supported">已支持 (ARMv8 CE)</string>
     <string name="settings_hw_aes_unsupported">未支持 (CPU 缺少硬件指令)</string>
     <string name="settings_hw_aes_active">已激活 (硬件直解)</string>
-    <string name="settings_hw_aes_disabled">已停用 (软件查表模式)</string>
-    <string name="settings_hw_sha2_title">ARMv8 硬件 SHA-256 指令加速</string>
-    <string name="settings_hw_sha2_desc">利用 CPU 硬件指令集加速 BitLocker 密钥拉伸 (1,048,576 轮) 与元数据校验，使解锁耗时从秒级骤降至数十毫秒。关闭后将平滑降级至软件模式。</string>
+    <string name="settings_hw_aes_disabled">已停用 (软件模式)</string>
+    <string name="settings_hw_sha2_title">SHA-256 硬件加速 (ARMv8 CE)</string>
+    <string name="settings_hw_sha2_desc">利用 CPU 硬件指令加速 BitLocker 密钥拉伸（百万轮 SHA-256 迭代）与元数据校验，将卷解锁耗时从秒级缩短至数十毫秒。关闭后平滑回退至软件算法。</string>
     <string name="settings_hw_sha2_status">硬件 SHA-256 指令集状态</string>
     <string name="settings_hw_sha2_status_desc">ARMv8-A 密码学扩展指令集 (SHA256H/SHA256H2/SHA256SU0/SHA256SU1)</string>
     <string name="settings_hw_sha2_supported">已支持 (ARMv8 CE)</string>

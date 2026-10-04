@@ -1,10 +1,13 @@
 package com.bitlockerdroid.ui.settings
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalOverscrollConfiguration
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,38 +40,48 @@ fun SettingsTabContent(
     useHardwareAes: Boolean = PreferenceHelper.useHardwareAes,
     useHardwareSha2: Boolean = PreferenceHelper.useHardwareSha2,
     usePipelinedWrite: Boolean = PreferenceHelper.usePipelinedWrite,
+    useSafDoubleBuffer: Boolean = PreferenceHelper.useSafDoubleBuffer,
     onOpenCredentialsManager: () -> Unit,
     onOpenRootControl: () -> Unit = {},
-    onOpenHardwareAcceleration: () -> Unit = {},
+    onOpenPerformanceOptimization: () -> Unit = {},
+    onOpenHardwareAcceleration: () -> Unit = onOpenPerformanceOptimization,
     onOpenSystemDiagnostics: () -> Unit = {},
     onUsePipelinedWriteChange: (Boolean) -> Unit = {},
+    onUseSafDoubleBufferChange: (Boolean) -> Unit = {},
     onThemeModeChange: (ThemeMode) -> Unit,
     onLanguageChange: (String) -> Unit
 ) {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.TopCenter
+    @OptIn(ExperimentalFoundationApi::class)
+    CompositionLocalProvider(
+        LocalOverscrollConfiguration provides null
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxHeight()
-                .widthIn(max = 720.dp)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+        val scrollState = rememberScrollState()
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.TopCenter
         ) {
-            // Group 1: Device Credentials & Biometric Protection
-            SettingsGroup(title = stringResource(R.string.settings_header_unlock)) {
-                val context = LocalContext.current
-                val totalCount = rememberedCredentials.size
-                val autoUnlockCount = rememberedCredentials.count { it.autoUnlock }
-                val subtitleText = when {
-                    totalCount == 0 -> stringResource(R.string.settings_creds_desc_none)
-                    autoUnlockCount == 0 -> stringResource(R.string.settings_creds_desc_no_auto, totalCount)
-                    autoUnlockCount == totalCount -> stringResource(R.string.settings_creds_desc_all_auto, totalCount)
-                    else -> stringResource(R.string.settings_creds_desc_partial_auto, totalCount, autoUnlockCount)
-                }
+            Column(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .widthIn(max = 720.dp)
+                    .fillMaxWidth()
+                    .verticalScroll(scrollState)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+                // Group 1: Device Credentials & Biometric Protection
+                SettingsGroup(title = stringResource(R.string.settings_header_unlock)) {
+                    val context = LocalContext.current
+                    val totalCount = rememberedCredentials.size
+                    val autoUnlockCount = remember(rememberedCredentials) {
+                        rememberedCredentials.count { it.autoUnlock }
+                    }
+                    val subtitleText = when {
+                        totalCount == 0 -> stringResource(R.string.settings_creds_desc_none)
+                        autoUnlockCount == 0 -> stringResource(R.string.settings_creds_desc_no_auto, totalCount)
+                        autoUnlockCount == totalCount -> stringResource(R.string.settings_creds_desc_all_auto, totalCount)
+                        else -> stringResource(R.string.settings_creds_desc_partial_auto, totalCount, autoUnlockCount)
+                    }
                 SettingsClickableItem(
                     title = stringResource(R.string.settings_creds_item_title),
                     description = subtitleText,
@@ -259,7 +272,7 @@ fun SettingsTabContent(
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
                 )
 
-                // 2. ARMv8 硬件密码学加速
+                // 2. 性能优化 (整合硬件加密加速、SAF 双缓冲、USB 写入流水线与底层调优)
                 val isHwCryptoSupported = remember {
                     try {
                         com.bitlockerdroid.util.NativeBridge.isHardwareCryptoSupported()
@@ -267,53 +280,53 @@ fun SettingsTabContent(
                         false
                     }
                 }
-                val aesState = if (useHardwareAes) stringResource(R.string.settings_hw_state_enabled) else stringResource(R.string.settings_hw_state_disabled)
-                val sha2State = if (useHardwareSha2) stringResource(R.string.settings_hw_state_enabled) else stringResource(R.string.settings_hw_state_disabled)
-                val summary = if (isHwCryptoSupported) {
-                    stringResource(R.string.settings_hw_accel_summary, aesState, sha2State)
-                } else {
-                    stringResource(R.string.settings_hw_crypto_unsupported)
+
+                val totalSwitches = 4
+                val enabledCount = (if (useHardwareAes && isHwCryptoSupported) 1 else 0) +
+                        (if (useHardwareSha2 && isHwCryptoSupported) 1 else 0) +
+                        (if (useSafDoubleBuffer) 1 else 0) +
+                        (if (usePipelinedWrite) 1 else 0)
+
+                val perfBadgeText = when {
+                    enabledCount == totalSwitches -> stringResource(R.string.settings_performance_badge_all)
+                    enabledCount > 0 -> stringResource(R.string.settings_performance_badge_partial, enabledCount, totalSwitches)
+                    else -> stringResource(R.string.settings_performance_badge_off)
                 }
 
-                val hwBadgeText = if (!isHwCryptoSupported) {
-                    stringResource(R.string.settings_hw_crypto_unsupported)
-                } else if (useHardwareAes && useHardwareSha2) {
-                    stringResource(R.string.settings_hw_badge_all_enabled)
-                } else if (useHardwareAes || useHardwareSha2) {
-                    stringResource(R.string.settings_hw_badge_partial)
-                } else {
-                    stringResource(R.string.settings_hw_badge_disabled)
+                val perfBadgeColor = when {
+                    enabledCount == totalSwitches -> SuccessGreen
+                    enabledCount > 0 -> MaterialTheme.colorScheme.tertiary
+                    else -> MaterialTheme.colorScheme.outline
                 }
 
-                val hwBadgeColor = if (!isHwCryptoSupported) {
-                    MaterialTheme.colorScheme.outline
-                } else if (useHardwareAes && useHardwareSha2) {
-                    SuccessGreen
-                } else if (useHardwareAes || useHardwareSha2) {
-                    MaterialTheme.colorScheme.tertiary
-                } else {
-                    MaterialTheme.colorScheme.outline
+                val safDoubleBufferShort = stringResource(R.string.settings_saf_double_buffer_short)
+                val usbPipelineShort = stringResource(R.string.settings_usb_pipeline_short)
+                val hwDisabledStr = stringResource(R.string.settings_hw_state_disabled)
+
+                val perfSummary = remember(
+                    useHardwareAes,
+                    useHardwareSha2,
+                    useSafDoubleBuffer,
+                    usePipelinedWrite,
+                    isHwCryptoSupported,
+                    safDoubleBufferShort,
+                    usbPipelineShort,
+                    hwDisabledStr
+                ) {
+                    buildList {
+                        if (useHardwareAes && isHwCryptoSupported) add("AES")
+                        if (useHardwareSha2 && isHwCryptoSupported) add("SHA-256")
+                        if (useSafDoubleBuffer) add(safDoubleBufferShort)
+                        if (usePipelinedWrite) add(usbPipelineShort)
+                    }.joinToString(" · ").ifEmpty { hwDisabledStr }
                 }
 
                 SettingsClickableItem(
-                    title = stringResource(R.string.settings_hw_crypto_title),
-                    description = summary,
-                    badgeText = hwBadgeText,
-                    badgeColor = hwBadgeColor,
-                    onClick = onOpenHardwareAcceleration
-                )
-
-                HorizontalDivider(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                )
-
-                // 3. USB 写入双缓冲流水线
-                SettingsSwitchItem(
-                    title = stringResource(R.string.settings_pipelined_write_title),
-                    description = stringResource(R.string.settings_pipelined_write_desc),
-                    checked = usePipelinedWrite,
-                    onCheckedChange = onUsePipelinedWriteChange
+                    title = stringResource(R.string.settings_performance_title),
+                    description = perfSummary,
+                    badgeText = perfBadgeText,
+                    badgeColor = perfBadgeColor,
+                    onClick = onOpenPerformanceOptimization
                 )
 
                 HorizontalDivider(
@@ -341,4 +354,5 @@ fun SettingsTabContent(
             Spacer(modifier = Modifier.height(16.dp))
         }
     }
+}
 }
