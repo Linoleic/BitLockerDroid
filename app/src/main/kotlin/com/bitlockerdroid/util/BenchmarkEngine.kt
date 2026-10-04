@@ -146,11 +146,13 @@ object BenchmarkEngine {
             if (buf != null) {
                 totalBytesRead += buf.size
             }
-            val curProgress = 0.05f + (0.90f * (i + 1) / numChunks)
-            val readMb = (i + 1) * 512 / 1024
-            val seqProgressMsg = context?.getString(R.string.benchmark_step_seq_progress, readMb, 16)
-                ?: "Testing sequential read ($readMb MB / 16 MB)…"
-            onProgress(seqProgressMsg, curProgress)
+            if ((i + 1) % 8 == 0 || i == numChunks - 1) {
+                val curProgress = 0.05f + (0.90f * (i + 1) / numChunks)
+                val readMb = (i + 1) * 512 / 1024
+                val seqProgressMsg = context?.getString(R.string.benchmark_step_seq_progress, readMb, 16)
+                    ?: "Testing sequential read ($readMb MB / 16 MB)…"
+                onProgress(seqProgressMsg, curProgress)
+            }
         }
         val seqElapsedSec = (System.nanoTime() - seqStartNano) / 1_000_000_000.0
         if (seqElapsedSec > 0 && totalBytesRead > 0) {
@@ -184,11 +186,13 @@ object BenchmarkEngine {
                 val w = writer.write("/$testFileName", curOff, writePayload, writeChunkSize)
                 if (w <= 0) break
                 totalWritten += w
-                val curProgress = 0.05f + (0.90f * (i + 1) / numWriteChunks)
-                val writeMb = (i + 1) * 256 / 1024
-                val writeProgressMsg = context?.getString(R.string.benchmark_step_write_progress, writeMb, 8)
-                    ?: "Testing sequential write ($writeMb MB / 8 MB)…"
-                onProgress(writeProgressMsg, curProgress)
+                if ((i + 1) % 8 == 0 || i == numWriteChunks - 1) {
+                    val curProgress = 0.05f + (0.90f * (i + 1) / numWriteChunks)
+                    val writeMb = (i + 1) * 256 / 1024
+                    val writeProgressMsg = context?.getString(R.string.benchmark_step_write_progress, writeMb, 8)
+                        ?: "Testing sequential write ($writeMb MB / 8 MB)…"
+                    onProgress(writeProgressMsg, curProgress)
+                }
             }
             writer.sync()
             val writeElapsedSec = (System.nanoTime() - writeStartNano) / 1_000_000_000.0
@@ -233,10 +237,12 @@ object BenchmarkEngine {
                 totalRandomTimeMs += (t1 - t0) / 1_000_000.0
                 successfulRandomReads++
             }
-            val curProgress = 0.05f + (0.90f * (i + 1) / numRandomReads)
-            val randProgressMsg = context?.getString(R.string.benchmark_step_4k_progress, i + 1, numRandomReads)
-                ?: "Testing 4K random read latency (${i + 1}/$numRandomReads)…"
-            onProgress(randProgressMsg, curProgress)
+            if ((i + 1) % 25 == 0 || i == numRandomReads - 1) {
+                val curProgress = 0.05f + (0.90f * (i + 1) / numRandomReads)
+                val randProgressMsg = context?.getString(R.string.benchmark_step_4k_progress, i + 1, numRandomReads)
+                    ?: "Testing 4K random read latency (${i + 1}/$numRandomReads)…"
+                onProgress(randProgressMsg, curProgress)
+            }
         }
 
         val avgLatencyMs = if (successfulRandomReads > 0) totalRandomTimeMs / successfulRandomReads else 0.0
@@ -288,10 +294,12 @@ object BenchmarkEngine {
                     successfulRandomWrites++
                 }
 
-                val curProgress = 0.05f + (0.90f * (i + 1) / numRandomWrites)
-                val randProgressMsg = context?.getString(R.string.benchmark_step_4k_write_progress, i + 1, numRandomWrites)
-                    ?: "Testing 4K random write (${i + 1}/$numRandomWrites)…"
-                onProgress(randProgressMsg, curProgress)
+                if ((i + 1) % 5 == 0 || i == numRandomWrites - 1) {
+                    val curProgress = 0.05f + (0.90f * (i + 1) / numRandomWrites)
+                    val randProgressMsg = context?.getString(R.string.benchmark_step_4k_write_progress, i + 1, numRandomWrites)
+                        ?: "Testing 4K random write (${i + 1}/$numRandomWrites)…"
+                    onProgress(randProgressMsg, curProgress)
+                }
             }
 
             writer.delete("/$testFileName")

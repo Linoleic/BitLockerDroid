@@ -25,8 +25,16 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/ioctl.h>
+#include <sys/uio.h>
 #include <linux/fs.h>
 #include <dirent.h>
+
+#ifndef F_SETPIPE_SZ
+#define F_SETPIPE_SZ 1031
+#endif
+#ifndef F_GETPIPE_SZ
+#define F_GETPIPE_SZ 1032
+#endif
 
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -60,60 +68,134 @@ static const char *const DAEMON_PATHS[] = {
 	NULL
 };
 
-/* Helper to read exactly `count` bytes from `fd` with a timeout in milliseconds */
+static void maximize_pipe_size(int fd) {
+	static const int sizes[] = { 4 * 1024 * 1024, 2 * 1024 * 1024, 1024 * 1024, 512 * 1024, 256 * 1024 };
+	for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+		if (fcntl(fd, F_SETPIPE_SZ, sizes[i]) >= 0) {
+			break;
+		}
+	}
+}
+
+/* Helper to read exactly `count` bytes from non-blocking `fd` with speculative read and timeout */
 static int pipe_read_exact(int fd, void *buf, size_t count, int timeout_ms)
 {
 	size_t got = 0;
 	while (got < count) {
-		struct pollfd pfd = { .fd = fd, .events = POLLIN };
-		int pr = poll(&pfd, 1, timeout_ms);
-		if (pr < 0) {
-			if (errno == EINTR) continue;
-			return -1;
-		}
-		if (pr == 0) {
-			// Timeout
-			return -ETIMEDOUT;
-		}
-		if (!(pfd.revents & POLLIN)) {
-			return -EIO;
-		}
-
 		ssize_t r = read(fd, (char *)buf + got, count - got);
+		if (r > 0) {
+			got += (size_t)r;
+			continue;
+		}
 		if (r < 0) {
 			if (errno == EINTR) continue;
+			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+				struct pollfd pfd = { .fd = fd, .events = POLLIN };
+				int pr = poll(&pfd, 1, timeout_ms);
+				if (pr < 0) {
+					if (errno == EINTR) continue;
+					return -1;
+				}
+				if (pr == 0) return -ETIMEDOUT;
+				if (!(pfd.revents & POLLIN)) return -EIO;
+				continue;
+			}
 			return -errno;
 		}
 		if (r == 0) {
 			// EOF
 			return got == 0 ? 0 : -EIO;
 		}
-		got += (size_t)r;
 	}
 	return (int)got;
 }
 
-/* Helper to write exactly `count` bytes to `fd` with a timeout in milliseconds */
+/* Helper to write exactly `count` bytes to non-blocking `fd` with speculative write and timeout */
 static int pipe_write_exact(int fd, const void *buf, size_t count, int timeout_ms)
 {
 	size_t written = 0;
 	while (written < count) {
-		struct pollfd pfd = { .fd = fd, .events = POLLOUT };
-		int pr = poll(&pfd, 1, timeout_ms);
-		if (pr < 0) {
-			if (errno == EINTR) continue;
-			return -1;
-		}
-		if (pr == 0) return -ETIMEDOUT;
-		if (!(pfd.revents & POLLOUT)) return -EIO;
-
 		ssize_t w = write(fd, (const char *)buf + written, count - written);
+		if (w > 0) {
+			written += (size_t)w;
+			continue;
+		}
 		if (w < 0) {
 			if (errno == EINTR) continue;
+			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+				struct pollfd pfd = { .fd = fd, .events = POLLOUT };
+				int pr = poll(&pfd, 1, timeout_ms);
+				if (pr < 0) {
+					if (errno == EINTR) continue;
+					return -1;
+				}
+				if (pr == 0) return -ETIMEDOUT;
+				if (!(pfd.revents & POLLOUT)) return -EIO;
+				continue;
+			}
 			return -errno;
 		}
 		if (w == 0) return -EIO;
-		written += (size_t)w;
+	}
+	return (int)written;
+}
+
+/* Helper to write multiple buffers atomically to non-blocking `fd` */
+static int pipe_writev_exact(int fd, const struct iovec *iov, int iovcnt, int timeout_ms)
+{
+	size_t total = 0;
+	for (int i = 0; i < iovcnt; i++) total += iov[i].iov_len;
+	size_t written = 0;
+	int cur_idx = 0;
+	size_t cur_off = 0;
+
+	while (written < total) {
+		struct iovec liov[8];
+		int lcnt = 0;
+		for (int i = cur_idx; i < iovcnt && lcnt < 8; i++) {
+			if (i == cur_idx) {
+				liov[lcnt].iov_base = (char *)iov[i].iov_base + cur_off;
+				liov[lcnt].iov_len = iov[i].iov_len - cur_off;
+			} else {
+				liov[lcnt].iov_base = iov[i].iov_base;
+				liov[lcnt].iov_len = iov[i].iov_len;
+			}
+			lcnt++;
+		}
+
+		ssize_t w = writev(fd, liov, lcnt);
+		if (w > 0) {
+			written += (size_t)w;
+			size_t rem = (size_t)w;
+			while (cur_idx < iovcnt && rem > 0) {
+				size_t avail = iov[cur_idx].iov_len - cur_off;
+				if (rem >= avail) {
+					rem -= avail;
+					cur_idx++;
+					cur_off = 0;
+				} else {
+					cur_off += rem;
+					rem = 0;
+				}
+			}
+			continue;
+		}
+		if (w < 0) {
+			if (errno == EINTR) continue;
+			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+				struct pollfd pfd = { .fd = fd, .events = POLLOUT };
+				int pr = poll(&pfd, 1, timeout_ms);
+				if (pr < 0) {
+					if (errno == EINTR) continue;
+					return -1;
+				}
+				if (pr == 0) return -ETIMEDOUT;
+				if (!(pfd.revents & POLLOUT)) return -EIO;
+				continue;
+			}
+			return -errno;
+		}
+		if (w == 0) return -EIO;
 	}
 	return (int)written;
 }
@@ -205,6 +287,11 @@ int dis_io_init(dis_ctx_t *ctx)
 		return -1;
 	}
 
+	maximize_pipe_size(p_to_child[0]);
+	maximize_pipe_size(p_to_child[1]);
+	maximize_pipe_size(p_from_child[0]);
+	maximize_pipe_size(p_from_child[1]);
+
 	pid_t pid = fork();
 	if (pid < 0) {
 		close(p_to_child[0]); close(p_to_child[1]);
@@ -263,6 +350,12 @@ int dis_io_init(dis_ctx_t *ctx)
 	// Parent
 	close(p_to_child[0]);
 	close(p_from_child[1]);
+
+	// Set non-blocking on parent pipe fds for speculative zero-poll I/O
+	int fl = fcntl(p_to_child[1], F_GETFL, 0);
+	if (fl >= 0) fcntl(p_to_child[1], F_SETFL, fl | O_NONBLOCK);
+	fl = fcntl(p_from_child[0], F_GETFL, 0);
+	if (fl >= 0) fcntl(p_from_child[0], F_SETFL, fl | O_NONBLOCK);
 
 	// Read handshake from daemon (wait up to 3000 ms)
 	int32_t magic = 0;
@@ -577,15 +670,15 @@ static int dis_blk_write_internal(dis_ctx_t *ctx, const uint8_t *buf, off_t offs
 		memcpy(req + 1, &disk_off, 8);
 		memcpy(req + 9, &req_len, 4);
 
-		if (pipe_write_exact(ctx->io_in_fd, req, sizeof(req), 5000) != sizeof(req)) {
-			pthread_mutex_unlock(&ctx->io_lock);
-			dis_set_error("Daemon write header failed");
-			return -1;
-		}
+		struct iovec iov[2];
+		iov[0].iov_base = req;
+		iov[0].iov_len = sizeof(req);
+		iov[1].iov_base = (void *)buf;
+		iov[1].iov_len = len;
 
-		if (pipe_write_exact(ctx->io_in_fd, buf, len, 15000) != (int)len) {
+		if (pipe_writev_exact(ctx->io_in_fd, iov, 2, 15000) != (int)(sizeof(req) + len)) {
 			pthread_mutex_unlock(&ctx->io_lock);
-			dis_set_error("Daemon write payload failed");
+			dis_set_error("Daemon write failed");
 			return -1;
 		}
 

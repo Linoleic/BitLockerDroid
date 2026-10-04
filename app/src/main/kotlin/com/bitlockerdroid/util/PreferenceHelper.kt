@@ -450,6 +450,21 @@ object PreferenceHelper {
             } catch (_: Exception) {}
         }
 
+    fun isUseSafDoubleBuffer(context: Context): Boolean =
+        prefs(context).getBoolean("use_saf_double_buffer", true)
+
+    fun setUseSafDoubleBuffer(context: Context, enabled: Boolean): Boolean {
+        return prefs(context).edit().putBoolean("use_saf_double_buffer", enabled).commit()
+    }
+
+    var useSafDoubleBuffer: Boolean
+        get() = try { prefs(ContextProvider.app).getBoolean("use_saf_double_buffer", true) } catch (_: Exception) { true }
+        set(v) {
+            try {
+                prefs(ContextProvider.app).edit().putBoolean("use_saf_double_buffer", v).commit()
+            } catch (_: Exception) {}
+        }
+
     // ------- theme & personalization -------
 
     const val THEME_SYSTEM = "system"

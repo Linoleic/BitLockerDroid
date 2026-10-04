@@ -204,9 +204,13 @@ object RootAccess {
         return info
     }
 
+    @Volatile
+    private var cachedSelinuxStatus: String? = null
+
     /** Inspects SELinux status directly without root requirement. */
     fun getSelinuxStatus(): String {
-        return try {
+        cachedSelinuxStatus?.let { return it }
+        val status = try {
             val f = java.io.File("/sys/fs/selinux/enforce")
             if (f.exists()) {
                 val c = f.readText().trim()
@@ -217,6 +221,8 @@ object RootAccess {
         } catch (_: Exception) {
             "Enforcing"
         }
+        cachedSelinuxStatus = status
+        return status
     }
 
     /**

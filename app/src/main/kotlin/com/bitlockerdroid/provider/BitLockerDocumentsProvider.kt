@@ -427,9 +427,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             }
 
             val res = kotlinx.coroutines.runBlocking {
-                com.bitlockerdroid.util.BenchmarkEngine.runBenchmark(core, selectedTests, appContext) { phase, prog ->
-                    LogFile.write("benchmark", "Phase: $phase ($prog)")
-                }
+                com.bitlockerdroid.util.BenchmarkEngine.runBenchmark(core, selectedTests, appContext) { _, _ -> }
             }
             val out = Bundle()
             if (res.sequentialReadMbPerSec != null) {
@@ -1248,40 +1246,122 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                 val readFd = pipe[0]
                 val writeFd = pipe[1]
 
+                try {
+                    // Maximize kernel pipe capacity to 1MB to prevent client IPC stalling
+                    android.system.Os.fcntlInt(readFd.fileDescriptor, 1031 /* F_SETPIPE_SZ */, 1024 * 1024)
+                } catch (_: Throwable) {}
+
+                val useDoubleBuffer = PreferenceHelper.isUseSafDoubleBuffer(appContext)
+
                 val writerThread = Thread {
                     var totalWritten = 0L
                     var writeFailed = false
                     try {
-                        ParcelFileDescriptor.AutoCloseInputStream(readFd).use { input ->
-                            val buf = ByteArray(256 * 1024)
-                            var curOffset = if (append) (core.getEntry(record)?.fileSize ?: 0L) else 0L
-                            while (true) {
-                                var accumulated = 0
-                                while (accumulated < buf.size) {
-                                    val n = input.read(buf, accumulated, buf.size - accumulated)
-                                    if (n <= 0) break
-                                    accumulated += n
-                                }
-                                if (accumulated <= 0) break
-                                val w = writer.write(path, curOffset, buf, accumulated)
-                                if (w < 0) {
-                                    LogFile.write("provider", "Failed writing pipe chunk at $curOffset to $path: $w")
+                        val startOffset = if (append) (core.getEntry(record)?.fileSize ?: 0L) else 0L
+                        if (useDoubleBuffer) {
+                            class BufferSlot(val data: ByteArray, var length: Int = 0, var offset: Long = 0L)
+                            val slotCapacity = 512 * 1024
+                            val emptyQueue = java.util.concurrent.ArrayBlockingQueue<BufferSlot>(2)
+                            val readyQueue = java.util.concurrent.ArrayBlockingQueue<BufferSlot>(2)
+                            val poisonPill = BufferSlot(ByteArray(0), length = -1)
+
+                            emptyQueue.put(BufferSlot(ByteArray(slotCapacity)))
+                            emptyQueue.put(BufferSlot(ByteArray(slotCapacity)))
+
+                            val diskWriterThread = Thread {
+                                try {
+                                    while (true) {
+                                        val slot = readyQueue.take()
+                                        if (slot.length < 0) {
+                                            break
+                                        }
+                                        if (slot.length > 0) {
+                                            val w = writer.write(path, slot.offset, slot.data, slot.length)
+                                            if (w < 0) {
+                                                writeFailed = true
+                                                LogFile.write("provider", "Failed writing pipe chunk at ${slot.offset} to $path: $w")
+                                                break
+                                            }
+                                        }
+                                        emptyQueue.put(slot)
+                                    }
+                                } catch (t: Throwable) {
                                     writeFailed = true
-                                    break
+                                    LogFile.write("provider", "Disk writer exception for $path: ${t.message}")
                                 }
-                                curOffset += w
-                                totalWritten = curOffset
+                            }.apply { isDaemon = true; name = "saf-disk-writer-$record" }
+
+                            diskWriterThread.start()
+
+                            var curOffset = startOffset
+                            try {
+                                ParcelFileDescriptor.AutoCloseInputStream(readFd).use { input ->
+                                    while (!writeFailed) {
+                                        val slot = emptyQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+                                        if (slot == null) {
+                                            if (writeFailed) break
+                                            continue
+                                        }
+                                        var accumulated = 0
+                                        while (accumulated < slot.data.size) {
+                                            val n = input.read(slot.data, accumulated, slot.data.size - accumulated)
+                                            if (n <= 0) break
+                                            accumulated += n
+                                        }
+                                        if (accumulated <= 0) {
+                                            emptyQueue.put(slot)
+                                            break
+                                        }
+                                        slot.length = accumulated
+                                        slot.offset = curOffset
+                                        curOffset += accumulated
+                                        totalWritten = curOffset
+                                        readyQueue.put(slot)
+                                    }
+                                }
+                            } finally {
+                                readyQueue.put(poisonPill)
+                                try {
+                                    diskWriterThread.join()
+                                } catch (_: InterruptedException) {}
                             }
-                            // Truncate only after a successful, non-empty transfer:
-                            // a failed or zero-byte pipe write must leave the
-                            // original file content intact.
+
                             if (!writeFailed && totalWritten > 0) {
                                 writer.truncate(path, totalWritten)
                             }
                             if (!writeFailed) {
                                 writer.sync()
                             }
-                            LogFile.write("provider", "Pipe write complete for $path ($totalWritten bytes, append=$append, failed=$writeFailed)")
+                            LogFile.write("provider", "Pipe write (double-buffered) complete for $path ($totalWritten bytes, append=$append, failed=$writeFailed)")
+                        } else {
+                            ParcelFileDescriptor.AutoCloseInputStream(readFd).use { input ->
+                                val buf = ByteArray(256 * 1024)
+                                var curOffset = startOffset
+                                while (true) {
+                                    var accumulated = 0
+                                    while (accumulated < buf.size) {
+                                        val n = input.read(buf, accumulated, buf.size - accumulated)
+                                        if (n <= 0) break
+                                        accumulated += n
+                                    }
+                                    if (accumulated <= 0) break
+                                    val w = writer.write(path, curOffset, buf, accumulated)
+                                    if (w < 0) {
+                                        LogFile.write("provider", "Failed writing pipe chunk at $curOffset to $path: $w")
+                                        writeFailed = true
+                                        break
+                                    }
+                                    curOffset += w
+                                    totalWritten = curOffset
+                                }
+                                if (!writeFailed && totalWritten > 0) {
+                                    writer.truncate(path, totalWritten)
+                                }
+                                if (!writeFailed) {
+                                    writer.sync()
+                                }
+                                LogFile.write("provider", "Pipe write complete for $path ($totalWritten bytes, append=$append, failed=$writeFailed)")
+                            }
                         }
                     } catch (e: Exception) {
                         writeFailed = true
@@ -1370,6 +1450,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
 
             // 1. Try StorageManager.openProxyFileDescriptor for true random-access (seekable) zero-copy streaming
             val fileSize = size
+            val useDoubleBuffer = PreferenceHelper.isUseSafDoubleBuffer(appContext)
             try {
                 val sm = appContext.getSystemService(android.os.storage.StorageManager::class.java)
                 if (sm != null) {
@@ -1377,10 +1458,10 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                     val pfd = sm.openProxyFileDescriptor(pfdMode, object : android.os.ProxyFileDescriptorCallback() {
                         override fun onGetSize(): Long = fileSize
 
-                        // 1MB read-ahead cache to pipeline sequential reads and eliminate high-frequency I/O round-trips
+                        // Read-ahead cache to pipeline sequential reads and eliminate high-frequency I/O round-trips
                         private var cacheOffset: Long = -1L
                         private var cacheLength: Int = 0
-                        private val cacheBuffer = ByteArray(1024 * 1024)
+                        private val cacheBuffer = ByteArray(if (useDoubleBuffer) 2048 * 1024 else 1024 * 1024)
 
                         override fun onRead(offset: Long, size: Int, data: ByteArray): Int {
                             if (offset >= fileSize || size <= 0) return 0
@@ -1393,8 +1474,8 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                                 return maxToRead
                             }
 
-                            // 2. Sequential prefetch trigger: for requests <= 128KB, prefetch up to 1MB ahead
-                            if (maxToRead <= 128 * 1024 && (fileSize - offset) > maxToRead) {
+                            // 2. Sequential prefetch trigger: for requests smaller than cacheBuffer, prefetch ahead
+                            if (maxToRead < cacheBuffer.size && (fileSize - offset) > maxToRead) {
                                 val toPrefetch = minOf(cacheBuffer.size.toLong(), fileSize - offset).toInt()
                                 val prefetchRead = core.readFile(record, offset, cacheBuffer, 0, toPrefetch)
                                 if (prefetchRead > 0) {
@@ -1419,7 +1500,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                             cacheLength = 0
                         }
                     }, syncHandler)
-                    LogFile.write("provider", "openDocument using StorageManager ProxyFileDescriptor (seekable zero-copy, size=$fileSize)")
+                    LogFile.write("provider", "openDocument using StorageManager ProxyFileDescriptor (seekable zero-copy, size=$fileSize, prefBuf=${if (useDoubleBuffer) 2048 else 1024}KB)")
                     return pfd
                 }
             } catch (proxyEx: Throwable) {
@@ -1452,11 +1533,14 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             val pipe = ParcelFileDescriptor.createReliablePipe()
             val readFd = pipe[0]
             val writeFd = pipe[1]
+            try {
+                android.system.Os.fcntlInt(writeFd.fileDescriptor, 1031 /* F_SETPIPE_SZ */, 1024 * 1024)
+            } catch (_: Throwable) {}
 
             Thread {
                 try {
                     ParcelFileDescriptor.AutoCloseOutputStream(writeFd).use { out ->
-                        val buf = ByteArray(128 * 1024)
+                        val buf = ByteArray(if (useDoubleBuffer) 512 * 1024 else 128 * 1024)
                         var offset = 0L
                         while (offset < size) {
                             val len = minOf(buf.size.toLong(), size - offset).toInt()

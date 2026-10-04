@@ -84,7 +84,12 @@ object VirtualStorageMountManager {
                     "bound=1; fi; fi; done; " +
                     "if [ \"\$bound\" = \"1\" ]; then " +
                     "for h in /sys/class/scsi_host/host*; do [ -e \"\$h\" ] || continue; echo \"- - -\" > \"\$h/scan\" 2>/dev/null; done; " +
-                    "sleep 0.8; fi"
+                    "sleep 0.8; " +
+                    "for b in /sys/block/sd*; do [ -d \"\$b/queue\" ] || continue; " +
+                    "echo 2048 > \"\$b/queue/read_ahead_kb\" 2>/dev/null; " +
+                    "echo 1024 > \"\$b/queue/max_sectors_kb\" 2>/dev/null; " +
+                    "echo 256 > \"\$b/queue/nr_requests\" 2>/dev/null; done; " +
+                    "fi"
             RootAccess.exec(script, 4000)
         } catch (_: Throwable) {}
     }
