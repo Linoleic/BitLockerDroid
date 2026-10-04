@@ -17,6 +17,9 @@ import com.bitlockerdroid.util.PreferenceHelper
  */
 class BitLockerCoreService : Service() {
 
+    private val scanHandler = Handler(Looper.getMainLooper())
+    private var scanRunnable: Runnable? = null
+
     private val usbReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
             val action = intent?.action ?: return
@@ -53,20 +56,21 @@ class BitLockerCoreService : Service() {
                 }
             }
             val delayMs = if (action == android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED) 1200L else 500L
-            Thread({
-                try {
-                    android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-                    Thread.sleep(delayMs)
-                } catch (_: Exception) {}
-                context?.let {
-                    try {
-                        BitLockerDetector.scanAndDetect(it)
-                    } catch (e: Throwable) {
-                        LogFile.write("app", "Unhandled exception in BitLocker-UsbScan: ${e.message}")
-                        android.util.Log.e("BitLockerCoreService", "Unhandled exception in BitLocker-UsbScan", e)
+            scanRunnable?.let { scanHandler.removeCallbacks(it) }
+            val task = Runnable {
+                Thread({
+                    context?.let { ctx ->
+                        try {
+                            BitLockerDetector.scanAndDetect(ctx)
+                        } catch (e: Throwable) {
+                            LogFile.write("app", "Unhandled exception in BitLocker-UsbScan: ${e.message}")
+                            android.util.Log.e("BitLockerCoreService", "Unhandled exception in BitLocker-UsbScan", e)
+                        }
                     }
-                }
-            }, "BitLocker-UsbScan").start()
+                }, "BitLocker-UsbScan").start()
+            }
+            scanRunnable = task
+            scanHandler.postDelayed(task, delayMs)
         }
     }
 
@@ -109,6 +113,7 @@ class BitLockerCoreService : Service() {
     }
 
     override fun onDestroy() {
+        scanRunnable?.let { scanHandler.removeCallbacks(it) }
         try {
             unregisterReceiver(usbReceiver)
         } catch (_: Exception) {}

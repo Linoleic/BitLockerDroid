@@ -61,7 +61,7 @@ object VirtualStorageMountManager {
     }
 
     /**
-     * Binds any unattached USB Mass Storage devices to the kernel usb-storage driver
+     * Binds any unattached USB Mass Storage devices to the kernel uas or usb-storage driver
      * and triggers SCSI bus rescan so that /dev/block/sd* nodes are generated.
      */
     fun ensureUsbStorageBound() {
@@ -69,20 +69,28 @@ object VirtualStorageMountManager {
         try {
             val script = "bound=0; for dev in /sys/bus/usb/devices/*; do " +
                     "if [ -f \"\$dev/bInterfaceClass\" ] && [ \"\$(cat \"\$dev/bInterfaceClass\" 2>/dev/null)\" = \"08\" ]; then " +
-                    "if [ ! -d \"\$dev/driver\" ] || ! readlink \"\$dev/driver\" | grep -q 'usb-storage'; then " +
+                    "if [ -d \"\$dev/driver\" ]; then " +
+                    "cur=\$(basename \"\$(readlink \"\$dev/driver\" 2>/dev/null)\"); " +
+                    "if [ \"\$cur\" = 'uas' ] || [ \"\$cur\" = 'usb-storage' ]; then continue; fi; " +
+                    "fi; " +
                     "name=\$(basename \"\$dev\"); " +
+                    "proto=\$(cat \"\$dev/bInterfaceProtocol\" 2>/dev/null); " +
                     "echo -n \"\$name\" > /sys/bus/usb/drivers/usbfs/unbind 2>/dev/null; " +
-                    "echo -n \"\$name\" > /sys/bus/usb/drivers/usb-storage/bind 2>/dev/null; " +
+                    "if [ \"\$proto\" = '62' ] && [ -d /sys/bus/usb/drivers/uas ] && echo -n \"\$name\" > /sys/bus/usb/drivers/uas/bind 2>/dev/null; then " +
+                    "bound=1; " +
+                    "elif [ -d /sys/bus/usb/drivers/usb-storage ] && echo -n \"\$name\" > /sys/bus/usb/drivers/usb-storage/bind 2>/dev/null; then " +
+                    "bound=1; " +
+                    "elif [ -d /sys/bus/usb/drivers/uas ] && echo -n \"\$name\" > /sys/bus/usb/drivers/uas/bind 2>/dev/null; then " +
                     "bound=1; fi; fi; done; " +
                     "if [ \"\$bound\" = \"1\" ]; then " +
-                    "for h in /sys/class/scsi_host/host*; do echo \"- - -\" > \"\$h/scan\" 2>/dev/null; done; " +
-                    "sleep 0.5; fi"
-            RootAccess.exec(script, 3000)
+                    "for h in /sys/class/scsi_host/host*; do [ -e \"\$h\" ] || continue; echo \"- - -\" > \"\$h/scan\" 2>/dev/null; done; " +
+                    "sleep 0.8; fi"
+            RootAccess.exec(script, 4000)
         } catch (_: Throwable) {}
     }
 
     /**
-     * Unbinds USB Mass Storage devices from the kernel usb-storage driver so that
+     * Unbinds USB Mass Storage devices from kernel drivers (uas or usb-storage) so that
      * user-space UsbManager / usbfs can claim the interfaces without driver busy errors.
      */
     fun unbindUsbStorage() {
@@ -90,10 +98,12 @@ object VirtualStorageMountManager {
         try {
             val script = "for dev in /sys/bus/usb/devices/*; do " +
                     "if [ -f \"\$dev/bInterfaceClass\" ] && [ \"\$(cat \"\$dev/bInterfaceClass\" 2>/dev/null)\" = \"08\" ]; then " +
-                    "if [ -d \"\$dev/driver\" ] && readlink \"\$dev/driver\" | grep -q 'usb-storage'; then " +
+                    "if [ -d \"\$dev/driver\" ]; then " +
+                    "cur=\$(basename \"\$(readlink \"\$dev/driver\" 2>/dev/null)\"); " +
+                    "if [ \"\$cur\" = 'uas' ] || [ \"\$cur\" = 'usb-storage' ]; then " +
                     "name=\$(basename \"\$dev\"); " +
-                    "echo -n \"\$name\" > /sys/bus/usb/drivers/usb-storage/unbind 2>/dev/null; " +
-                    "fi; fi; done"
+                    "echo -n \"\$name\" > \"/sys/bus/usb/drivers/\$cur/unbind\" 2>/dev/null; " +
+                    "fi; fi; fi; done"
             RootAccess.exec(script, 3000)
         } catch (_: Throwable) {}
     }

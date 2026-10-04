@@ -36,6 +36,7 @@ object BitLockerDetector {
      * root, then triggers the unlock flow for BitLocker matches.
      * Returns the number of BitLocker volumes found.
      */
+    @Synchronized
     fun scanAndDetect(context: Context): Int {
         var found = 0
         val presentBlockNodes = mutableListOf<String>()
@@ -124,29 +125,31 @@ object BitLockerDetector {
         }
 
         // 2. Check kernel SCSI block devices that belong to USB (sysfs link contains /usb)
+        // Resolves device major:minor and checks for subpartitions entirely inside root shell
+        // to bypass untrusted_app SELinux restrictions on /sys/class/block.
         try {
-            val usbDisks = RootAccess.exec("for d in /sys/block/sd*; do if readlink \$d 2>/dev/null | grep -q '/usb'; then ls -d /dev/block/\$(basename \$d)* 2>/dev/null; fi; done")
+            val script = "for d in /sys/block/sd*; do " +
+                    "[ -e \"\$d\" ] || continue; " +
+                    "if readlink \"\$d\" 2>/dev/null | grep -q '/usb'; then " +
+                    "base=\$(basename \"\$d\"); " +
+                    "has_parts=0; " +
+                    "for p in /sys/block/\$base/\$base*; do " +
+                    "if [ -e \"\$p\" ] && [ \"\$p\" != \"/sys/block/\$base/\$base\" ]; then " +
+                    "has_parts=1; pname=\$(basename \"\$p\"); majmin=\$(cat \"\$p/dev\" 2>/dev/null); " +
+                    "echo \"/dev/block/\$pname \$majmin\"; fi; done; " +
+                    "if [ \"\$has_parts\" = \"0\" ]; then " +
+                    "majmin=\$(cat \"\$d/dev\" 2>/dev/null); echo \"/dev/block/\$base \$majmin\"; fi; fi; done"
+            val usbDisks = RootAccess.exec(script)
             usbDisks?.second?.lines()?.forEach { line ->
-                val l = line.trim()
-                if (l.isNotEmpty()) {
-                    val devName = l.substringAfterLast('/')
-                    val sysDev = try {
-                        val devFile = java.io.File("/sys/class/block/$devName/dev")
-                        if (devFile.exists()) devFile.readText().trim() else null
-                    } catch (_: Throwable) { null }
-                    if (sysDev != null && publicMinors.contains(sysDev)) {
+                val parts = line.trim().split(Regex("\\s+"))
+                if (parts.isNotEmpty() && parts[0].isNotEmpty()) {
+                    val nodePath = parts[0]
+                    val majMin = parts.getOrNull(1)
+                    if (majMin != null && publicMinors.contains(majMin)) {
                         // Node is already represented by /dev/block/vold/public:... -> skip alias
                         return@forEach
                     }
-
-                    // Skip whole-disks (e.g. "sdg") that contain partitions ("sdg1", "sdg5", etc.)
-                    val isPartitionedDisk = devName.matches(Regex("^sd[a-z]+$")) &&
-                            java.io.File("/sys/class/block/$devName").listFiles()?.any {
-                                it.name.startsWith(devName) && it.name != devName
-                            } == true
-                    if (!isPartitionedDisk) {
-                        out.add(l)
-                    }
+                    out.add(nodePath)
                 }
             }
         } catch (_: Throwable) {}
