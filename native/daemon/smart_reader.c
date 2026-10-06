@@ -250,6 +250,23 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         uint64_t bytes_read = units_read * 512000ULL;
         uint64_t bytes_written = units_written * 512000ULL;
 
+        uint64_t host_reads = 0;
+        memcpy(&host_reads, nvme_smart + 64, 8);
+        uint64_t host_writes = 0;
+        memcpy(&host_writes, nvme_smart + 80, 8);
+        uint64_t ctrl_busy = 0;
+        memcpy(&ctrl_busy, nvme_smart + 96, 8);
+        uint64_t media_errs = 0;
+        memcpy(&media_errs, nvme_smart + 160, 8);
+        uint64_t err_entries = 0;
+        memcpy(&err_entries, nvme_smart + 176, 8);
+
+        char raw_page_hex[1025];
+        for (int i = 0; i < 512; i++) {
+            snprintf(raw_page_hex + i * 2, 3, "%02X", nvme_smart[i]);
+        }
+        raw_page_hex[1024] = '\0';
+
         const char *status_str = (crit_warn == 0 && health_pct >= 10) ? "HEALTHY" :
                                  (health_pct < 10 ? "CRITICAL" : "WARNING");
 
@@ -280,14 +297,24 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
             "\"unsafe_shutdowns\":%llu,"
             "\"total_bytes_read\":%llu,"
             "\"total_bytes_written\":%llu,"
-            "\"device_node\":\"%s\""
+            "\"host_read_commands\":%llu,"
+            "\"host_write_commands\":%llu,"
+            "\"controller_busy_time\":%llu,"
+            "\"media_errors\":%llu,"
+            "\"error_log_entries\":%llu,"
+            "\"device_node\":\"%s\","
+            "\"raw_page_hex\":\"%s\""
             "}",
             status_str, disk_type, esc_model, esc_serial, esc_fw,
             esc_vendor, esc_prod, temp_c, health_pct, avail_spare,
             spare_thresh, crit_warn, (unsigned long long)power_cycles,
             (unsigned long long)power_hours, (unsigned long long)unsafe_shutdowns,
             (unsigned long long)bytes_read, (unsigned long long)bytes_written,
-            actual_dev
+            (unsigned long long)host_reads, (unsigned long long)host_writes,
+            (unsigned long long)ctrl_busy, (unsigned long long)media_errs,
+            (unsigned long long)err_entries,
+            actual_dev,
+            raw_page_hex
         );
         close(fd);
         return 0;
@@ -352,6 +379,12 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         escape_json_str(vendor, esc_vendor, sizeof(esc_vendor));
         escape_json_str(product, esc_prod, sizeof(esc_prod));
 
+        char raw_page_hex[1025];
+        for (int i = 0; i < 512; i++) {
+            snprintf(raw_page_hex + i * 2, 3, "%02X", smart_data[i]);
+        }
+        raw_page_hex[1024] = '\0';
+
         snprintf(json, json_max,
             "{"
             "\"supported\":true,"
@@ -370,7 +403,8 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
             "\"power_cycles\":%llu,"
             "\"power_hours\":%llu,"
             "\"total_bytes_written\":%llu,"
-            "\"device_node\":\"%s\""
+            "\"device_node\":\"%s\","
+            "\"raw_page_hex\":\"%s\""
             "}",
             status_str, disk_type, esc_model, esc_serial, esc_fw,
             esc_vendor, esc_prod, temp_c, health_pct,
@@ -380,7 +414,8 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
             (unsigned long long)power_cycles,
             (unsigned long long)power_hours,
             (unsigned long long)bytes_written,
-            actual_dev
+            actual_dev,
+            raw_page_hex
         );
         close(fd);
         return 0;

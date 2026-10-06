@@ -442,6 +442,27 @@ object RootAccess {
                 if (!binariesMatch(nativeBin, tmpBin)) {
                     exec("cp '${nativeBin.absolutePath}' /data/local/tmp/bitlocker_io && chmod 755 /data/local/tmp/bitlocker_io")
                 }
+            } else {
+                try {
+                    val apkFile = java.util.zip.ZipFile(context.applicationInfo.sourceDir)
+                    val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
+                    val entry = apkFile.getEntry("lib/$abi/libbitlocker_io.so")
+                        ?: apkFile.getEntry("lib/arm64-v8a/libbitlocker_io.so")
+                    if (entry != null) {
+                        val appFilesBin = java.io.File(context.filesDir, "bitlocker_io")
+                        apkFile.getInputStream(entry).use { input ->
+                            appFilesBin.outputStream().use { output -> input.copyTo(output) }
+                        }
+                        appFilesBin.setExecutable(true, false)
+                        val tmpBin = java.io.File("/data/local/tmp/bitlocker_io")
+                        if (!binariesMatch(appFilesBin, tmpBin)) {
+                            exec("cp '${appFilesBin.absolutePath}' /data/local/tmp/bitlocker_io && chmod 755 /data/local/tmp/bitlocker_io")
+                        }
+                    }
+                    apkFile.close()
+                } catch (t: Throwable) {
+                    Log.w(TAG, "extract daemon from apk failed", t)
+                }
             }
         } catch (e: Throwable) {
             Log.w(TAG, "ensureDaemonInstalled failed", e)

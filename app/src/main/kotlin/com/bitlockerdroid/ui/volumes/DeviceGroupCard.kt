@@ -57,6 +57,20 @@ fun DeviceGroupCard(
 ) {
     var isExpanded by remember { mutableStateOf(true) }
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    var isSmartSupported by remember(group.physicalDiskPath) {
+        mutableStateOf(com.bitlockerdroid.smart.SmartHealthManager.getCachedSupport(group.physicalDiskPath) ?: false)
+    }
+
+    LaunchedEffect(group.physicalDiskPath) {
+        val supported = com.bitlockerdroid.smart.SmartHealthManager.isDeviceSmartSupported(
+            context,
+            group.physicalDiskPath,
+            group.usbDeviceId
+        )
+        isSmartSupported = supported
+    }
 
     val formattedCapacity = remember(group.totalCapacityBytes) {
         if (group.totalCapacityBytes > 0L) DeviceIdentity.formatSize(group.totalCapacityBytes) else null
@@ -154,31 +168,33 @@ fun DeviceGroupCard(
 
                     Spacer(modifier = Modifier.width(8.dp))
 
-                    // SMART & Hardware Telemetry Action Button
-                    AppButton(
-                        onClick = { onSmartHealthClick(group.physicalDiskPath) },
-                        shape = RoundedCornerShape(10.dp),
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                    ) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_smart_health),
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        if (!isCompact) {
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = stringResource(R.string.device_smart_telemetry_btn),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.SemiBold
+                    // S.M.A.R.T. Telemetry Action Button (Only shown on supported storage devices)
+                    if (isSmartSupported) {
+                        AppButton(
+                            onClick = { onSmartHealthClick(group.physicalDiskPath) },
+                            shape = RoundedCornerShape(10.dp),
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_smart_health),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.primary
                             )
+                            if (!isCompact) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = stringResource(R.string.device_smart_telemetry_btn),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
-                    }
 
-                    Spacer(modifier = Modifier.width(4.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
 
                     // Expand / Collapse Chevron
                     AppIconButton(

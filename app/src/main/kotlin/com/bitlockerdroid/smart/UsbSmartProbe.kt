@@ -152,9 +152,15 @@ object UsbSmartProbe {
                 val buf = ByteBuffer.wrap(nvmeData).order(ByteOrder.LITTLE_ENDIAN)
                 val unitsRead = buf.getLong(32)
                 val unitsWritten = buf.getLong(48)
+                val hostReads = buf.getLong(64)
+                val hostWrites = buf.getLong(80)
+                val ctrlBusy = buf.getLong(96)
                 val powerCycles = buf.getLong(112)
                 val powerHours = buf.getLong(128)
                 val unsafeShutdowns = buf.getLong(144)
+                val mediaErrs = buf.getLong(160)
+                val errEntries = buf.getLong(176)
+                val rawPageHex = nvmeData.take(512).joinToString("") { "%02X".format(it) }
 
                 val status = if (critWarn == 0 && healthPct >= 10) SmartOverallStatus.HEALTHY
                              else if (healthPct < 10) SmartOverallStatus.CRITICAL
@@ -179,7 +185,13 @@ object UsbSmartProbe {
                     unsafeShutdowns = unsafeShutdowns,
                     totalBytesRead = unitsRead * 512000L,
                     totalBytesWritten = unitsWritten * 512000L,
-                    deviceNode = deviceNode
+                    hostReadCommands = hostReads,
+                    hostWriteCommands = hostWrites,
+                    controllerBusyMinutes = ctrlBusy,
+                    mediaErrors = mediaErrs,
+                    errorLogEntries = errEntries,
+                    deviceNode = deviceNode,
+                    rawPageHex = rawPageHex
                 )
             }
 
@@ -233,6 +245,8 @@ object UsbSmartProbe {
                     SmartOverallStatus.WARNING
                 }
 
+                val rawPageHex = sataData.take(512).joinToString("") { "%02X".format(it) }
+
                 return SmartHealthInfo(
                     isSupported = true,
                     status = status,
@@ -250,7 +264,8 @@ object UsbSmartProbe {
                     powerCycles = powerCycles,
                     powerHours = powerHours,
                     totalBytesWritten = bytesWritten,
-                    deviceNode = deviceNode
+                    deviceNode = deviceNode,
+                    rawPageHex = rawPageHex
                 )
             }
 

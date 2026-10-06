@@ -17,7 +17,56 @@ object SmartHealthManager {
 
     private const val TAG = "SmartHealthManager"
 
+    private val smartSupportCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    private val smartInfoCache = java.util.concurrent.ConcurrentHashMap<String, SmartHealthInfo>()
+
+    fun getCachedSupport(devicePath: String): Boolean? {
+        if (devicePath.isBlank() || devicePath.startsWith("storage:")) return false
+        return smartSupportCache[devicePath]
+    }
+
+    fun clearCache(devicePath: String? = null) {
+        if (devicePath != null) {
+            smartSupportCache.remove(devicePath)
+            smartInfoCache.remove(devicePath)
+        } else {
+            smartSupportCache.clear()
+            smartInfoCache.clear()
+        }
+    }
+
+    suspend fun isDeviceSmartSupported(
+        context: Context,
+        devicePath: String,
+        usbDeviceId: Int? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (devicePath.isBlank() || devicePath.startsWith("storage:")) {
+            return@withContext false
+        }
+        smartSupportCache[devicePath]?.let { return@withContext it }
+
+        val info = querySmartInternal(context, devicePath, usbDeviceId)
+        smartSupportCache[devicePath] = info.isSupported
+        if (info.isSupported) {
+            smartInfoCache[devicePath] = info
+        }
+        info.isSupported
+    }
+
     suspend fun querySmart(
+        context: Context,
+        devicePath: String,
+        usbDeviceId: Int? = null
+    ): SmartHealthInfo = withContext(Dispatchers.IO) {
+        val info = querySmartInternal(context, devicePath, usbDeviceId)
+        smartSupportCache[devicePath] = info.isSupported
+        if (info.isSupported) {
+            smartInfoCache[devicePath] = info
+        }
+        info
+    }
+
+    private suspend fun querySmartInternal(
         context: Context,
         devicePath: String,
         usbDeviceId: Int? = null

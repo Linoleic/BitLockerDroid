@@ -5,6 +5,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -462,6 +463,7 @@ fun SmartHealthDialog(
 
                                         Spacer(modifier = Modifier.height(8.dp))
 
+                                        val rawHScroll = rememberScrollState()
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -470,11 +472,13 @@ fun SmartHealthDialog(
                                                     RoundedCornerShape(8.dp)
                                                 )
                                                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                                                .horizontalScroll(rawHScroll)
                                                 .padding(10.dp)
                                         ) {
                                             SelectionContainer {
                                                 Text(
                                                     text = info.formattedRawData,
+                                                    softWrap = false,
                                                     style = MaterialTheme.typography.bodySmall.copy(
                                                         fontFamily = FontFamily.Monospace,
                                                         fontSize = 11.sp,

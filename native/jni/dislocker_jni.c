@@ -1128,7 +1128,7 @@ static jstring native_readDeviceSmart(JNIEnv *env, jobject thiz, jstring path_st
 	const char *path = (*env)->GetStringUTFChars(env, path_str, NULL);
 	if (!path) return NULL;
 
-	char json[2048];
+	char json[4096];
 	read_smart_json(path, json, sizeof(json));
 	(*env)->ReleaseStringUTFChars(env, path_str, path);
 

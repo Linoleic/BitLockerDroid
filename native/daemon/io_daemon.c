@@ -198,7 +198,7 @@ int main(int argc, char **argv) {
     }
 
     if (argc >= 3 && strcmp(argv[1], "--smart") == 0) {
-        char json[2048];
+        char json[4096];
         read_smart_json(argv[2], json, sizeof(json));
         puts(json);
         return 0;
@@ -303,7 +303,7 @@ int main(int argc, char **argv) {
             }
             if (write_all(STDOUT_FILENO, &size, 8) != 0) break;
         } else if (cmd == CMD_SMART) {
-            char smart_json[2048];
+            char smart_json[4096];
             read_smart_json(dev_path, smart_json, sizeof(smart_json));
             uint32_t len = (uint32_t)strlen(smart_json);
             if (write_all(STDOUT_FILENO, &len, 4) != 0) break;

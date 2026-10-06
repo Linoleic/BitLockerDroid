@@ -41,9 +41,15 @@ object SmartDataParser {
                 reallocatedSectors = if (obj.has("reallocated_sectors")) obj.optLong("reallocated_sectors") else null,
                 pendingSectors = if (obj.has("pending_sectors")) obj.optLong("pending_sectors") else null,
                 uncorrectableSectors = if (obj.has("uncorrectable_sectors")) obj.optLong("uncorrectable_sectors") else null,
+                hostReadCommands = if (obj.has("host_read_commands")) obj.optLong("host_read_commands") else null,
+                hostWriteCommands = if (obj.has("host_write_commands")) obj.optLong("host_write_commands") else null,
+                controllerBusyMinutes = if (obj.has("controller_busy_time")) obj.optLong("controller_busy_time") else null,
+                mediaErrors = if (obj.has("media_errors")) obj.optLong("media_errors") else null,
+                errorLogEntries = if (obj.has("error_log_entries")) obj.optLong("error_log_entries") else null,
                 deviceNode = obj.optString("device_node").takeIf { it.isNotBlank() },
                 reason = obj.optString("reason").takeIf { it.isNotBlank() },
-                rawJson = jsonStr
+                rawJson = jsonStr,
+                rawPageHex = obj.optString("raw_page_hex").takeIf { it.isNotBlank() }
             )
         } catch (e: Exception) {
             SmartHealthInfo.unsupported(reason = "JSON parse error: ${e.message}")
