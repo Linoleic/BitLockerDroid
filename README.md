@@ -144,7 +144,7 @@ Empirical throughput and random seek performance across filesystems and BitLocke
 ### 4. Root Mode vs Non-Root Mode Architectural Performance Comparison
 
 > [!NOTE]
-> Note: The architectural comparison data below was collected during early architectural verification (based on Tier 2 USB 3.0 flash media across a 6-partition matrix) and may slightly lag behind optimal metrics of current releases (v1.0.6+). A refreshed, updated dataset will be supplemented in subsequent updates.
+> Note: The architectural comparison data below was collected during early architectural verification (based on Tier 2 USB 3.0 flash media across a 6-partition matrix). Due to less stringent per-iteration cache flushing in early testing, earlier Root mode metrics were partially elevated by Linux kernel readahead buffers and empty-disk SLC caching (e.g. 107 MB/s average read); meanwhile, Non-Root mode has received ongoing pipeline optimizations in newer releases. Current testing protocols enforce strict per-sample `drop_caches` physical media isolation and closed-loop sync timing. A fully refreshed dataset will be benchmarked and updated in subsequent releases.
 
 Comparing empirical performance under identical hardware and cryptographic configurations between Linux Kernel Direct I/O (Root) and Android Sandbox Userspace USB Host API (Non-Root):
 
