@@ -40,6 +40,9 @@
 #define CMD_WRITE 2
 #define CMD_SYNC  3
 #define CMD_SIZE  4
+#define CMD_SMART 5
+
+#include "smart_reader.h"
 
 #define MAX_CHUNK_SIZE (4 * 1024 * 1024) // 4 MB max single request
 
@@ -194,6 +197,13 @@ int main(int argc, char **argv) {
         }
     }
 
+    if (argc >= 3 && strcmp(argv[1], "--smart") == 0) {
+        char json[2048];
+        read_smart_json(argv[2], json, sizeof(json));
+        puts(json);
+        return 0;
+    }
+
     if (argc < 2) {
         int32_t err = -EINVAL;
         write_all(STDOUT_FILENO, &err, 4);
@@ -292,6 +302,14 @@ int main(int argc, char **argv) {
                 size = (end < 0) ? 0 : (uint64_t)end;
             }
             if (write_all(STDOUT_FILENO, &size, 8) != 0) break;
+        } else if (cmd == CMD_SMART) {
+            char smart_json[2048];
+            read_smart_json(dev_path, smart_json, sizeof(smart_json));
+            uint32_t len = (uint32_t)strlen(smart_json);
+            if (write_all(STDOUT_FILENO, &len, 4) != 0) break;
+            if (len > 0) {
+                if (write_all(STDOUT_FILENO, smart_json, len) != 0) break;
+            }
         }
     }
 

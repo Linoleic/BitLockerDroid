@@ -18,6 +18,7 @@ add_subdirectory(dislocker)
 
 add_library(dislocker_jni SHARED
     jni/dislocker_jni.c
+    daemon/smart_reader.c
 )
 
 target_include_directories(dislocker_jni PRIVATE
@@ -26,6 +27,7 @@ target_include_directories(dislocker_jni PRIVATE
     third_party/libntfs-3g/include
     third_party/libntfs-3g/include/ntfs-3g
     third_party/fatfs
+    daemon
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
@@ -47,6 +49,7 @@ set_target_properties(dislocker_jni PROPERTIES
 
 add_executable(bitlocker_io_daemon
     daemon/io_daemon.c
+    daemon/smart_reader.c
 )
 
 target_link_options(bitlocker_io_daemon PRIVATE

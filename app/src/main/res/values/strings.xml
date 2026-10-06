@@ -460,4 +460,31 @@
     <string name="settings_hw_badge_all_enabled">All Enabled</string>
     <string name="settings_hw_badge_partial">Partial (1/2)</string>
     <string name="settings_hw_badge_disabled">Disabled</string>
+
+    <!-- SMART Health Telemetry -->
+    <string name="smart_dialog_title">Storage Health &amp; SMART Telemetry</string>
+    <string name="smart_btn_text">Hardware Health &amp; SMART</string>
+    <string name="smart_status_healthy">Healthy</string>
+    <string name="smart_status_warning">Warning</string>
+    <string name="smart_status_critical">Critical / Failing</string>
+    <string name="smart_status_unsupported">Unsupported</string>
+    <string name="smart_metric_temp">Temperature</string>
+    <string name="smart_metric_health">Drive Health</string>
+    <string name="smart_metric_power_hours">Power-On Hours</string>
+    <string name="smart_metric_power_cycles">Power Cycles</string>
+    <string name="smart_metric_unsafe_shutdowns">Unsafe Shutdowns</string>
+    <string name="smart_metric_total_writes">Host Writes (TBW)</string>
+    <string name="smart_metric_total_reads">Host Reads</string>
+    <string name="smart_metric_reallocated">Reallocated Sectors</string>
+    <string name="smart_metric_pending">Pending Sectors</string>
+    <string name="smart_metric_uncorrectable">Uncorrectable Sectors</string>
+    <string name="smart_info_model">Drive Model</string>
+    <string name="smart_info_serial">Serial Number</string>
+    <string name="smart_info_firmware">Firmware Revision</string>
+    <string name="smart_info_node">Device Node</string>
+    <string name="smart_refresh_btn">Refresh</string>
+    <string name="smart_close_btn">Close</string>
+    <string name="smart_copied">Copied to clipboard</string>
+    <string name="smart_unsupported_desc">The storage device controller (e.g. standard USB flash drive) does not implement standard ATA or NVMe SMART telemetry.</string>
+    <string name="smart_loading">Querying device telemetry via SCSI/SAT/NVMe…</string>
 </resources>

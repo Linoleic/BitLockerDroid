@@ -89,6 +89,10 @@ object UsbStorageManager {
     /** Cache of active USB device connections by deviceId */
     private val activeDevices = ConcurrentHashMap<Int, UsbDeviceConnectionHolder>()
 
+    fun getActiveHolder(deviceId: Int): UsbDeviceConnectionHolder? = activeDevices[deviceId]
+    fun findHolderForDevice(usbDevice: UsbDevice): UsbDeviceConnectionHolder? = activeDevices[usbDevice.deviceId]
+    fun getAnyActiveHolder(): UsbDeviceConnectionHolder? = activeDevices.values.firstOrNull()
+
     /** Cache of discovered BitLocker USB partitions by devicePath */
     private val discoveredPartitions = ConcurrentHashMap<String, UsbPartitionInfo>()
 

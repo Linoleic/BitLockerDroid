@@ -29,6 +29,7 @@ import com.bitlockerdroid.ui.dialogs.BenchmarkDialog
 import com.bitlockerdroid.ui.dialogs.DisasterRecoveryDialog
 import com.bitlockerdroid.ui.dialogs.LanShareDialog
 import com.bitlockerdroid.ui.dialogs.RepairConfirmDialog
+import com.bitlockerdroid.ui.dialogs.SmartHealthDialog
 import com.bitlockerdroid.ui.dialogs.StandaloneDiagnosticDialog
 
 /** Content for Tab 0: Volumes list & detection */
@@ -59,6 +60,7 @@ fun VolumesTabContent(
     var lanShareTarget by remember { mutableStateOf<UnlockedVolume?>(null) }
     var repairTarget by remember { mutableStateOf<UnlockedVolume?>(null) }
     var diagnosticTarget by remember { mutableStateOf<UnlockedVolume?>(null) }
+    var smartHealthTarget by remember { mutableStateOf<String?>(null) }
 
     val isCompact = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 480
     val cardModifier = remember {
@@ -118,6 +120,7 @@ fun VolumesTabContent(
                                 if (onBiometricUnlockDetected != null) { { onBiometricUnlockDetected(detected.devicePath) } } else null
                             }
                             val onDisaster = remember(detected.devicePath) { { disasterDetectedTarget = detected } }
+                            val onSmartHealth = remember(detected.devicePath) { { smartHealthTarget = detected.devicePath } }
                             DetectedVolumeCard(
                                 volume = detected,
                                 hasSavedCredential = hasSavedCredential,
@@ -127,6 +130,7 @@ fun VolumesTabContent(
                                 onUnlock = onUnlock,
                                 onBiometricUnlock = onBiometricUnlock,
                                 onDisasterClick = onDisaster,
+                                onSmartHealthClick = onSmartHealth,
                                 modifier = cardModifier
                             )
                         }
@@ -155,6 +159,7 @@ fun VolumesTabContent(
                             val onRepair = remember(volume.devicePath) { { repairTarget = volume } }
                             val onDiagnostic = remember(volume.devicePath) { { diagnosticTarget = volume } }
                             val onDisaster = remember(volume.devicePath) { { disasterUnlockedTarget = volume } }
+                            val onSmartHealth = remember(volume.devicePath) { { smartHealthTarget = volume.devicePath } }
 
                             UnlockedVolumeCard(
                                 volume = volume,
@@ -170,6 +175,7 @@ fun VolumesTabContent(
                                 onRepairClick = onRepair,
                                 onDiagnosticClick = onDiagnostic,
                                 onDisasterClick = onDisaster,
+                                onSmartHealthClick = onSmartHealth,
                                 isEjecting = ejectingPaths.contains(volume.devicePath),
                                 isCompact = isCompact,
                                 modifier = cardModifier
@@ -268,6 +274,13 @@ fun VolumesTabContent(
         StandaloneDiagnosticDialog(
             volume = volume,
             onDismiss = { diagnosticTarget = null }
+        )
+    }
+
+    smartHealthTarget?.let { path ->
+        SmartHealthDialog(
+            devicePath = path,
+            onDismiss = { smartHealthTarget = null }
         )
     }
 }

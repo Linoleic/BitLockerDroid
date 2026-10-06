@@ -56,6 +56,9 @@ object NativeBridge {
     /** Runs key stretching micro-benchmark for [rounds] rounds and returns elapsed time in microseconds. */
     external fun nativeBenchmarkKeyStretching(rounds: Int): Long
 
+    /** Queries SCSI, SAT, or NVMe SMART telemetry for block device at [devicePath] and returns JSON string. */
+    external fun nativeReadDeviceSmart(devicePath: String): String?
+
     /** True if the block device at [path] carries a BitLocker volume header. */
     external fun nativeHasBitLockerHeader(path: String): Boolean
 

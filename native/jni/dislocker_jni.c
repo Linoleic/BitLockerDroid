@@ -30,6 +30,7 @@
 #include "dislocker/crypto.h"
 #include "dislocker/ntfs3g_device.h"
 #include "dislocker/fatfs_device.h"
+#include "daemon/smart_reader.h"
 
 #define TAG "BitLockerNative"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -1121,9 +1122,23 @@ static jstring native_getHardwareSha2Details(JNIEnv *env, jobject thiz)
 #endif
 }
 
+static jstring native_readDeviceSmart(JNIEnv *env, jobject thiz, jstring path_str)
+{
+	if (!path_str) return NULL;
+	const char *path = (*env)->GetStringUTFChars(env, path_str, NULL);
+	if (!path) return NULL;
+
+	char json[2048];
+	read_smart_json(path, json, sizeof(json));
+	(*env)->ReleaseStringUTFChars(env, path_str, path);
+
+	return (*env)->NewStringUTF(env, json);
+}
+
 /* ---------------- registration ---------------- */
 
 static const JNINativeMethod methods[] = {
+	NATIVE_METHOD(env, cls, "nativeReadDeviceSmart", "(Ljava/lang/String;)Ljava/lang/String;", native_readDeviceSmart),
 	NATIVE_METHOD(env, cls, "nativeIsHardwareAesSupported", "()Z", native_isHardwareAesSupported),
 	NATIVE_METHOD(env, cls, "nativeIsHardwareAesEnabled", "()Z", native_isHardwareAesEnabled),
 	NATIVE_METHOD(env, cls, "nativeSetHardwareAesEnabled", "(Z)V", native_setHardwareAesEnabled),

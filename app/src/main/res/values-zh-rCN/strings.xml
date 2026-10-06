@@ -455,8 +455,34 @@
     <string name="settings_hw_crypto_dialog_desc">ARMv8-A 密码学扩展指令集 (AES + SHA-256 硬件支持)</string>
     <string name="settings_hw_accel_summary">AES: %1$s · SHA-256: %2$s</string>
     <string name="settings_hw_state_enabled">已开启</string>
-    <string name="settings_hw_state_disabled">已关闭</string>
     <string name="settings_hw_badge_all_enabled">全部启用</string>
     <string name="settings_hw_badge_partial">部分启用 (1/2)</string>
     <string name="settings_hw_badge_disabled">已停用</string>
+
+    <!-- SMART Health Telemetry -->
+    <string name="smart_dialog_title">存储硬件健康与 SMART 监测</string>
+    <string name="smart_btn_text">硬件健康与 SMART 监测</string>
+    <string name="smart_status_healthy">健康良好</string>
+    <string name="smart_status_warning">警示预警</string>
+    <string name="smart_status_critical">严重 / 故障预警</string>
+    <string name="smart_status_unsupported">不支持 SMART</string>
+    <string name="smart_metric_temp">工作温度</string>
+    <string name="smart_metric_health">驱动器健康度</string>
+    <string name="smart_metric_power_hours">累计通电时间</string>
+    <string name="smart_metric_power_cycles">通电次数</string>
+    <string name="smart_metric_unsafe_shutdowns">异常断电次数</string>
+    <string name="smart_metric_total_writes">主机总写入量 (TBW)</string>
+    <string name="smart_metric_total_reads">主机总读取量</string>
+    <string name="smart_metric_reallocated">重映射坏扇区数</string>
+    <string name="smart_metric_pending">当前待映射扇区</string>
+    <string name="smart_metric_uncorrectable">无法校正扇区数</string>
+    <string name="smart_info_model">驱动器型号</string>
+    <string name="smart_info_serial">序列号</string>
+    <string name="smart_info_firmware">固件版本</string>
+    <string name="smart_info_node">底层设备节点</string>
+    <string name="smart_refresh_btn">刷新</string>
+    <string name="smart_close_btn">关闭</string>
+    <string name="smart_copied">已复制到剪贴板</string>
+    <string name="smart_unsupported_desc">当前存储介质（如普通 U 盘 / 读卡器）未内置标准 ATA/NVMe SMART 硬件监控传感器。</string>
+    <string name="smart_loading">正在通过 SCSI / SAT / NVMe 通道读取设备硬件数据…</string>
 </resources>
