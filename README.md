@@ -115,7 +115,7 @@ Empirical throughput and random seek performance across filesystems and BitLocke
 | **FAT32 (AES-XTS)** | **1.40 ms** (717.1 IOPS) | ±7.2% | **8.05 ms** (126.0 IOPS) | ±13.5% |
 | **FAT32 (AES-CBC)** | **1.42 ms** (706.9 IOPS) | ±9.3% | **9.16 ms** (109.2 IOPS) | ±2.4% |
 
-### 3. Tier 2: Mainstream USB Flash Drive (Lexar JumpDrive 128GB / USB 3.0 / BOT Protocol)
+### 3. Tier 2: Mainstream USB Flash Drive (Lexar JumpDrive 32GB / USB 3.0 / BOT Protocol)
 
 Empirical throughput and random seek performance across filesystems and BitLocker ciphers:
 
@@ -140,6 +140,28 @@ Empirical throughput and random seek performance across filesystems and BitLocke
 | **exFAT (AES-CBC)** | **2.16 ms** (475.6 IOPS) | ±19.2% | **8.15 ms** (122.9 IOPS) | ±4.0% |
 | **FAT32 (AES-XTS)** | **1.97 ms** (508.1 IOPS) | ±4.3% | **8.62 ms** (126.2 IOPS) | ±30.4% |
 | **FAT32 (AES-CBC)** | **2.40 ms** (427.6 IOPS) | ±19.6% | **9.65 ms** (106.4 IOPS) | ±17.4% |
+
+### 4. Root Mode vs Non-Root Mode Architectural Performance Comparison
+
+Comparing empirical performance under identical hardware and cryptographic configurations between Linux Kernel Direct I/O (Root) and Android Sandbox Userspace USB Host API (Non-Root):
+
+#### Comprehensive Architectural Performance Benchmark (10-sample mean)
+
+| Evaluation Dimension & Metric | Non-Root Mode (USB Host + Pipeline) | Root Mode (Kernel Direct I/O) | Speedup / Improvement |
+| :--- | :--- | :--- | :--- |
+| **Sequential Read Throughput** | 43.25 MB/s | **107.52 MB/s** | **+148.6% (2.49x)** |
+| **Sequential Write Throughput** | 12.97 MB/s | **22.98 MB/s** | **+77.2% (1.77x)** |
+| **4K Random Read Latency** | 1.33 ms (752 IOPS) | **0.97 ms** (1,031 IOPS) | **Latency reduced by 27.1%** |
+| **4K Random Write Latency** | 9.25 ms (108 IOPS) | **5.20 ms** (192 IOPS) | **Latency reduced by 43.8% (1.78x)** |
+| **50MB Large File Real Write** | 8.14 MB/s | **34.52 MB/s** | **+324.1% (4.24x)** |
+| **50MB Large File Real Read** | 13.76 MB/s | **21.12 MB/s** | **+53.5% (1.53x)** |
+
+#### Root vs Non-Root Bottleneck Breakdown
+
+1. **I/O Dispatch & Buffer Chunking Overhead**: Root mode directly accesses Linux kernel block nodes (`/dev/block/*`) leveraging kernel drivers and hardware DMA. Non-Root mode is constrained by Android user-space `usbfs`, forcing I/O requests to be sliced into 16 KB `UsbRequest` packets, introducing frequent `ioctl` syscalls and context switches.
+2. **Bus Protocol Mechanics**: Root mode supports kernel UAS with concurrent command queueing; Non-Root mode simulates half-duplex BOT in user space with sequential CBW -> Data -> CSW round trips.
+3. **IPC & Virtual Filesystem Layers**: Root mode mounts directly to POSIX `/storage/XXXX-XXXX` via FUSE. Non-Root mode relies on SAF (Storage Access Framework) with synchronous Binder IPC over `ProxyFileDescriptor` and JNI bridging.
+4. **Non-Root Double-Buffered Pipeline Mitigation**: BitLockerDroid integrates a 4-stage asynchronous URB ring pipeline and double-buffered ping-pong queue, boosting Non-Root write throughput by **+39.5%** (12.97 MB/s vs 9.30 MB/s baseline BOT) and large-file streaming by **+24.3%**.
 
 ---
 
