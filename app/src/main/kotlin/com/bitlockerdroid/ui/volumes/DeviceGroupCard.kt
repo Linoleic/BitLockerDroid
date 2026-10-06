@@ -59,15 +59,16 @@ fun DeviceGroupCard(
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
     val context = androidx.compose.ui.platform.LocalContext.current
 
-    var isSmartSupported by remember(group.physicalDiskPath) {
-        mutableStateOf(com.bitlockerdroid.smart.SmartHealthManager.getCachedSupport(group.physicalDiskPath) ?: false)
+    var isSmartSupported by remember(group.deviceKey) {
+        mutableStateOf(com.bitlockerdroid.smart.SmartHealthManager.getCachedSupport(group.deviceKey) ?: false)
     }
 
-    LaunchedEffect(group.physicalDiskPath) {
+    LaunchedEffect(group.deviceKey) {
         val supported = com.bitlockerdroid.smart.SmartHealthManager.isDeviceSmartSupported(
-            context,
-            group.physicalDiskPath,
-            group.usbDeviceId
+            context = context,
+            devicePath = group.physicalDiskPath,
+            usbDeviceId = group.usbDeviceId,
+            cacheKey = group.deviceKey
         )
         isSmartSupported = supported
     }

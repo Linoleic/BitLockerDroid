@@ -20,15 +20,15 @@ object SmartHealthManager {
     private val smartSupportCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
     private val smartInfoCache = java.util.concurrent.ConcurrentHashMap<String, SmartHealthInfo>()
 
-    fun getCachedSupport(devicePath: String): Boolean? {
-        if (devicePath.isBlank() || devicePath.startsWith("storage:")) return false
-        return smartSupportCache[devicePath]
+    fun getCachedSupport(key: String): Boolean? {
+        if (key.isBlank() || key.startsWith("storage:")) return false
+        return smartSupportCache[key]
     }
 
-    fun clearCache(devicePath: String? = null) {
-        if (devicePath != null) {
-            smartSupportCache.remove(devicePath)
-            smartInfoCache.remove(devicePath)
+    fun clearCache(key: String? = null) {
+        if (key != null) {
+            smartSupportCache.remove(key)
+            smartInfoCache.remove(key)
         } else {
             smartSupportCache.clear()
             smartInfoCache.clear()
@@ -38,17 +38,19 @@ object SmartHealthManager {
     suspend fun isDeviceSmartSupported(
         context: Context,
         devicePath: String,
-        usbDeviceId: Int? = null
+        usbDeviceId: Int? = null,
+        cacheKey: String? = null
     ): Boolean = withContext(Dispatchers.IO) {
-        if (devicePath.isBlank() || devicePath.startsWith("storage:")) {
+        val key = cacheKey ?: devicePath
+        if (key.isBlank() || key.startsWith("storage:") || devicePath.isBlank() || devicePath.startsWith("storage:")) {
             return@withContext false
         }
-        smartSupportCache[devicePath]?.let { return@withContext it }
+        smartSupportCache[key]?.let { return@withContext it }
 
         val info = querySmartInternal(context, devicePath, usbDeviceId)
-        smartSupportCache[devicePath] = info.isSupported
+        smartSupportCache[key] = info.isSupported
         if (info.isSupported) {
-            smartInfoCache[devicePath] = info
+            smartInfoCache[key] = info
         }
         info.isSupported
     }
@@ -56,12 +58,14 @@ object SmartHealthManager {
     suspend fun querySmart(
         context: Context,
         devicePath: String,
-        usbDeviceId: Int? = null
+        usbDeviceId: Int? = null,
+        cacheKey: String? = null
     ): SmartHealthInfo = withContext(Dispatchers.IO) {
+        val key = cacheKey ?: devicePath
         val info = querySmartInternal(context, devicePath, usbDeviceId)
-        smartSupportCache[devicePath] = info.isSupported
+        smartSupportCache[key] = info.isSupported
         if (info.isSupported) {
-            smartInfoCache[devicePath] = info
+            smartInfoCache[key] = info
         }
         info
     }
@@ -80,9 +84,10 @@ object SmartHealthManager {
                 val res = RootAccess.exec("$daemonPath --smart '$devicePath'", 6000)
                 if (res != null && res.first == 0 && res.second.isNotBlank()) {
                     val info = SmartDataParser.parseJson(res.second)
-                    if (info.isSupported) {
-                        return@withContext info
-                    }
+                    // The root daemon executes SCSI, SAT, and NVMe queries.
+                    // If it returns a valid response (whether supported or unsupported),
+                    // that is the authoritative hardware result for this block device.
+                    return@withContext info
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Root SMART query error for $devicePath", e)

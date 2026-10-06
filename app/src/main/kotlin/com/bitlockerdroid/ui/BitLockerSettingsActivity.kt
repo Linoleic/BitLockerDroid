@@ -416,6 +416,8 @@ class BitLockerSettingsActivity : FragmentActivity() {
                 if (showToast) {
                     UnlockManager.clearManualLockSuppression()
                 }
+                com.bitlockerdroid.util.DeviceIdentity.clearCache()
+                com.bitlockerdroid.smart.SmartHealthManager.clearCache()
                 // FUSE daemon may have written to the volume behind our back:
                 // drop every active session's block/FS caches so the refreshed
                 // listing reflects the on-volume truth.

@@ -94,10 +94,17 @@ object DeviceGroupBuilder {
                     holder.unencrypted.sumOf { it.totalBytes }
 
             val totalCapacity = if (devInfo.sizeBytes > 0L) devInfo.sizeBytes else partitionSumBytes
+            val uniqueKey = if (diskNode.startsWith("storage:")) {
+                diskNode
+            } else {
+                val parts = listOf(diskNode, devInfo.vendor, devInfo.model, totalCapacity.toString())
+                    .filter { it.isNotBlank() && it != "0" }
+                parts.joinToString(":")
+            }
 
             result.add(
                 DeviceVolumeGroup(
-                    deviceKey = diskNode,
+                    deviceKey = uniqueKey,
                     deviceName = deviceName,
                     physicalDiskPath = diskNode,
                     totalCapacityBytes = totalCapacity,

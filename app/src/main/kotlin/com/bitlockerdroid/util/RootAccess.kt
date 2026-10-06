@@ -449,15 +449,20 @@ object RootAccess {
                     val entry = apkFile.getEntry("lib/$abi/libbitlocker_io.so")
                         ?: apkFile.getEntry("lib/arm64-v8a/libbitlocker_io.so")
                     if (entry != null) {
-                        val appFilesBin = java.io.File(context.filesDir, "bitlocker_io")
+                    val appFilesBin = java.io.File(context.filesDir, "bitlocker_io")
+                    val tmpBin = java.io.File("/data/local/tmp/bitlocker_io")
+                    val needExtract = !appFilesBin.exists() || appFilesBin.length() != entry.size
+                    if (needExtract) {
+                        val tempBin = java.io.File(context.filesDir, "bitlocker_io_tmp")
                         apkFile.getInputStream(entry).use { input ->
-                            appFilesBin.outputStream().use { output -> input.copyTo(output) }
+                            tempBin.outputStream().use { output -> input.copyTo(output) }
                         }
-                        appFilesBin.setExecutable(true, false)
-                        val tmpBin = java.io.File("/data/local/tmp/bitlocker_io")
-                        if (!binariesMatch(appFilesBin, tmpBin)) {
-                            exec("cp '${appFilesBin.absolutePath}' /data/local/tmp/bitlocker_io && chmod 755 /data/local/tmp/bitlocker_io")
-                        }
+                        tempBin.setExecutable(true, false)
+                        tempBin.renameTo(appFilesBin)
+                    }
+                    if (!binariesMatch(appFilesBin, tmpBin)) {
+                        exec("cp '${appFilesBin.absolutePath}' /data/local/tmp/bitlocker_io && chmod 755 /data/local/tmp/bitlocker_io")
+                    }
                     }
                     apkFile.close()
                 } catch (t: Throwable) {
