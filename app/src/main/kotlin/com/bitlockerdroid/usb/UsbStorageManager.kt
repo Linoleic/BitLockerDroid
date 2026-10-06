@@ -617,12 +617,33 @@ object UsbStorageManager {
      * Resolves device hardware info (vendor, model, size) for UI display.
      */
     fun getDeviceInfo(devicePath: String): DeviceIdentity.DeviceInfo? {
-        val part = discoveredPartitions[devicePath] ?: return null
-        return DeviceIdentity.DeviceInfo(
-            vendor = part.vendor,
-            model = if (part.partitionIndex > 1) "${part.model} (Part ${part.partitionIndex})" else part.model,
-            sizeBytes = part.sectorCount * part.sectorSize
-        )
+        val part = discoveredPartitions[devicePath]
+        if (part != null) {
+            return DeviceIdentity.DeviceInfo(
+                vendor = part.vendor,
+                model = if (part.partitionIndex > 1) "${part.model} (Part ${part.partitionIndex})" else part.model,
+                sizeBytes = part.sectorCount * part.sectorSize
+            )
+        }
+        if (devicePath.startsWith("usb://")) {
+            val devIdStr = devicePath.removePrefix("usb://").substringBefore('/')
+            val devId = devIdStr.toIntOrNull()
+            if (devId != null) {
+                val holder = activeDevices[devId]
+                if (holder != null) {
+                    val matchingParts = discoveredPartitions.values.filter { it.deviceId == devId }
+                    val vendor = matchingParts.firstOrNull()?.vendor ?: holder.usbDevice.manufacturerName ?: ""
+                    val model = matchingParts.firstOrNull()?.model ?: holder.usbDevice.productName ?: ""
+                    val totalBytes = matchingParts.sumOf { it.sectorCount * it.sectorSize }
+                    return DeviceIdentity.DeviceInfo(
+                        vendor = vendor,
+                        model = model,
+                        sizeBytes = totalBytes
+                    )
+                }
+            }
+        }
+        return null
     }
 
     /**

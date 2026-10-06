@@ -254,12 +254,12 @@ object UsbSmartProbe {
                 )
             }
 
-            // 6. Controller lacks ATA/NVMe SMART
+            // 6. Controller lacks ATA/NVMe S.M.A.R.T.
             return SmartHealthInfo.unsupported(
                 vendor = vendor.ifBlank { null },
                 product = product.ifBlank { null },
                 node = deviceNode,
-                reason = "Storage controller lacks standard ATA/NVMe SMART telemetry."
+                reason = "Storage controller lacks standard ATA/NVMe S.M.A.R.T. telemetry."
             )
         } catch (e: Exception) {
             Log.w(TAG, "probeSmart failed", e)

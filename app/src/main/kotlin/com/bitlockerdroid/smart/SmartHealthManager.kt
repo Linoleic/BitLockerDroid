@@ -70,8 +70,8 @@ object SmartHealthManager {
 
         SmartHealthInfo.unsupported(
             node = devicePath,
-            reason = if (useRoot) "该介质（普通 U 盘 / 存储卡）未内置标准 ATA/NVMe SMART 硬件监控传感器"
-                     else "当前运行模式或外设主控未提供标准 SMART 传感器数据"
+            reason = if (useRoot) "该介质（普通 U 盘 / 存储卡）未内置标准 ATA/NVMe S.M.A.R.T. 硬件监控传感器"
+                     else "当前运行模式或外设主控未提供标准 S.M.A.R.T. 传感器数据"
         )
     }
 }

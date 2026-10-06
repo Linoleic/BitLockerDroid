@@ -66,7 +66,6 @@ fun UnlockedVolumeCard(
     onRepairClick: () -> Unit,
     onDiagnosticClick: () -> Unit,
     onDisasterClick: () -> Unit,
-    onSmartHealthClick: () -> Unit = {},
     isEjecting: Boolean = false,
     isCompact: Boolean = false,
     modifier: Modifier = Modifier
@@ -784,29 +783,6 @@ fun UnlockedVolumeCard(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = stringResource(R.string.disaster_recovery_title),
-                                    style = MaterialTheme.typography.labelMedium
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(6.dp))
-                            AppButton(
-                                onClick = onSmartHealthClick,
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth(),
-                                containerColor = Color.Transparent,
-                                contentColor = MaterialTheme.colorScheme.primary,
-                                borderColor = MaterialTheme.colorScheme.outlineVariant,
-                                contentPadding = PaddingValues(vertical = 6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Info,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = stringResource(R.string.smart_btn_text),
                                     style = MaterialTheme.typography.labelMedium
                                 )
                             }

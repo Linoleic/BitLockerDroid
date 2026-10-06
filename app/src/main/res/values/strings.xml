@@ -461,13 +461,13 @@
     <string name="settings_hw_badge_partial">Partial (1/2)</string>
     <string name="settings_hw_badge_disabled">Disabled</string>
 
-    <!-- SMART Health Telemetry -->
-    <string name="smart_dialog_title">Storage Health &amp; SMART Telemetry</string>
-    <string name="smart_btn_text">Hardware Health &amp; SMART</string>
+    <!-- S.M.A.R.T. Health Telemetry -->
+    <string name="smart_dialog_title">Storage Health &amp; S.M.A.R.T. Telemetry</string>
+    <string name="smart_btn_text">Hardware Health &amp; S.M.A.R.T.</string>
     <string name="smart_status_healthy">Healthy</string>
     <string name="smart_status_warning">Warning</string>
     <string name="smart_status_critical">Critical / Failing</string>
-    <string name="smart_status_unsupported">Unsupported</string>
+    <string name="smart_status_unsupported">S.M.A.R.T. Unsupported</string>
     <string name="smart_metric_temp">Temperature</string>
     <string name="smart_metric_health">Drive Health</string>
     <string name="smart_metric_power_hours">Power-On Hours</string>
@@ -485,8 +485,12 @@
     <string name="smart_refresh_btn">Refresh</string>
     <string name="smart_close_btn">Close</string>
     <string name="smart_copied">Copied to clipboard</string>
-    <string name="smart_unsupported_desc">The storage device controller (e.g. standard USB flash drive) does not implement standard ATA or NVMe SMART telemetry.</string>
-    <string name="smart_loading">Querying device telemetry via SCSI/SAT/NVMe…</string>
+    <string name="smart_unsupported_desc">The storage device controller (e.g. standard USB flash drive) does not implement standard ATA or NVMe S.M.A.R.T. telemetry.</string>
+    <string name="smart_loading">Querying device telemetry via SCSI/SAT/NVMe S.M.A.R.T.…</string>
+    <string name="smart_raw_data_title">Raw S.M.A.R.T. Data</string>
+    <string name="smart_raw_data_view">View Raw Data</string>
+    <string name="smart_raw_data_hide">Hide Raw Data</string>
+    <string name="smart_raw_data_copy">Copy Raw Data</string>
 
     <!-- Device Classification & Grouping -->
     <string name="device_group_partitions_count">%1$d Partitions</string>
@@ -494,5 +498,5 @@
     <string name="device_group_locked_header">BitLocker Locked Partitions</string>
     <string name="device_group_unlocked_header">Mounted Partitions</string>
     <string name="device_group_unencrypted_header">Native Storage Partitions</string>
-    <string name="device_smart_telemetry_btn">Hardware Health &amp; SMART</string>
+    <string name="device_smart_telemetry_btn">Hardware Health &amp; S.M.A.R.T.</string>
 </resources>

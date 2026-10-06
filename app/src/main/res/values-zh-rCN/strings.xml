@@ -459,13 +459,13 @@
     <string name="settings_hw_badge_partial">部分启用 (1/2)</string>
     <string name="settings_hw_badge_disabled">已停用</string>
 
-    <!-- SMART Health Telemetry -->
-    <string name="smart_dialog_title">存储硬件健康与 SMART 监测</string>
-    <string name="smart_btn_text">硬件健康与 SMART 监测</string>
+    <!-- S.M.A.R.T. Health Telemetry -->
+    <string name="smart_dialog_title">存储硬件健康与 S.M.A.R.T. 监测</string>
+    <string name="smart_btn_text">硬件健康与 S.M.A.R.T. 监测</string>
     <string name="smart_status_healthy">健康良好</string>
     <string name="smart_status_warning">警示预警</string>
     <string name="smart_status_critical">严重 / 故障预警</string>
-    <string name="smart_status_unsupported">不支持 SMART</string>
+    <string name="smart_status_unsupported">不支持 S.M.A.R.T.</string>
     <string name="smart_metric_temp">工作温度</string>
     <string name="smart_metric_health">驱动器健康度</string>
     <string name="smart_metric_power_hours">累计通电时间</string>
@@ -483,8 +483,12 @@
     <string name="smart_refresh_btn">刷新</string>
     <string name="smart_close_btn">关闭</string>
     <string name="smart_copied">已复制到剪贴板</string>
-    <string name="smart_unsupported_desc">当前存储介质（如普通 U 盘 / 读卡器）未内置标准 ATA/NVMe SMART 硬件监控传感器。</string>
+    <string name="smart_unsupported_desc">当前存储介质（如普通 U 盘 / 读卡器）未内置标准 ATA/NVMe S.M.A.R.T. 硬件监控传感器。</string>
     <string name="smart_loading">正在通过 SCSI / SAT / NVMe 通道读取设备硬件数据…</string>
+    <string name="smart_raw_data_title">S.M.A.R.T. 原始数据</string>
+    <string name="smart_raw_data_view">查看原始数据</string>
+    <string name="smart_raw_data_hide">收起原始数据</string>
+    <string name="smart_raw_data_copy">复制原始数据</string>
 
     <!-- Device Classification & Grouping -->
     <string name="device_group_partitions_count">%1$d 个分区</string>
@@ -492,5 +496,5 @@
     <string name="device_group_locked_header">待解锁加密分区</string>
     <string name="device_group_unlocked_header">已挂载分区</string>
     <string name="device_group_unencrypted_header">原生存储分区</string>
-    <string name="device_smart_telemetry_btn">硬件健康与 SMART 监测</string>
+    <string name="device_smart_telemetry_btn">硬件健康与 S.M.A.R.T. 监测</string>
 </resources>

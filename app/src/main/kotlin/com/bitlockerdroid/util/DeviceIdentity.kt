@@ -266,11 +266,11 @@ object DeviceIdentity {
 
         parentDiskCache[devicePath]?.let { return it }
 
-        // 1. USB BOT URL: group by device prefix (vid:pid/device)
+        // 1. USB BOT URL: group by device prefix (usb://deviceId)
         if (devicePath.startsWith("usb://")) {
             val trimmed = devicePath.removePrefix("usb://")
             val parts = trimmed.split('/')
-            val resolved = if (parts.size > 2) "usb://${parts[0]}/${parts[1]}" else devicePath
+            val resolved = if (parts.size >= 2) "usb://${parts[0]}" else devicePath
             parentDiskCache[devicePath] = resolved
             return resolved
         }

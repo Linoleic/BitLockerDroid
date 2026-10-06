@@ -221,7 +221,6 @@ fun DeviceGroupCard(
                                 if (onBiometricUnlockDetected != null) { { onBiometricUnlockDetected(detected.devicePath) } } else null
                             }
                             val onDisaster = remember(detected.devicePath) { { onDisasterDetectedClick(detected) } }
-                            val onSmart = remember(detected.devicePath) { { onSmartHealthClick(group.physicalDiskPath) } }
 
                             DetectedVolumeCard(
                                 volume = detected,
@@ -231,8 +230,7 @@ fun DeviceGroupCard(
                                 onMountReadOnlyChange = onMountReadOnlyChange,
                                 onUnlock = onUnlock,
                                 onBiometricUnlock = onBiometricUnlock,
-                                onDisasterClick = onDisaster,
-                                onSmartHealthClick = onSmart
+                                onDisasterClick = onDisaster
                             )
                         }
                     }
@@ -260,7 +258,6 @@ fun DeviceGroupCard(
                             val onRepair = remember(volume.devicePath) { { onRepairClick(volume) } }
                             val onDiagnostic = remember(volume.devicePath) { { onDiagnosticClick(volume) } }
                             val onDisaster = remember(volume.devicePath) { { onDisasterUnlockedClick(volume) } }
-                            val onSmart = remember(volume.devicePath) { { onSmartHealthClick(group.physicalDiskPath) } }
 
                             UnlockedVolumeCard(
                                 volume = volume,
@@ -276,7 +273,6 @@ fun DeviceGroupCard(
                                 onRepairClick = onRepair,
                                 onDiagnosticClick = onDiagnostic,
                                 onDisasterClick = onDisaster,
-                                onSmartHealthClick = onSmart,
                                 isEjecting = ejectingPaths.contains(volume.devicePath),
                                 isCompact = isCompact
                             )
