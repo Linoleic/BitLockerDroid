@@ -100,7 +100,8 @@ adb shell content call --uri content://com.bitlockerdroid.provider --method run_
 adb shell content call --uri content://com.bitlockerdroid.provider --method run_benchmark --arg "<设备路径>" --extra test_type:s:read_only
 ```
 - **返回 Bundle 关键指标**:
-  - `seq_read_mbps` / `seq_write_mbps`: 连续吞吐量 (MB/s)
+  - `seq_read_mbps` / `seq_write_mbps`: 连续平均吞吐量 (MB/s)
+  - `peak_read_mbps` / `peak_write_mbps`: 连续瞬时峰值吞吐量 (MB/s)
   - `random_4k_read_ms` / `random_4k_read_iops`: 4K 读延迟 (ms) 与 IOPS
   - `random_4k_write_ms` / `random_4k_write_iops`: 4K 写延迟 (ms) 与 IOPS
   - `usb_speed_mbps` / `usb_speed_desc`: USB 物理协商速度（如 `5000` / `USB 3.0 (5 Gbps SuperSpeed)`）

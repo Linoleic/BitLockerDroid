@@ -34,7 +34,9 @@ enum class BenchmarkTestType(val id: String, val isWrite: Boolean) {
 
 data class BenchmarkResult(
     val sequentialReadMbPerSec: Double? = null,
+    val peakReadMbPerSec: Double? = null,
     val sequentialWriteMbPerSec: Double? = null,
+    val peakWriteMbPerSec: Double? = null,
     val random4kLatencyMs: Double? = null, // Read latency
     val random4kIops: Double? = null,      // Read IOPS
     val random4kWriteLatencyMs: Double? = null,
@@ -46,7 +48,9 @@ data class BenchmarkResult(
     fun mergeWith(newer: BenchmarkResult): BenchmarkResult {
         return BenchmarkResult(
             sequentialReadMbPerSec = newer.sequentialReadMbPerSec ?: this.sequentialReadMbPerSec,
+            peakReadMbPerSec = newer.peakReadMbPerSec ?: this.peakReadMbPerSec,
             sequentialWriteMbPerSec = newer.sequentialWriteMbPerSec ?: this.sequentialWriteMbPerSec,
+            peakWriteMbPerSec = newer.peakWriteMbPerSec ?: this.peakWriteMbPerSec,
             random4kLatencyMs = newer.random4kLatencyMs ?: this.random4kLatencyMs,
             random4kIops = newer.random4kIops ?: this.random4kIops,
             random4kWriteLatencyMs = newer.random4kWriteLatencyMs ?: this.random4kWriteLatencyMs,
@@ -128,7 +132,7 @@ object BenchmarkEngine {
         core: DislockerCore,
         context: Context? = null,
         onProgress: (phase: String, progress: Float) -> Unit
-    ): Double = withContext(Dispatchers.IO) {
+    ): Pair<Double, Double> = withContext(Dispatchers.IO) {
         val volumeSize = core.info.volumeSize
         val sectorSize = core.info.sectorSize.coerceAtLeast(512)
         val stepSeq = context?.getString(R.string.benchmark_step_seq) ?: "Testing sequential read…"
@@ -137,14 +141,21 @@ object BenchmarkEngine {
         val numChunks = 32 // 16 MB total
         var totalBytesRead = 0L
         val startOffset = 64L * sectorSize
+        var peakChunkMbPerSec = 0.0
 
         val seqStartNano = System.nanoTime()
         for (i in 0 until numChunks) {
             val offset = startOffset + (i.toLong() * chunkSize)
             if (offset + chunkSize > volumeSize) break
+            val chunkStart = System.nanoTime()
             val buf = NativeBridge.nativeRead(core.handle, offset, chunkSize)
+            val chunkElapsedSec = (System.nanoTime() - chunkStart) / 1_000_000_000.0
             if (buf != null) {
                 totalBytesRead += buf.size
+                if (chunkElapsedSec > 0) {
+                    val rate = (buf.size.toDouble() / (1024.0 * 1024.0)) / chunkElapsedSec
+                    if (rate > peakChunkMbPerSec) peakChunkMbPerSec = rate
+                }
             }
             if ((i + 1) % 8 == 0 || i == numChunks - 1) {
                 val curProgress = 0.05f + (0.90f * (i + 1) / numChunks)
@@ -155,16 +166,18 @@ object BenchmarkEngine {
             }
         }
         val seqElapsedSec = (System.nanoTime() - seqStartNano) / 1_000_000_000.0
-        if (seqElapsedSec > 0 && totalBytesRead > 0) {
+        val avgSpeed = if (seqElapsedSec > 0 && totalBytesRead > 0) {
             (totalBytesRead.toDouble() / (1024.0 * 1024.0)) / seqElapsedSec
         } else 0.0
+        val peakSpeed = maxOf(avgSpeed, peakChunkMbPerSec)
+        Pair(avgSpeed, peakSpeed)
     }
 
     suspend fun testSequentialWrite(
         core: DislockerCore,
         context: Context? = null,
         onProgress: (phase: String, progress: Float) -> Unit
-    ): Double? = withContext(Dispatchers.IO) {
+    ): Pair<Double, Double>? = withContext(Dispatchers.IO) {
         val writer = core.writer ?: return@withContext null
         if (!writer.isMounted) return@withContext null
 
@@ -174,6 +187,7 @@ object BenchmarkEngine {
         val numWriteChunks = 32 // 8 MB total
         val testFileName = ".benchmark_tmp_seq_${System.currentTimeMillis()}.bin"
         val writePayload = ByteArray(writeChunkSize) { 0x5A }
+        var peakChunkMbPerSec = 0.0
 
         try {
             val createdRef = writer.createFile("/", testFileName, false)
@@ -183,9 +197,15 @@ object BenchmarkEngine {
             val writeStartNano = System.nanoTime()
             for (i in 0 until numWriteChunks) {
                 val curOff = i.toLong() * writeChunkSize
+                val chunkStart = System.nanoTime()
                 val w = writer.write("/$testFileName", curOff, writePayload, writeChunkSize)
+                val chunkElapsedSec = (System.nanoTime() - chunkStart) / 1_000_000_000.0
                 if (w <= 0) break
                 totalWritten += w
+                if (chunkElapsedSec > 0) {
+                    val rate = (w.toDouble() / (1024.0 * 1024.0)) / chunkElapsedSec
+                    if (rate > peakChunkMbPerSec) peakChunkMbPerSec = rate
+                }
                 if ((i + 1) % 8 == 0 || i == numWriteChunks - 1) {
                     val curProgress = 0.05f + (0.90f * (i + 1) / numWriteChunks)
                     val writeMb = (i + 1) * 256 / 1024
@@ -198,9 +218,11 @@ object BenchmarkEngine {
             val writeElapsedSec = (System.nanoTime() - writeStartNano) / 1_000_000_000.0
             writer.delete("/$testFileName")
             core.invalidateCache()
-            if (writeElapsedSec > 0 && totalWritten > 0) {
+            val avgSpeed = if (writeElapsedSec > 0 && totalWritten > 0) {
                 (totalWritten.toDouble() / (1024.0 * 1024.0)) / writeElapsedSec
-            } else null
+            } else 0.0
+            val peakSpeed = maxOf(avgSpeed, peakChunkMbPerSec)
+            Pair(avgSpeed, peakSpeed)
         } catch (e: Exception) {
             android.util.Log.w("BenchmarkEngine", "Sequential write benchmark failed: ${e.message}")
             try {
@@ -333,7 +355,9 @@ object BenchmarkEngine {
         }
 
         var seqReadMb: Double? = null
+        var peakReadMb: Double? = null
         var seqWriteMb: Double? = null
+        var peakWriteMb: Double? = null
         var randReadLatency: Double? = null
         var randReadIops: Double? = null
         var randWriteLatency: Double? = null
@@ -341,16 +365,22 @@ object BenchmarkEngine {
 
         // 1. Sequential Read
         if (BenchmarkTestType.SEQ_READ in testsToRun) {
-            seqReadMb = testSequentialRead(core, context) { msg, p ->
+            val (readAvg, readPeak) = testSequentialRead(core, context) { msg, p ->
                 onProgress(msg, stageProgress(p))
             }
+            seqReadMb = readAvg
+            peakReadMb = readPeak
             completedStages++
         }
 
         // 2. Sequential Write
         if (BenchmarkTestType.SEQ_WRITE in testsToRun) {
-            seqWriteMb = testSequentialWrite(core, context) { msg, p ->
+            val writeRes = testSequentialWrite(core, context) { msg, p ->
                 onProgress(msg, stageProgress(p))
+            }
+            if (writeRes != null) {
+                seqWriteMb = writeRes.first
+                peakWriteMb = writeRes.second
             }
             completedStages++
         }
@@ -395,7 +425,9 @@ object BenchmarkEngine {
 
         BenchmarkResult(
             sequentialReadMbPerSec = seqReadMb,
+            peakReadMbPerSec = peakReadMb,
             sequentialWriteMbPerSec = seqWriteMb,
+            peakWriteMbPerSec = peakWriteMb,
             random4kLatencyMs = randReadLatency,
             random4kIops = randReadIops,
             random4kWriteLatencyMs = randWriteLatency,

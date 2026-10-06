@@ -238,7 +238,14 @@ fun BenchmarkDialog(
                     isSelected = selectedTests.contains(BenchmarkTestType.SEQ_READ),
                     isReadOnlyRestricted = false,
                     isRunning = isRunning,
-                    valueText = result?.sequentialReadMbPerSec?.let { String.format(Locale.US, "%.1f MB/s", it) },
+                    valueText = result?.let { res ->
+                        val avg = res.sequentialReadMbPerSec ?: return@let null
+                        val base = String.format(Locale.US, "%.1f MB/s", avg)
+                        val peak = res.peakReadMbPerSec
+                        if (peak != null && peak > avg * 1.05) {
+                            String.format(Locale.US, "%.1f MB/s (峰值 %.1f)", avg, peak)
+                        } else base
+                    },
                     valueHighlight = (result?.sequentialReadMbPerSec ?: 0.0) >= 30.0,
                     onToggleSelect = {
                         selectedTests = if (selectedTests.contains(BenchmarkTestType.SEQ_READ)) {
@@ -256,7 +263,14 @@ fun BenchmarkDialog(
                     isSelected = selectedTests.contains(BenchmarkTestType.SEQ_WRITE),
                     isReadOnlyRestricted = isReadOnly,
                     isRunning = isRunning,
-                    valueText = result?.sequentialWriteMbPerSec?.let { String.format(Locale.US, "%.1f MB/s", it) },
+                    valueText = result?.let { res ->
+                        val avg = res.sequentialWriteMbPerSec ?: return@let null
+                        val base = String.format(Locale.US, "%.1f MB/s", avg)
+                        val peak = res.peakWriteMbPerSec
+                        if (peak != null && peak > avg * 1.05) {
+                            String.format(Locale.US, "%.1f MB/s (峰值 %.1f)", avg, peak)
+                        } else base
+                    },
                     valueHighlight = (result?.sequentialWriteMbPerSec ?: 0.0) >= 20.0,
                     onToggleSelect = {
                         if (!isReadOnly) {

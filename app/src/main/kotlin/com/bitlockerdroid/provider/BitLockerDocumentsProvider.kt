@@ -434,9 +434,17 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                 out.putDouble("seq_mb_s", res.sequentialReadMbPerSec!!)
                 out.putDouble("seq_read_mbps", res.sequentialReadMbPerSec!!)
             }
+            if (res.peakReadMbPerSec != null) {
+                out.putDouble("peak_read_mbps", res.peakReadMbPerSec!!)
+                out.putDouble("peak_read_mb_s", res.peakReadMbPerSec!!)
+            }
             if (res.sequentialWriteMbPerSec != null) {
                 out.putDouble("seq_write_mb_s", res.sequentialWriteMbPerSec!!)
                 out.putDouble("seq_write_mbps", res.sequentialWriteMbPerSec!!)
+            }
+            if (res.peakWriteMbPerSec != null) {
+                out.putDouble("peak_write_mbps", res.peakWriteMbPerSec!!)
+                out.putDouble("peak_write_mb_s", res.peakWriteMbPerSec!!)
             }
             if (res.random4kLatencyMs != null) {
                 out.putDouble("random_4k_ms", res.random4kLatencyMs!!)
