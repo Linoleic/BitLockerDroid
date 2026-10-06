@@ -485,4 +485,12 @@
     <string name="smart_copied">已复制到剪贴板</string>
     <string name="smart_unsupported_desc">当前存储介质（如普通 U 盘 / 读卡器）未内置标准 ATA/NVMe SMART 硬件监控传感器。</string>
     <string name="smart_loading">正在通过 SCSI / SAT / NVMe 通道读取设备硬件数据…</string>
+
+    <!-- Device Classification & Grouping -->
+    <string name="device_group_partitions_count">%1$d 个分区</string>
+    <string name="device_group_partition_single">1 个分区</string>
+    <string name="device_group_locked_header">待解锁加密分区</string>
+    <string name="device_group_unlocked_header">已挂载分区</string>
+    <string name="device_group_unencrypted_header">原生存储分区</string>
+    <string name="device_smart_telemetry_btn">硬件健康与 SMART 监测</string>
 </resources>

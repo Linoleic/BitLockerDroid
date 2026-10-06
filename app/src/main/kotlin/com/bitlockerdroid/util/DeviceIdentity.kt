@@ -30,18 +30,22 @@ object DeviceIdentity {
     }
 
     private val cache = java.util.concurrent.ConcurrentHashMap<String, DeviceInfo>()
+    private val parentDiskCache = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     fun clearCache() {
         cache.clear()
+        parentDiskCache.clear()
     }
 
     fun invalidate(devicePath: String) {
         cache.remove(devicePath)
+        parentDiskCache.remove(devicePath)
     }
 
     fun retainOnly(validPaths: Collection<String>) {
         val validSet = validPaths.toSet()
         cache.keys.retainAll(validSet)
+        parentDiskCache.keys.retainAll(validSet)
     }
 
     /**
@@ -84,6 +88,7 @@ object DeviceIdentity {
             // Priority 1: Direct sysfs read (runs in <0.2ms, no root process creation)
             val sysDevFile = when {
                 majMin != null -> File("/sys/dev/block/$majMin")
+                File("/sys/block/$fileName").exists() -> File("/sys/block/$fileName")
                 File("/sys/class/block/$fileName").exists() -> File("/sys/class/block/$fileName")
                 else -> null
             }
@@ -245,5 +250,85 @@ object DeviceIdentity {
             digitGroups++
         }
         return String.format(Locale.US, "%.1f %s", b, units[digitGroups])
+    }
+
+    /**
+     * Resolves the parent physical disk block device node for any partition path.
+     * e.g.:
+     *   /dev/block/vold/public:8,101 -> /dev/block/sdg
+     *   /dev/block/sdg5              -> /dev/block/sdg
+     *   /dev/block/nvme0n1p2         -> /dev/block/nvme0n1
+     *   /dev/block/mmcblk0p1         -> /dev/block/mmcblk0
+     *   usb://0bda:9210/1/1          -> usb://0bda:9210/1
+     */
+    fun resolveParentDiskNode(devicePath: String): String {
+        if (devicePath.isBlank()) return devicePath
+
+        parentDiskCache[devicePath]?.let { return it }
+
+        // 1. USB BOT URL: group by device prefix (vid:pid/device)
+        if (devicePath.startsWith("usb://")) {
+            val trimmed = devicePath.removePrefix("usb://")
+            val parts = trimmed.split('/')
+            val resolved = if (parts.size > 2) "usb://${parts[0]}/${parts[1]}" else devicePath
+            parentDiskCache[devicePath] = resolved
+            return resolved
+        }
+
+        // 2. Direct symlink target inspection via Os.readlink (bypasses SELinux traversal)
+        try {
+            val fileName = File(devicePath).name
+            val majMin = when {
+                fileName.startsWith("public:") -> fileName.removePrefix("public:").replace(',', ':')
+                fileName.startsWith("disk:") -> fileName.removePrefix("disk:").replace(',', ':')
+                else -> null
+            }
+
+            val symlinkCandidates = mutableListOf<String>()
+            if (majMin != null) {
+                symlinkCandidates.add("/sys/dev/block/$majMin")
+            }
+            symlinkCandidates.add("/sys/block/$fileName")
+            symlinkCandidates.add("/sys/class/block/$fileName")
+
+            for (linkPath in symlinkCandidates) {
+                try {
+                    val target = android.system.Os.readlink(linkPath)
+                    if (target.contains("/block/")) {
+                        val diskName = target.substringAfter("/block/").substringBefore('/')
+                        if (diskName.isNotBlank()) {
+                            val resolved = "/dev/block/$diskName"
+                            parentDiskCache[devicePath] = resolved
+                            return resolved
+                        }
+                    }
+                } catch (_: Throwable) {}
+            }
+        } catch (_: Exception) {}
+
+        // 3. Instant Regex fallback
+        val sdMatch = Regex("""^(/dev/block/sd[a-z])\d+$""").find(devicePath)
+        if (sdMatch != null) {
+            val resolved = sdMatch.groupValues[1]
+            parentDiskCache[devicePath] = resolved
+            return resolved
+        }
+
+        val nvmeMatch = Regex("""^(/dev/block/nvme\d+n\d+)p\d+$""").find(devicePath)
+        if (nvmeMatch != null) {
+            val resolved = nvmeMatch.groupValues[1]
+            parentDiskCache[devicePath] = resolved
+            return resolved
+        }
+
+        val mmcMatch = Regex("""^(/dev/block/mmcblk\d+)p\d+$""").find(devicePath)
+        if (mmcMatch != null) {
+            val resolved = mmcMatch.groupValues[1]
+            parentDiskCache[devicePath] = resolved
+            return resolved
+        }
+
+        parentDiskCache[devicePath] = devicePath
+        return devicePath
     }
 }

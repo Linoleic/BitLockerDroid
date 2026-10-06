@@ -101,107 +101,37 @@ fun VolumesTabContent(
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                // Section 1: Detected Locked Volumes
-                if (detectedVolumes.isNotEmpty()) {
-                    Box(modifier = cardModifier) {
-                        SectionHeader(
-                            title = stringResource(R.string.detected_volumes_header),
-                            count = detectedVolumes.size,
-                            isWarning = true
-                        )
-                    }
-                    detectedVolumes.forEach { detected ->
-                        androidx.compose.runtime.key(detected.devicePath) {
-                            val hasSavedCredential = remember(detected.guid, savedCredentialGuids) {
-                                !detected.guid.isNullOrBlank() && detected.guid.lowercase() in savedCredentialGuids
-                            }
-                            val onUnlock = remember(detected.devicePath, onUnlockDetected) { { onUnlockDetected(detected.devicePath) } }
-                            val onBiometricUnlock = remember(detected.devicePath, onBiometricUnlockDetected) {
-                                if (onBiometricUnlockDetected != null) { { onBiometricUnlockDetected(detected.devicePath) } } else null
-                            }
-                            val onDisaster = remember(detected.devicePath) { { disasterDetectedTarget = detected } }
-                            val onSmartHealth = remember(detected.devicePath) { { smartHealthTarget = detected.devicePath } }
-                            DetectedVolumeCard(
-                                volume = detected,
-                                hasSavedCredential = hasSavedCredential,
-                                canBiometric = canBiometric,
-                                painters = painters,
-                                onMountReadOnlyChange = onMountReadOnlyChange,
-                                onUnlock = onUnlock,
-                                onBiometricUnlock = onBiometricUnlock,
-                                onDisasterClick = onDisaster,
-                                onSmartHealthClick = onSmartHealth,
-                                modifier = cardModifier
-                            )
-                        }
-                    }
+                val deviceGroups = remember(unlockedVolumes, detectedVolumes, unencryptedVolumes) {
+                    DeviceGroupBuilder.buildGroups(unlockedVolumes, detectedVolumes, unencryptedVolumes)
                 }
 
-                // Section 2: Unlocked Volumes
-                if (unlockedVolumes.isNotEmpty()) {
-                    Box(modifier = cardModifier) {
-                        SectionHeader(
-                            title = stringResource(R.string.unlocked_volumes_header),
-                            count = unlockedVolumes.size,
-                            isWarning = false
+                deviceGroups.forEach { group ->
+                    androidx.compose.runtime.key(group.deviceKey) {
+                        DeviceGroupCard(
+                            group = group,
+                            isVirtualMountSupported = isVirtualMountSupported,
+                            canBiometric = canBiometric,
+                            savedCredentialGuids = savedCredentialGuids,
+                            ejectingPaths = ejectingPaths,
+                            painters = painters,
+                            activeMounts = activeMounts,
+                            shareStates = shareStates,
+                            isCompact = isCompact,
+                            onMountReadOnlyChange = onMountReadOnlyChange,
+                            onOpenVolume = onOpenVolume,
+                            onLockVolume = onLockVolume,
+                            onUnlockDetected = onUnlockDetected,
+                            onBiometricUnlockDetected = onBiometricUnlockDetected,
+                            onOpenUnencrypted = onOpenUnencrypted,
+                            onBenchmarkClick = { path -> benchmarkTarget = path },
+                            onLanShareClick = { vol -> lanShareTarget = vol },
+                            onRepairClick = { vol -> repairTarget = vol },
+                            onDiagnosticClick = { vol -> diagnosticTarget = vol },
+                            onDisasterUnlockedClick = { vol -> disasterUnlockedTarget = vol },
+                            onDisasterDetectedClick = { det -> disasterDetectedTarget = det },
+                            onSmartHealthClick = { diskPath -> smartHealthTarget = diskPath },
+                            modifier = cardModifier
                         )
-                    }
-                    unlockedVolumes.forEach { volume ->
-                        androidx.compose.runtime.key(volume.devicePath) {
-                            val vMount = activeMounts[volume.devicePath]
-                                ?: activeMounts.values.firstOrNull { !volume.guid.isNullOrBlank() && it.volumeGuid.equals(volume.guid, ignoreCase = true) }
-                            val effectiveShareGuid = volume.guid ?: volume.devicePath
-                            val shareState = shareStates[effectiveShareGuid]
-                            val onOpen = remember(volume.devicePath, onOpenVolume) { { onOpenVolume(volume.devicePath) } }
-                            val onLock = remember(volume.devicePath, onLockVolume) { { onLockVolume(volume.devicePath) } }
-                            val onBenchmark = remember(volume.devicePath) { { benchmarkTarget = volume.devicePath } }
-                            val onLanShare = remember(volume.devicePath) { { lanShareTarget = volume } }
-                            val onRepair = remember(volume.devicePath) { { repairTarget = volume } }
-                            val onDiagnostic = remember(volume.devicePath) { { diagnosticTarget = volume } }
-                            val onDisaster = remember(volume.devicePath) { { disasterUnlockedTarget = volume } }
-                            val onSmartHealth = remember(volume.devicePath) { { smartHealthTarget = volume.devicePath } }
-
-                            UnlockedVolumeCard(
-                                volume = volume,
-                                vMount = vMount,
-                                shareState = shareState,
-                                painters = painters,
-                                isVirtualMountSupported = isVirtualMountSupported,
-                                onMountReadOnlyChange = onMountReadOnlyChange,
-                                onOpen = onOpen,
-                                onLock = onLock,
-                                onBenchmarkClick = onBenchmark,
-                                onLanShareClick = onLanShare,
-                                onRepairClick = onRepair,
-                                onDiagnosticClick = onDiagnostic,
-                                onDisasterClick = onDisaster,
-                                onSmartHealthClick = onSmartHealth,
-                                isEjecting = ejectingPaths.contains(volume.devicePath),
-                                isCompact = isCompact,
-                                modifier = cardModifier
-                            )
-                        }
-                    }
-                }
-
-                // Section 3: Unencrypted Volumes
-                if (unencryptedVolumes.isNotEmpty()) {
-                    Box(modifier = cardModifier) {
-                        SectionHeader(
-                            title = stringResource(R.string.unencrypted_volumes_header),
-                            count = unencryptedVolumes.size,
-                            isWarning = false
-                        )
-                    }
-                    unencryptedVolumes.forEach { unenc ->
-                        androidx.compose.runtime.key(unenc.id) {
-                            val onOpen = remember(unenc.id, onOpenUnencrypted) { { onOpenUnencrypted(unenc) } }
-                            UnencryptedVolumeCard(
-                                volume = unenc,
-                                onOpen = onOpen,
-                                modifier = cardModifier
-                            )
-                        }
                     }
                 }
             }
