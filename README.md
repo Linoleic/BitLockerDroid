@@ -143,6 +143,9 @@ Empirical throughput and random seek performance across filesystems and BitLocke
 
 ### 4. Root Mode vs Non-Root Mode Architectural Performance Comparison
 
+> [!NOTE]
+> Note: The architectural comparison data below was collected during early architectural verification (based on Tier 2 USB 3.0 flash media across a 6-partition matrix) and may slightly lag behind optimal metrics of current releases (v1.0.6+). A refreshed, updated dataset will be supplemented in subsequent updates.
+
 Comparing empirical performance under identical hardware and cryptographic configurations between Linux Kernel Direct I/O (Root) and Android Sandbox Userspace USB Host API (Non-Root):
 
 #### Comprehensive Architectural Performance Benchmark (10-sample mean)
