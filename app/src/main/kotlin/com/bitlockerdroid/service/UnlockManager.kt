@@ -781,6 +781,18 @@ object UnlockManager {
     /** Called when a BitLocker volume is found on the bus. Records the volume so it appears in the
      *  management UI, and auto-unlocks if a saved credential exists AND auto-unlock is enabled.
      *  Posts a high-priority notification to open directly if ready, or to prompt unlock if locked. */
+    private val autoUnlockExecutor = java.util.concurrent.Executors.newFixedThreadPool(2, object : java.util.concurrent.ThreadFactory {
+        private val count = java.util.concurrent.atomic.AtomicInteger(1)
+        override fun newThread(r: Runnable): Thread {
+            return Thread(r, "BitLocker-AutoUnlock-${count.getAndIncrement()}").apply {
+                priority = Thread.NORM_PRIORITY
+            }
+        }
+    })
+
+    @Volatile
+    private var lastReadyVibrateTime = 0L
+
     fun onDeviceDetected(context: Context, devicePath: String, offset: Long, guid: String? = null, recoveryKeyId: String? = null) {
         val volumeId = guid ?: BitLockerDetector.getVolumeGuid(devicePath)
         val rkId = recoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
@@ -824,9 +836,9 @@ object UnlockManager {
             return
         }
 
-        // Per-drive auto-unlock check:
-        if (!PreferenceHelper.isAutoUnlockEnabled(context, volumeId)) {
-            LogFile.write("app", "onDeviceDetected: auto-unlock is disabled for $volumeId")
+        // Per-drive auto-unlock and global OTG silent auto-mount check:
+        if (!PreferenceHelper.isAutoUnlockEnabled(context, volumeId) || !PreferenceHelper.isOtgSilentAutoMount(context)) {
+            LogFile.write("app", "onDeviceDetected: auto-unlock is disabled (per-volume or global otgSilentAutoMount=false) for $volumeId")
             notifyVolumeLocked(context, devicePath, offset, volumeId, rkId)
             return
         }
@@ -850,7 +862,7 @@ object UnlockManager {
                     return
                 }
                 unlockingLatch.incrementAndGet()
-                Thread {
+                autoUnlockExecutor.execute {
                     try {
                         val r = unlockWithCredential(context, devicePath, offset, cleanKey, isRecovery, true, expectedGuid = volumeId)
                         if (r.isFailure) {
@@ -861,6 +873,9 @@ object UnlockManager {
                             notifyVolumeLocked(context, devicePath, offset, volumeId, rkId)
                         } else {
                             LogFile.write("app", "auto-unlock succeeded for $devicePath (guid=$volumeId)")
+                            r.getOrNull()?.let { unlockedCore ->
+                                notifyVolumeReady(context, devicePath, unlockedCore, isAutoUnlock = true)
+                            }
                         }
                     } finally {
                         inProgressUnlocks.remove(lockKey)
@@ -869,7 +884,7 @@ object UnlockManager {
                             (unlockWaitLock as java.lang.Object).notifyAll()
                         }
                     }
-                }.start()
+                }
                 return
             }
         }
@@ -878,8 +893,36 @@ object UnlockManager {
         notifyVolumeLocked(context, devicePath, offset, volumeId, rkId)
     }
 
-    fun notifyVolumeReady(context: Context, devicePath: String, core: DislockerCore) {
-        // Handled via BitLockerCoreService ongoing foreground notification with file manager & safe eject actions.
+    fun notifyVolumeReady(context: Context, devicePath: String, core: DislockerCore, isAutoUnlock: Boolean = false) {
+        if (isAutoUnlock) {
+            val now = System.currentTimeMillis()
+            val shouldVibrate = synchronized(lock) {
+                if (now - lastReadyVibrateTime > 2000L) {
+                    lastReadyVibrateTime = now
+                    true
+                } else {
+                    false
+                }
+            }
+
+            if (shouldVibrate && PreferenceHelper.isOtgFeedbackVibration(context)) {
+                triggerHapticFeedback(context)
+            }
+        }
+    }
+
+    private fun triggerHapticFeedback(context: Context) {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                val vm = context.getSystemService(android.os.VibratorManager::class.java)
+                val vibrator = vm?.defaultVibrator
+                vibrator?.vibrate(android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_CLICK))
+            } else if (android.os.Build.VERSION.SDK_INT >= 26) {
+                @Suppress("DEPRECATION")
+                val v = context.getSystemService(android.os.Vibrator::class.java)
+                v?.vibrate(android.os.VibrationEffect.createOneShot(40, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+            }
+        } catch (_: Throwable) {}
     }
 
     fun notifyVolumeLocked(context: Context, devicePath: String, offset: Long, guid: String? = null, recoveryKeyId: String? = null) {

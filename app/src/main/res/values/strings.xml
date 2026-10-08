@@ -59,6 +59,10 @@
     <string name="settings_mount_readonly_desc">Protect drive data by disallowing file modification or deletion</string>
     <string name="settings_conflict_suffix">Auto Conflict Suffix</string>
     <string name="settings_conflict_suffix_desc">Append \'(1)\' suffix when a duplicate file name exists</string>
+    <string name="settings_otg_silent_automount">Silent Auto-Ready on Plug</string>
+    <string name="settings_otg_silent_automount_desc">Automatically decrypt remembered volumes in background when OTG drive is attached</string>
+    <string name="settings_otg_feedback_vibration">Haptic Feedback on Ready</string>
+    <string name="settings_otg_feedback_vibration_desc">Provide subtle vibration feedback when an encrypted volume becomes ready</string>
     <string name="settings_header_appearance">Personalization</string>
     <string name="settings_theme">Theme</string>
     <string name="settings_theme_desc">Choose display theme</string>

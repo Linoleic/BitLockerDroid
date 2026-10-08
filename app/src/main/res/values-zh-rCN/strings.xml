@@ -59,6 +59,10 @@
     <string name="settings_mount_readonly_desc">保护驱动器数据，禁止修改或删除文件</string>
     <string name="settings_conflict_suffix">同名冲突自动避让</string>
     <string name="settings_conflict_suffix_desc">遇到重名文件时自动追加 \'(1)\' 编号避免意外覆盖原有文件</string>
+    <string name="settings_otg_silent_automount">插盘静默自动就绪</string>
+    <string name="settings_otg_silent_automount_desc">插入 OTG 设备后，后台自动解密已记住凭据的卷并就绪挂载，无需手动操作</string>
+    <string name="settings_otg_feedback_vibration">就绪触感震动反馈</string>
+    <string name="settings_otg_feedback_vibration_desc">加密卷自动就绪完成时，提供轻度触感震动提示</string>
     <string name="settings_header_appearance">个性化</string>
     <string name="settings_theme">主题设置</string>
     <string name="settings_theme_desc">选择应用界面显示风格</string>

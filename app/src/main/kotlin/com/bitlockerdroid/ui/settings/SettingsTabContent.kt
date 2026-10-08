@@ -136,6 +136,34 @@ fun SettingsTabContent(
             // Group 2: General & Mount Protection
             SettingsGroup(title = stringResource(R.string.settings_header_mount)) {
                 val context = LocalContext.current
+                var silentAutoMount by remember { mutableStateOf(PreferenceHelper.otgSilentAutoMount) }
+                SettingsSwitchItem(
+                    title = stringResource(R.string.settings_otg_silent_automount),
+                    description = stringResource(R.string.settings_otg_silent_automount_desc),
+                    checked = silentAutoMount,
+                    onCheckedChange = {
+                        silentAutoMount = it
+                        PreferenceHelper.otgSilentAutoMount = it
+                    }
+                )
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                )
+                var feedbackVibration by remember { mutableStateOf(PreferenceHelper.otgFeedbackVibration) }
+                SettingsSwitchItem(
+                    title = stringResource(R.string.settings_otg_feedback_vibration),
+                    description = stringResource(R.string.settings_otg_feedback_vibration_desc),
+                    checked = feedbackVibration,
+                    onCheckedChange = {
+                        feedbackVibration = it
+                        PreferenceHelper.otgFeedbackVibration = it
+                    }
+                )
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                )
                 var hideSvi by remember { mutableStateOf(PreferenceHelper.hideSviFolder) }
                 SettingsSwitchItem(
                     title = stringResource(R.string.settings_hide_svi),

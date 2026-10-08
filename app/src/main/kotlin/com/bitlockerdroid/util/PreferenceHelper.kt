@@ -465,6 +465,34 @@ object PreferenceHelper {
             } catch (_: Exception) {}
         }
 
+    // ------- OTG plug & play / auto-mount preferences -------
+
+    fun isOtgSilentAutoMount(context: Context): Boolean =
+        prefs(context).getBoolean("otg_silent_automount", true)
+
+    fun setOtgSilentAutoMount(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean("otg_silent_automount", enabled).apply()
+    }
+
+    var otgSilentAutoMount: Boolean
+        get() = try { prefs(ContextProvider.app).getBoolean("otg_silent_automount", true) } catch (_: Exception) { true }
+        set(v) {
+            try { prefs(ContextProvider.app).edit().putBoolean("otg_silent_automount", v).apply() } catch (_: Exception) {}
+        }
+
+    fun isOtgFeedbackVibration(context: Context): Boolean =
+        prefs(context).getBoolean("otg_feedback_vibration", true)
+
+    fun setOtgFeedbackVibration(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean("otg_feedback_vibration", enabled).apply()
+    }
+
+    var otgFeedbackVibration: Boolean
+        get() = try { prefs(ContextProvider.app).getBoolean("otg_feedback_vibration", true) } catch (_: Exception) { true }
+        set(v) {
+            try { prefs(ContextProvider.app).edit().putBoolean("otg_feedback_vibration", v).apply() } catch (_: Exception) {}
+        }
+
     // ------- theme & personalization -------
 
     const val THEME_SYSTEM = "system"

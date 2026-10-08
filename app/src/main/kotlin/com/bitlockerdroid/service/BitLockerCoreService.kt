@@ -20,6 +20,18 @@ class BitLockerCoreService : Service() {
     private val scanHandler = Handler(Looper.getMainLooper())
     private var scanRunnable: Runnable? = null
 
+    private fun isMassStorageDevice(dev: android.hardware.usb.UsbDevice?): Boolean {
+        if (dev == null) return true // Fallback to scanning if dev extra is omitted
+        if (dev.deviceClass == android.hardware.usb.UsbConstants.USB_CLASS_MASS_STORAGE) return true
+        for (i in 0 until dev.interfaceCount) {
+            val iface = dev.getInterface(i)
+            if (iface.interfaceClass == android.hardware.usb.UsbConstants.USB_CLASS_MASS_STORAGE) {
+                return true
+            }
+        }
+        return false
+    }
+
     private val usbReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
             val action = intent?.action ?: return
@@ -54,17 +66,37 @@ class BitLockerCoreService : Service() {
                     }
                     return
                 }
+            } else if (action == android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+                val dev = if (android.os.Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_DEVICE, android.hardware.usb.UsbDevice::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_DEVICE)
+                }
+                if (dev != null && !isMassStorageDevice(dev)) {
+                    LogFile.write("app", "usbReceiver: ignoring non-storage USB device (${dev.deviceName}, class=${dev.deviceClass})")
+                    return
+                }
             }
-            val delayMs = if (action == android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED) 1200L else 500L
+            val delayMs = if (action == android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED) 350L else 300L
             scanRunnable?.let { scanHandler.removeCallbacks(it) }
             val task = Runnable {
                 Thread({
                     context?.let { ctx ->
+                        val pm = ctx.getSystemService(android.os.PowerManager::class.java)
+                        val wakeLock = pm?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "bitlockerdroid:otg_scan")
                         try {
+                            wakeLock?.acquire(5000L)
                             BitLockerDetector.scanAndDetect(ctx)
                         } catch (e: Throwable) {
                             LogFile.write("app", "Unhandled exception in BitLocker-UsbScan: ${e.message}")
                             android.util.Log.e("BitLockerCoreService", "Unhandled exception in BitLocker-UsbScan", e)
+                        } finally {
+                            try {
+                                if (wakeLock?.isHeld == true) {
+                                    wakeLock.release()
+                                }
+                            } catch (_: Throwable) {}
                         }
                     }
                 }, "BitLocker-UsbScan").start()
