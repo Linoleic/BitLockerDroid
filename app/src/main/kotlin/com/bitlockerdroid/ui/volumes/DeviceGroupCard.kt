@@ -53,6 +53,7 @@ fun DeviceGroupCard(
     onDisasterUnlockedClick: (UnlockedVolume) -> Unit,
     onDisasterDetectedClick: (DetectedVolume) -> Unit,
     onSmartHealthClick: (String) -> Unit,
+    onEjectGroup: ((List<String>) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var isExpanded by remember { mutableStateOf(true) }
@@ -191,6 +192,55 @@ fun DeviceGroupCard(
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.SemiBold
                                 )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+
+                    // Eject All Action Button (Shown when group contains unlocked volumes)
+                    if (group.hasUnlocked && onEjectGroup != null) {
+                        val unlockedPaths = remember(group.unlockedVolumes) { group.unlockedVolumes.map { it.devicePath } }
+                        val isAnyEjecting = remember(unlockedPaths, ejectingPaths) {
+                            unlockedPaths.any { ejectingPaths.contains(it) }
+                        }
+                        AppButton(
+                            onClick = { onEjectGroup(unlockedPaths) },
+                            enabled = !isAnyEjecting,
+                            shape = RoundedCornerShape(10.dp),
+                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            if (isAnyEjecting) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                                if (!isCompact) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = stringResource(R.string.safe_ejecting),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            } else {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_eject),
+                                    contentDescription = stringResource(R.string.notification_eject_all),
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                                if (!isCompact) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = stringResource(R.string.notification_eject_all),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                             }
                         }
 

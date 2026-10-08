@@ -63,7 +63,12 @@ class LanShareService : Service() {
                 }
                 com.bitlockerdroid.usb.UsbStorageManager.onDeviceDetached(dev)
             }
-            com.bitlockerdroid.service.UnlockManager.onUsbDetached()
+            val usbManager = context?.getSystemService(Context.USB_SERVICE) as? android.hardware.usb.UsbManager
+            val remainingStorage = usbManager?.deviceList?.values?.filter {
+                it.deviceClass == android.hardware.usb.UsbConstants.USB_CLASS_MASS_STORAGE ||
+                (0 until it.interfaceCount).any { i -> it.getInterface(i).interfaceClass == android.hardware.usb.UsbConstants.USB_CLASS_MASS_STORAGE }
+            } ?: emptyList()
+            com.bitlockerdroid.service.UnlockManager.onUsbDetached(allStorageGone = remainingStorage.isEmpty())
         }
     }
 

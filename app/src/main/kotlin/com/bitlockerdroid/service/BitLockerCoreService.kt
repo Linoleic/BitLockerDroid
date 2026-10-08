@@ -50,7 +50,15 @@ class BitLockerCoreService : Service() {
                 if (dev != null) {
                     com.bitlockerdroid.usb.UsbStorageManager.onDeviceDetached(dev)
                 }
-                UnlockManager.onUsbDetached()
+                val usbManager = context?.getSystemService(android.hardware.usb.UsbManager::class.java)
+                val remainingStorage = usbManager?.deviceList?.values?.filter { isMassStorageDevice(it) } ?: emptyList()
+                val allGone = remainingStorage.isEmpty()
+                UnlockManager.onUsbDetached(allStorageGone = allGone)
+                if (allGone) {
+                    scanRunnable?.let { scanHandler.removeCallbacks(it) }
+                    scanRunnable = null
+                    return
+                }
             } else if (action == com.bitlockerdroid.usb.UsbStorageManager.ACTION_USB_PERMISSION) {
                 val granted = intent.getBooleanExtra(android.hardware.usb.UsbManager.EXTRA_PERMISSION_GRANTED, false)
                 LogFile.write("app", "usbReceiver: USB permission granted=$granted")

@@ -49,7 +49,8 @@ fun VolumesTabContent(
     onOpenUnencrypted: (UnencryptedVolume) -> Unit = {},
     onLockVolume: (String) -> Unit,
     onUnlockDetected: (String) -> Unit,
-    onBiometricUnlockDetected: ((String) -> Unit)? = null
+    onBiometricUnlockDetected: ((String) -> Unit)? = null,
+    onEjectGroup: ((List<String>) -> Unit)? = null
 ) {
     val activeMounts by VirtualStorageMountManager.activeMountsFlow.collectAsState()
     val shareStates by com.bitlockerdroid.share.LanShareManager.shareStates.collectAsState()
@@ -130,6 +131,7 @@ fun VolumesTabContent(
                             onDisasterUnlockedClick = { vol -> disasterUnlockedTarget = vol },
                             onDisasterDetectedClick = { det -> disasterDetectedTarget = det },
                             onSmartHealthClick = { diskPath -> smartHealthTarget = diskPath },
+                            onEjectGroup = onEjectGroup,
                             modifier = cardModifier
                         )
                     }

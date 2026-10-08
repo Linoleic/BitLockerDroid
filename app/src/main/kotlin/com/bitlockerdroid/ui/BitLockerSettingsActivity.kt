@@ -186,6 +186,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
     private val onLockVolumeAction: (String) -> Unit = { path -> lockVolume(path) }
     private val onUnlockDetectedAction: (String) -> Unit = { path -> promptUnlock(path) }
     private val onBiometricUnlockDetectedAction: (String) -> Unit = { path -> biometricUnlock(path) }
+    private val onEjectVolumesAction: (List<String>) -> Unit = { paths -> ejectVolumes(paths) }
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(com.bitlockerdroid.util.LocaleHelper.wrapContext(newBase))
@@ -304,6 +305,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     onLockVolume = onLockVolumeAction,
                     onUnlockDetected = onUnlockDetectedAction,
                     onBiometricUnlockDetected = onBiometricUnlockDetectedAction,
+                    onEjectVolumes = onEjectVolumesAction,
                     ejectingPaths = ejectingPaths
                 )
             }
@@ -383,7 +385,9 @@ class BitLockerSettingsActivity : FragmentActivity() {
     private fun refreshData() {
         refreshJob?.cancel()
         refreshJob = lifecycleScope.launch(Dispatchers.IO) {
-            kotlinx.coroutines.delay(60)
+            if (!UnlockManager.isEmpty) {
+                kotlinx.coroutines.delay(60)
+            }
             val currentUnlocked = UnlockManager.unlockedVolumes
             val currentDetected = UnlockManager.detectedVolumes
             val currentUnencrypted = UnlockManager.unencryptedVolumes
@@ -529,6 +533,44 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     ).show()
                 } else {
                     val err = result.exceptionOrNull()?.message ?: ""
+                    Toast.makeText(
+                        this@BitLockerSettingsActivity,
+                        getString(R.string.safe_eject_failed, err),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                refreshData()
+            }
+        }
+    }
+
+    private fun ejectVolumes(paths: List<String>) {
+        val targets = paths.filter { !ejectingPathsState.value.contains(it) }
+        if (targets.isEmpty()) return
+        ejectingPathsState.value = ejectingPathsState.value + targets
+        LogFile.write("app", "safe eject requested for group: $targets")
+        lifecycleScope.launch(Dispatchers.IO) {
+            val results = targets.map { path -> path to UnlockManager.safeEject(path) }
+            withContext(Dispatchers.Main) {
+                ejectingPathsState.value = ejectingPathsState.value - targets.toSet()
+                val failures = results.filter { !it.second.isSuccess }
+                if (failures.isEmpty()) {
+                    if (targets.size == 1) {
+                        val label = results.first().second.getOrNull() ?: ""
+                        Toast.makeText(
+                            this@BitLockerSettingsActivity,
+                            getString(R.string.safe_eject_success, label),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    } else {
+                        Toast.makeText(
+                            this@BitLockerSettingsActivity,
+                            getString(R.string.notification_all_ejected),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                } else {
+                    val err = failures.first().second.exceptionOrNull()?.message ?: ""
                     Toast.makeText(
                         this@BitLockerSettingsActivity,
                         getString(R.string.safe_eject_failed, err),
@@ -727,6 +769,7 @@ fun MainAppScreen(
     onLockVolume: (String) -> Unit,
     onUnlockDetected: (String) -> Unit,
     onBiometricUnlockDetected: ((String) -> Unit)? = null,
+    onEjectVolumes: ((List<String>) -> Unit)? = null,
     ejectingPaths: Set<String> = emptySet(),
     initialTab: Int = 0
 ) {
@@ -847,7 +890,8 @@ fun MainAppScreen(
                     onOpenUnencrypted = onOpenUnencrypted,
                     onLockVolume = onLockVolume,
                     onUnlockDetected = onUnlockDetected,
-                    onBiometricUnlockDetected = onBiometricUnlockDetected
+                    onBiometricUnlockDetected = onBiometricUnlockDetected,
+                    onEjectGroup = onEjectVolumes
                 )
             } else {
                 SettingsTabContent(

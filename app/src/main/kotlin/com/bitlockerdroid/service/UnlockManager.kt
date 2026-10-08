@@ -203,6 +203,11 @@ object UnlockManager {
             sessions.values.toList()
         }
 
+    val isEmpty: Boolean
+        get() = synchronized(lock) {
+            sessions.isEmpty() && detected.isEmpty() && unencrypted.isEmpty()
+        }
+
     fun isUnlocked(devicePath: String): Boolean = synchronized(lock) {
         if (sessions.containsKey(devicePath)) return true
         val g = detected[devicePath]?.guid
@@ -691,25 +696,63 @@ object UnlockManager {
     }
 
     /** Reset state when a USB detachment is reported. */
-    fun onUsbDetached() {
-        Log.i(TAG, "onUsbDetached: USB detachment reported, cleaning up sessions and share states")
-        VirtualStorageMountManager.unmountAll()
-        com.bitlockerdroid.util.DeviceIdentity.clearCache()
+    fun onUsbDetached(allStorageGone: Boolean = true) {
+        LogFile.write("app", "UnlockManager.onUsbDetached(allStorageGone=$allStorageGone)")
         val app = com.bitlockerdroid.util.ContextProvider.app
-        try {
-            val nodes = BitLockerDetector.enumerateVoldNodes()
-            forgetDetectedMissing(nodes)
-        } catch (e: Exception) {
-            Log.w(TAG, "forgetDetectedMissing error during onUsbDetached", e)
-        }
-        app?.let {
-            val hasActiveSessions = synchronized(lock) { sessions.isNotEmpty() }
-            if (!hasActiveSessions) {
-                com.bitlockerdroid.share.LanShareManager.stopAll(it)
+        if (allStorageGone) {
+            val toClose: List<Pair<String, DislockerCore>>
+            val hadEntries: Boolean
+            synchronized(lock) {
+                hadEntries = sessions.isNotEmpty() || detected.isNotEmpty() || unencrypted.isNotEmpty()
+                toClose = sessions.toList()
+                sessions.clear()
+                sessionCredentials.clear()
+                detected.clear()
+                unencrypted.clear()
+                manuallyLockedGuids.clear()
             }
-            val nm = it.getSystemService(NotificationManager::class.java)
-            nm?.cancelAll()
-            BitLockerCoreService.updateForegroundState(it)
+            if (hadEntries) {
+                notifyStateChanged()
+            }
+            Thread({
+                for ((path, core) in toClose) {
+                    try {
+                        core.close()
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "core.close failed for $path", e)
+                    }
+                }
+                try {
+                    VirtualStorageMountManager.unmountAll()
+                } catch (e: Throwable) {
+                    Log.w(TAG, "VirtualStorageMountManager.unmountAll failed", e)
+                }
+                com.bitlockerdroid.util.DeviceIdentity.clearCache()
+                StorageNotificationSuppressor.forgetMissing(emptyList())
+                app?.let { ctx ->
+                    com.bitlockerdroid.share.LanShareManager.stopAll(ctx)
+                    val nm = ctx.getSystemService(NotificationManager::class.java)
+                    nm?.cancelAll()
+                    BitLockerCoreService.updateForegroundState(ctx)
+                    com.bitlockerdroid.provider.BitLockerDocumentsProvider.notifyRootsChanged(ctx)
+                }
+            }, "BitLocker-UsbDetachCleanup").start()
+        } else {
+            Thread({
+                try {
+                    val nodes = BitLockerDetector.enumerateVoldNodes()
+                    forgetDetectedMissing(nodes)
+                } catch (e: Exception) {
+                    Log.w(TAG, "forgetDetectedMissing error during onUsbDetached", e)
+                }
+                app?.let { ctx ->
+                    val hasActiveSessions = synchronized(lock) { sessions.isNotEmpty() }
+                    if (!hasActiveSessions) {
+                        com.bitlockerdroid.share.LanShareManager.stopAll(ctx)
+                    }
+                    BitLockerCoreService.updateForegroundState(ctx)
+                }
+            }, "BitLocker-UsbDetachCleanup").start()
         }
     }
 
