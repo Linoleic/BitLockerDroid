@@ -30,6 +30,7 @@ import com.bitlockerdroid.service.UnencryptedVolume
 import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.service.UnlockedVolume
 import com.bitlockerdroid.service.VirtualStorageMountManager
+import com.bitlockerdroid.service.StorageNotificationSuppressor
 import com.bitlockerdroid.ui.dialogs.RootControlDialog
 import com.bitlockerdroid.ui.dialogs.HardwareAccelerationDialog
 import com.bitlockerdroid.ui.dialogs.PerformanceOptimizationDialog
@@ -161,7 +162,12 @@ class BitLockerSettingsActivity : FragmentActivity() {
     }
     private val onSuppressCorruptNotificationChangeAction: (Boolean) -> Unit = { enabled ->
         suppressCorruptNotificationState.value = enabled
-        PreferenceHelper.suppressCorruptNotification = enabled
+        PreferenceHelper.setSuppressCorruptNotification(this, enabled)
+        if (enabled) {
+            Thread {
+                StorageNotificationSuppressor.ensureListenerEnabled()
+            }.start()
+        }
     }
     private val onOpenRootControlAction: () -> Unit = { showRootControlDialogState.value = true }
     private val onCloseRootControlAction: () -> Unit = { showRootControlDialogState.value = false }
@@ -294,6 +300,8 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     onOpenSystemDiagnostics = onOpenSystemDiagnosticsAction,
                     onCloseSystemDiagnostics = onCloseSystemDiagnosticsAction,
                     onConfirmSwitchMode = onConfirmSwitchModeAction,
+                    onDismissSwitchMode = onDismissSwitchModeAction,
+                    onSuppressCorruptNotificationChange = onSuppressCorruptNotificationChangeAction,
                     onRefreshAndScan = onRefreshAndScanAction,
                     onOpenLog = onOpenLogAction,
                     onCloseLog = onCloseLogAction,
