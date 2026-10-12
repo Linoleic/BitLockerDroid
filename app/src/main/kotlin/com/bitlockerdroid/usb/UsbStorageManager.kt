@@ -709,6 +709,87 @@ object UsbStorageManager {
     }
 
     /**
+     * Sends a SCSI command with no data phase using standard USB BOT (Bulk-Only Transport)
+     * CBW (Command Block Wrapper) and CSW (Command Status Wrapper).
+     */
+    private fun sendScsiCommandNoData(
+        comm: UsbCommunication,
+        cdb: ByteArray,
+        tag: Int
+    ): Boolean {
+        return try {
+            val cbw = ByteBuffer.allocate(31).order(ByteOrder.LITTLE_ENDIAN)
+            cbw.putInt(0x43425355) // 'USBC'
+            cbw.putInt(tag)
+            cbw.putInt(0)          // Data transfer length: 0
+            cbw.put(0.toByte())    // Direction: Out (no data)
+            cbw.put(0.toByte())    // LUN: 0
+            cbw.put(cdb.size.toByte()) // CDB length
+            cbw.put(cdb)
+            for (i in cdb.size until 16) {
+                cbw.put(0.toByte())
+            }
+            cbw.flip()
+
+            comm.bulkOutTransfer(cbw)
+
+            val csw = ByteBuffer.allocate(13).order(ByteOrder.LITTLE_ENDIAN)
+            comm.bulkInTransfer(csw)
+            csw.flip()
+
+            if (csw.remaining() >= 13) {
+                val sig = csw.getInt()
+                val cswTag = csw.getInt()
+                val residue = csw.getInt()
+                val status = csw.get().toInt() and 0xFF
+                status == 0
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "sendScsiCommandNoData error: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Safely flushes SCSI cache, issues SCSI START STOP UNIT spindown,
+     * and releases the USB connection for the device backing [devicePath].
+     */
+    fun spindownDevice(devicePath: String): Boolean {
+        if (!devicePath.startsWith("usb://")) return false
+        val devIdStr = devicePath.removePrefix("usb://").substringBefore('/')
+        val devId = devIdStr.toIntOrNull() ?: return false
+        val holder = activeDevices[devId] ?: return false
+
+        // Check if any other sessions on this physical device are still active
+        val hasOtherActiveSessions = activeSessions.keys.any { otherPath ->
+            otherPath != devicePath && otherPath.startsWith("usb://$devId/")
+        }
+        if (hasOtherActiveSessions) {
+            Log.i(TAG, "spindownDevice: skipping physical spindown for $devicePath as other sessions are active on device $devId")
+            return false
+        }
+
+        Log.i(TAG, "spindownDevice: issuing SCSI cache sync and START STOP UNIT to USB device $devId")
+        try {
+            val comm = holder.communication
+            // 1. SCSI SYNCHRONIZE CACHE (10)
+            val syncCdb = byteArrayOf(0x35.toByte(), 0, 0, 0, 0, 0, 0, 0, 0, 0)
+            sendScsiCommandNoData(comm, syncCdb, 0x1001)
+
+            // 2. SCSI START STOP UNIT (START=0)
+            val stopCdb = byteArrayOf(0x1B.toByte(), 0, 0, 0, 0x00.toByte(), 0)
+            sendScsiCommandNoData(comm, stopCdb, 0x1002)
+        } catch (e: Throwable) {
+            Log.w(TAG, "spindownDevice warning during SCSI commands", e)
+        }
+
+        closeDevice(devId)
+        return true
+    }
+
+    /**
      * Handles physical detachment of a USB device.
      */
     fun onDeviceDetached(device: UsbDevice) {

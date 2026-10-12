@@ -26,6 +26,8 @@
 #include <scsi/sg.h>
 #include <stdint.h>
 #include <limits.h>
+#include <dirent.h>
+#include <linux/fs.h>
 
 static int do_sg_io(int fd, const unsigned char *cdb, int cdb_len,
                     unsigned char *data, int data_len, int dxfer_dir,
@@ -442,5 +444,165 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
     );
 
     close(fd);
+    return 0;
+}
+
+int scsi_spindown_device(const char *dev_path) {
+    if (!dev_path) return -EINVAL;
+
+    struct stat st;
+    if (stat(dev_path, &st) < 0) {
+        return -errno;
+    }
+
+    char actual_dev[256];
+    strncpy(actual_dev, dev_path, sizeof(actual_dev) - 1);
+    actual_dev[sizeof(actual_dev) - 1] = '\0';
+
+    char parent_disk_name[64] = {0};
+
+    if (S_ISBLK(st.st_mode)) {
+        unsigned int maj = major(st.st_rdev);
+        unsigned int min = minor(st.st_rdev);
+        char part_path[256];
+        snprintf(part_path, sizeof(part_path), "/sys/dev/block/%u:%u/partition", maj, min);
+        if (access(part_path, F_OK) == 0) {
+            char parent_dev_path[256];
+            snprintf(parent_dev_path, sizeof(parent_dev_path), "/sys/dev/block/%u:%u/../dev", maj, min);
+            FILE *f = fopen(parent_dev_path, "r");
+            if (f) {
+                unsigned int pmaj = 0, pmin = 0;
+                if (fscanf(f, "%u:%u", &pmaj, &pmin) == 2) {
+                    char link_buf[256];
+                    snprintf(link_buf, sizeof(link_buf), "/sys/dev/block/%u:%u", pmaj, pmin);
+                    char real_path[PATH_MAX];
+                    if (realpath(link_buf, real_path)) {
+                        char *bname = strrchr(real_path, '/');
+                        if (bname) {
+                            snprintf(actual_dev, sizeof(actual_dev), "/dev/block/%s", bname + 1);
+                            strncpy(parent_disk_name, bname + 1, sizeof(parent_disk_name) - 1);
+                        }
+                    }
+                }
+                fclose(f);
+            }
+        } else {
+            char link_buf[256];
+            snprintf(link_buf, sizeof(link_buf), "/sys/dev/block/%u:%u", maj, min);
+            char real_path[PATH_MAX];
+            if (realpath(link_buf, real_path)) {
+                char *bname = strrchr(real_path, '/');
+                if (bname) {
+                    strncpy(parent_disk_name, bname + 1, sizeof(parent_disk_name) - 1);
+                }
+            }
+        }
+    }
+
+    if (parent_disk_name[0] == '\0') {
+        const char *b = strrchr(actual_dev, '/');
+        if (b) {
+            strncpy(parent_disk_name, b + 1, sizeof(parent_disk_name) - 1);
+        }
+    }
+
+    // CRITICAL SAFETY CHECK: Refuse to touch internal Android flash storage
+    char sys_block[256];
+    snprintf(sys_block, sizeof(sys_block), "/sys/block/%s", parent_disk_name);
+    char real_sys[PATH_MAX] = {0};
+    if (realpath(sys_block, real_sys)) {
+        if (strstr(real_sys, "ufshc") || strstr(real_sys, "bootdevice") || strstr(real_sys, "mmcblk")) {
+            return -EPERM;
+        }
+        if (!strstr(real_sys, "usb") && !strstr(real_sys, "target")) {
+            return -EPERM;
+        }
+    } else {
+        return -ENOENT;
+    }
+
+    // Step 1: System-wide sync and block buffer flush
+    sync();
+
+    int fd = open(actual_dev, O_RDWR | O_LARGEFILE | O_CLOEXEC);
+    if (fd < 0) {
+        fd = open(actual_dev, O_RDONLY | O_LARGEFILE | O_CLOEXEC);
+    }
+
+    if (fd >= 0) {
+        ioctl(fd, BLKFLSBUF, 0);
+
+        unsigned char sense[32];
+
+        // Step 2: SCSI SYNCHRONIZE CACHE (10) (0x35)
+        unsigned char sync_cdb[10] = { 0x35, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+        memset(sense, 0, sizeof(sense));
+        do_sg_io(fd, sync_cdb, 10, NULL, 0, SG_DXFER_NONE, sense, sizeof(sense));
+
+        // Step 3: SCSI START STOP UNIT (0x1B) with START=0 (Stop unit)
+        unsigned char stop_cdb[6] = { 0x1B, 0, 0, 0, 0x00, 0 };
+        memset(sense, 0, sizeof(sense));
+        do_sg_io(fd, stop_cdb, 6, NULL, 0, SG_DXFER_NONE, sense, sizeof(sense));
+
+        close(fd);
+    }
+
+    // Step 4: Configure sysfs manage_start_stop = 1 if present
+    char scsi_disk_dir[256];
+    snprintf(scsi_disk_dir, sizeof(scsi_disk_dir), "/sys/block/%s/device/scsi_disk", parent_disk_name);
+    DIR *d = opendir(scsi_disk_dir);
+    if (d) {
+        struct dirent *de;
+        while ((de = readdir(d)) != NULL) {
+            if (de->d_name[0] == '.') continue;
+            char mss_path[512];
+            snprintf(mss_path, sizeof(mss_path), "%s/%s/manage_start_stop", scsi_disk_dir, de->d_name);
+            int mss_fd = open(mss_path, O_WRONLY);
+            if (mss_fd >= 0) {
+                write(mss_fd, "1\n", 2);
+                close(mss_fd);
+            }
+        }
+        closedir(d);
+    }
+
+    // Step 5: Inform Linux SCSI subsystem to offline & delete device
+    char delete_path[256];
+    snprintf(delete_path, sizeof(delete_path), "/sys/block/%s/device/delete", parent_disk_name);
+    int del_fd = open(delete_path, O_WRONLY);
+    if (del_fd >= 0) {
+        write(del_fd, "1\n", 2);
+        close(del_fd);
+    }
+
+    // Step 6: Walk up parent sysfs directory to set USB power/control to auto
+    char cur_path[PATH_MAX];
+    strncpy(cur_path, real_sys, sizeof(cur_path) - 1);
+    cur_path[sizeof(cur_path) - 1] = '\0';
+    for (int i = 0; i < 8; i++) {
+        char *slash = strrchr(cur_path, '/');
+        if (!slash) break;
+        *slash = '\0';
+        char busnum_path[PATH_MAX];
+        snprintf(busnum_path, sizeof(busnum_path), "%s/busnum", cur_path);
+        if (access(busnum_path, F_OK) == 0) {
+            char pwr_ctrl[PATH_MAX];
+            snprintf(pwr_ctrl, sizeof(pwr_ctrl), "%s/power/control", cur_path);
+            int pwr_fd = open(pwr_ctrl, O_WRONLY);
+            if (pwr_fd >= 0) {
+                write(pwr_fd, "auto\n", 5);
+                close(pwr_fd);
+            }
+            char delay_path[PATH_MAX];
+            snprintf(delay_path, sizeof(delay_path), "%s/power/autosuspend_delay_ms", cur_path);
+            int delay_fd = open(delay_path, O_WRONLY);
+            if (delay_fd >= 0) {
+                write(delay_fd, "0\n", 2);
+                close(delay_fd);
+            }
+            break;
+        }
+    }
+
     return 0;
 }

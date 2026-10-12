@@ -204,6 +204,16 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    if (argc >= 3 && strcmp(argv[1], "--spindown") == 0) {
+        int ret = scsi_spindown_device(argv[2]);
+        if (ret == 0) {
+            printf("{\"success\":true,\"device\":\"%s\"}\n", argv[2]);
+        } else {
+            printf("{\"success\":false,\"device\":\"%s\",\"error\":%d,\"message\":\"%s\"}\n", argv[2], ret, strerror(-ret));
+        }
+        return ret;
+    }
+
     if (argc < 2) {
         int32_t err = -EINVAL;
         write_all(STDOUT_FILENO, &err, 4);

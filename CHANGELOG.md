@@ -13,6 +13,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), adherin
 ### 中文
 
 #### 新增
+- **物理块设备完整停机与下线脱机 (Physical Spindown & Safe Offline)**：
+  - 彻底根治外接 PSSD 移动固态硬盘（如 Realtek RTL9210 / JMicron JMS583 / ASMedia 等桥接方案）每次拔出时 NVMe SMART 异常断电计数（`unsafe_shutdowns`）不断递增的问题。
+  - 在“安全弹出”与“全部弹出”时完整补全了硬件级停机下线序列：
+    1. 系统级脏页刷新：执行全系统 `sync` 与 `ioctl(BLKFLSBUF)`，清空内核与块层缓冲区。
+    2. SCSI 缓存强制落盘：下发 SCSI `SYNCHRONIZE CACHE (10)` (`0x35`) 指令，强制桥接固件与 SSD 刷写内部 DRAM / SLC Cache 缓存。
+    3. SCSI 物理停机睡眠：下发 SCSI `START STOP UNIT` (`0x1B`, `START=0`) 指令，触发 SSD 控制器完成 NVMe 关机通告（`CC.SHN`）并进入 Standby 低功耗模式。
+    4. 内核电源管理接管：动态开启 `/sys/block/.../device/scsi_disk/*/manage_start_stop = 1`。
+    5. SCSI 节点干净脱机：向 `/sys/block/.../device/delete` 写入 `1`，通知内核注销设备节点，安全脱机。
+    6. USB 端口低功耗休眠：联动 USB 核心写入 `power/control = auto`，引导 USB 端口进入 U3 Suspend。
+  - **多分区物理拓扑安全隔离**：单盘多分区环境下，仅在弹出该物理磁盘上的**最后一个活动分区块**（或一键全部弹出）时才执行物理停机与脱机，防止单卷卸载影响同盘其余活动分区。
+  - **免 Root USB 主机模式全面覆盖**：在 Non-Root 模式下通过 USB BOT 通道下发 SCSI 缓存同步与停机指令。
 - **物理磁盘一键全部弹出**：在物理磁盘汇总卡片（`DeviceGroupCard`）新增“全部弹出”按钮，支持一键安全卸载并弹出当前外接设备下的所有已挂载/已解锁卷。
 - **多分区物理拓扑顺序对齐**：单盘多分区根据磁盘底层物理起始扇区（`startSector`）升序排序，严格还原物理空间布局。
 - **多分区节点角标细化**：分区徽章清晰标明分区序号与系统块设备节点（例如：`分区 5 · sdg5`），便于准确定位各分区。
@@ -33,6 +44,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), adherin
 ### English
 
 #### Added
+- **Full Physical Block Device Spindown & Safe Offline**:
+  - Completely resolves the issue where external portable SSDs (especially Realtek RTL9210, JMicron JMS583, and ASMedia NVMe bridges) suffered incrementing SMART `unsafe_shutdowns` counters every time they were unplugged.
+  - Implements the complete hardware spindown and offlining sequence during "Safe Eject" and "Eject All":
+    1. System-wide dirty buffer writeback via `sync` and `ioctl(BLKFLSBUF)`.
+    2. SCSI cache synchronization via SCSI `SYNCHRONIZE CACHE (10)` (`0x35`), ensuring internal DRAM/SLC caches are flushed to NAND.
+    3. SCSI physical spindown via SCSI `START STOP UNIT` (`0x1B`, `START=0`), signaling the SSD controller to perform clean NVMe shutdown notification (`CC.SHN`) and transition to standby low-power mode.
+    4. Kernel power management enablement via `/sys/block/.../device/scsi_disk/*/manage_start_stop = 1`.
+    5. Clean SCSI block device offlining and removal via `/sys/block/.../device/delete = 1`.
+    6. USB port power suspension via `/sys/bus/usb/devices/.../power/control = auto` and autosuspend delay `0` (U3 Suspend).
+  - **Multi-Partition Safety Isolation**: On physical drives hosting multiple partitions, physical spindown and offlining is only executed when ejecting the **last remaining active volume session** on that physical disk (or when invoking "Eject All"), safeguarding all other concurrently active partitions.
+  - **Full Non-Root USB Host Mode Coverage**: Issues SCSI cache synchronization and spindown unit commands via USB BOT bulk transfer before closing device handles in non-root mode.
 - **Eject All for Physical Storage Devices**: Added an "Eject All" action button on the physical device card (`DeviceGroupCard`) to safely unmount all unlocked volumes on the device in a single tap.
 - **Physical Topology Partition Ordering**: Multi-partitions are now sorted in ascending order of their physical start sector (`startSector`), accurately mirroring on-disk layout.
 - **Detailed Partition Badges**: Partition chips explicitly display the partition number and kernel block node name (e.g., `Partition 5 · sdg5`).

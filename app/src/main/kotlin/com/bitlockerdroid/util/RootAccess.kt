@@ -496,4 +496,39 @@ object RootAccess {
         }
         return null
     }
+
+    /**
+     * Safely flushes caches, issues SCSI START STOP UNIT spindown, and offlines
+     * the physical block device using bitlocker_io --spindown or shell fallback.
+     */
+    fun spindownDevice(devicePath: String): Boolean {
+        if (!hasSu()) return false
+        try {
+            ensureDaemonInstalled(ContextProvider.app)
+        } catch (_: Throwable) {}
+
+        val daemonPath = "/data/local/tmp/bitlocker_io"
+        val daemonRes = exec("$daemonPath --spindown '$devicePath'", 6000)
+        if (daemonRes?.first == 0 && daemonRes.second.contains("\"success\":true")) {
+            Log.i(TAG, "spindownDevice succeeded via daemon for $devicePath")
+            return true
+        }
+
+        Log.w(TAG, "daemon spindown failed or not available for $devicePath (${daemonRes?.second}), running shell fallback")
+        val parentDisk = DeviceIdentity.resolveParentDiskNode(devicePath)
+        val diskName = java.io.File(parentDisk).name
+        val fallbackCmd = """
+            sync
+            blockdev --flushbufs '$devicePath' 2>/dev/null
+            if [ -b '$parentDisk' ]; then blockdev --flushbufs '$parentDisk' 2>/dev/null; fi
+            for mss in /sys/block/$diskName/device/scsi_disk/*/manage_start_stop; do
+                if [ -f "${'$'}mss" ]; then echo 1 > "${'$'}mss" 2>/dev/null; fi
+            done
+            if [ -f /sys/block/$diskName/device/delete ]; then
+                echo 1 > /sys/block/$diskName/device/delete 2>/dev/null
+            fi
+        """.trimIndent()
+        val shellRes = exec(fallbackCmd, 5000)
+        return shellRes?.first == 0
+    }
 }

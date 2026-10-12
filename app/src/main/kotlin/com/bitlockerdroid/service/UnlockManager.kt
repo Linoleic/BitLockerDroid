@@ -583,7 +583,41 @@ object UnlockManager {
             }
         }
 
-        // 4. Update system framework, notifications and roots
+        // 4. Multi-Partition Safe Physical Spindown & Offline:
+        // Check if any other active sessions remain on the same physical parent disk
+        val parentDisk = com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(devicePath)
+        val hasOtherActiveSessions = synchronized(lock) {
+            sessions.keys.any { otherPath ->
+                otherPath != devicePath && com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(otherPath) == parentDisk
+            }
+        }
+
+        if (!hasOtherActiveSessions) {
+            LogFile.write("app", "UnlockManager.safeEject: no other active sessions on physical disk $parentDisk, initiating hardware spindown and offline")
+            try {
+                if (devicePath.startsWith("usb://")) {
+                    com.bitlockerdroid.usb.UsbStorageManager.spindownDevice(devicePath)
+                } else if (com.bitlockerdroid.util.RootAccess.hasSu()) {
+                    com.bitlockerdroid.util.RootAccess.spindownDevice(devicePath)
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "Physical spindown warning for $devicePath ($parentDisk)", e)
+            }
+
+            // Invalidate hardware identity caches for this device and its parent disk
+            com.bitlockerdroid.util.DeviceIdentity.invalidate(devicePath)
+            com.bitlockerdroid.util.DeviceIdentity.invalidate(parentDisk)
+
+            // Remove detected entries associated with this offlined parent disk
+            synchronized(lock) {
+                val toRemove = detected.keys.filter {
+                    it == devicePath || com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(it) == parentDisk
+                }
+                toRemove.forEach { detected.remove(it) }
+            }
+        }
+
+        // 5. Update system framework, notifications and roots
         app?.let {
             dismissAllNotificationsForDevice(it, devicePath)
             BitLockerCoreService.updateForegroundState(it)
