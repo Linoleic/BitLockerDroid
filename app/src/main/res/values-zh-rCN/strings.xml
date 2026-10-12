@@ -501,4 +501,6 @@
     <string name="device_group_unlocked_header">已挂载分区</string>
     <string name="device_group_unencrypted_header">原生存储分区</string>
     <string name="device_smart_telemetry_btn">硬件健康与 S.M.A.R.T. 监测</string>
+    <string name="partition_number_format">分区 %1$d</string>
+    <string name="partition_number_with_node">分区 %1$d · %2$s</string>
 </resources>

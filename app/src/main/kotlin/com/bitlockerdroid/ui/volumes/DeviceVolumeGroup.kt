@@ -81,6 +81,16 @@ object DeviceGroupBuilder {
         // 4. Assemble Immutable DeviceVolumeGroup list
         val result = mutableListOf<DeviceVolumeGroup>()
         for ((diskNode, holder) in groupMap) {
+            holder.unlocked.sortWith { a, b ->
+                compareVolumeOrder(a.devicePath, a.partitionIndex, b.devicePath, b.partitionIndex)
+            }
+            holder.detected.sortWith { a, b ->
+                compareVolumeOrder(a.devicePath, a.partitionIndex, b.devicePath, b.partitionIndex)
+            }
+            holder.unencrypted.sortWith { a, b ->
+                compareVolumeOrder(a.blockDevice ?: a.mountPath, a.partitionIndex, b.blockDevice ?: b.mountPath, b.partitionIndex)
+            }
+
             val devInfo = DeviceIdentity.queryDeviceInfo(diskNode)
             val deviceName = when {
                 devInfo.friendlyName.isNotBlank() && devInfo.friendlyName != "USB Storage Device" -> devInfo.friendlyName
@@ -120,10 +130,31 @@ object DeviceGroupBuilder {
         return result
     }
 
+    private fun compareVolumeOrder(pathA: String, indexA: Int, pathB: String, indexB: Int): Int {
+        val infoA = DeviceIdentity.resolvePartitionInfo(pathA)
+        val infoB = DeviceIdentity.resolvePartitionInfo(pathB)
+        if (infoA.startSector > 0L && infoB.startSector > 0L && infoA.startSector != infoB.startSector) {
+            return infoA.startSector.compareTo(infoB.startSector)
+        }
+        val idxA = if (indexA > 0) indexA else infoA.partitionIndex
+        val idxB = if (indexB > 0) indexB else infoB.partitionIndex
+        if (idxA > 0 && idxB > 0 && idxA != idxB) {
+            return idxA.compareTo(idxB)
+        }
+        return pathA.compareTo(pathB)
+    }
+
     private fun findDiskNodeForUnencrypted(
         unenc: UnencryptedVolume,
         existingNodes: Set<String>
     ): String? {
+        val dev = unenc.blockDevice
+        if (!dev.isNullOrBlank()) {
+            val resolved = DeviceIdentity.resolveParentDiskNode(dev)
+            if (resolved.isNotBlank() && !resolved.startsWith("storage:")) {
+                return resolved
+            }
+        }
         val uuid = unenc.uuid ?: unenc.id
         // If only 1 physical disk exists, unencrypted removable volume on bus belongs to it
         if (existingNodes.size == 1) {

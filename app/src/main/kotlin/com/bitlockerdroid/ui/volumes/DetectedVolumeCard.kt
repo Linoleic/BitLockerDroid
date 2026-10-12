@@ -87,19 +87,32 @@ fun DetectedVolumeCard(
                 Spacer(modifier = Modifier.width(14.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
+                    val titleText = when {
+                        volume.partitionIndex > 0 && volume.partitionName.isNotBlank() ->
+                            stringResource(R.string.partition_number_with_node, volume.partitionIndex, volume.partitionName)
+                        volume.partitionIndex > 0 ->
+                            stringResource(R.string.partition_number_format, volume.partitionIndex)
+                        else -> displayName
+                    }
                     Text(
-                        text = displayName,
+                        text = titleText,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Spacer(modifier = Modifier.height(2.dp))
+                    val statusText = if (formattedCapacity != null) {
+                        stringResource(R.string.locked_status_with_size, formattedCapacity)
+                    } else {
+                        stringResource(R.string.locked_status)
+                    }
+                    val subtitleText = when {
+                        volume.partitionIndex > 0 && volume.deviceName.isNotBlank() && volume.deviceName != displayName ->
+                            "${volume.deviceName} · $statusText"
+                        else -> statusText
+                    }
                     Text(
-                        text = if (formattedCapacity != null) {
-                            stringResource(R.string.locked_status_with_size, formattedCapacity)
-                        } else {
-                            stringResource(R.string.locked_status)
-                        },
+                        text = subtitleText,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

@@ -128,6 +128,7 @@ object UnlockManager {
                     "Unknown"
                 }
                 val devInfo = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(path)
+                val partInfo = com.bitlockerdroid.util.DeviceIdentity.resolvePartitionInfo(path)
                 val space = core.getSpaceInfo()
                 val totalBytes = if (space != null && space.first > 0L) space.first else core.info.volumeSize
                 val freeBytes = space?.second ?: -1L
@@ -152,7 +153,9 @@ object UnlockManager {
                         sectorSize = core.info.sectorSize,
                         volumeSerial = serial,
                         isRecovery = core.isRecovery,
-                        isDirty = core.isDirty
+                        isDirty = core.isDirty,
+                        partitionIndex = partInfo.partitionIndex,
+                        partitionName = partInfo.partitionNodeName
                     )
                 )
             }
@@ -270,6 +273,7 @@ object UnlockManager {
         val effectiveGuid = guid ?: BitLockerDetector.getVolumeGuid(devicePath)
         val effectiveRecoveryKeyId = recoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
         val devInfo = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath, forceRefresh = false)
+        val partInfo = com.bitlockerdroid.util.DeviceIdentity.resolvePartitionInfo(devicePath)
 
         var changed = false
         synchronized(lock) {
@@ -284,14 +288,16 @@ object UnlockManager {
                 }
                 val prev = detected[devicePath]
                 val isRo = com.bitlockerdroid.util.PreferenceHelper.isVolumeReadOnly(com.bitlockerdroid.util.ContextProvider.app, effectiveGuid, devicePath)
-                if (prev == null || prev.guid != effectiveGuid || prev.recoveryKeyId != effectiveRecoveryKeyId || prev.deviceName != devInfo.friendlyName || prev.isReadOnly != isRo) {
+                if (prev == null || prev.guid != effectiveGuid || prev.recoveryKeyId != effectiveRecoveryKeyId || prev.deviceName != devInfo.friendlyName || prev.isReadOnly != isRo || prev.partitionIndex != partInfo.partitionIndex || prev.partitionName != partInfo.partitionNodeName) {
                     detected[devicePath] = DetectedVolume(
                         devicePath = devicePath,
                         guid = effectiveGuid,
                         recoveryKeyId = effectiveRecoveryKeyId,
                         deviceName = devInfo.friendlyName,
                         capacity = devInfo.sizeBytes,
-                        isReadOnly = isRo
+                        isReadOnly = isRo,
+                        partitionIndex = partInfo.partitionIndex,
+                        partitionName = partInfo.partitionNodeName
                     )
                     changed = true
                 }
@@ -530,13 +536,16 @@ object UnlockManager {
             LogFile.write("app", "UnlockManager.safeEject: ejecting $devicePath ($effectiveLabel, guid=$guid, rkId=$recoveryKeyId)")
 
             val isRo = com.bitlockerdroid.util.PreferenceHelper.isVolumeReadOnly(app, guid, devicePath)
+            val partInfo = com.bitlockerdroid.util.DeviceIdentity.resolvePartitionInfo(devicePath)
             detected[devicePath] = DetectedVolume(
                 devicePath = devicePath,
                 guid = guid,
                 recoveryKeyId = recoveryKeyId,
                 deviceName = devInfo.friendlyName,
                 capacity = devInfo.sizeBytes,
-                isReadOnly = isRo
+                isReadOnly = isRo,
+                partitionIndex = partInfo.partitionIndex,
+                partitionName = partInfo.partitionNodeName
             )
         }
         sessionCredentials.remove(devicePath)
@@ -1100,7 +1109,9 @@ data class UnlockedVolume(
     val sectorSize: Int = 512,
     val volumeSerial: Long = 0L,
     val isRecovery: Boolean = false,
-    val isDirty: Boolean = false
+    val isDirty: Boolean = false,
+    val partitionIndex: Int = 0,
+    val partitionName: String = ""
 )
 
 /** A BitLocker volume detected on the bus but not yet unlocked. */
@@ -1111,7 +1122,9 @@ data class DetectedVolume(
     val recoveryKeyId: String? = null,
     val deviceName: String = "",
     val capacity: Long = 0L,
-    val isReadOnly: Boolean = false
+    val isReadOnly: Boolean = false,
+    val partitionIndex: Int = 0,
+    val partitionName: String = ""
 )
 
 /** An unencrypted storage volume (e.g. FAT32, exFAT) managed natively by Android OS. */
@@ -1123,5 +1136,8 @@ data class UnencryptedVolume(
     val mountPath: String = "",
     val totalBytes: Long = 0L,
     val freeBytes: Long = 0L,
-    val uuid: String? = null
+    val uuid: String? = null,
+    val blockDevice: String? = null,
+    val partitionIndex: Int = 0,
+    val partitionName: String = ""
 )

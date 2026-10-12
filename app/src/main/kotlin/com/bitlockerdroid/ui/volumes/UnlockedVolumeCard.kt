@@ -138,10 +138,19 @@ fun UnlockedVolumeCard(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
-                    if (volume.deviceName.isNotBlank() && volume.deviceName != displayName) {
+                    val subtitleText = when {
+                        volume.partitionIndex > 0 && volume.partitionName.isNotBlank() ->
+                            stringResource(R.string.partition_number_with_node, volume.partitionIndex, volume.partitionName)
+                        volume.partitionIndex > 0 ->
+                            stringResource(R.string.partition_number_format, volume.partitionIndex)
+                        volume.deviceName.isNotBlank() && volume.deviceName != displayName ->
+                            volume.deviceName
+                        else -> ""
+                    }
+                    if (subtitleText.isNotBlank()) {
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = volume.deviceName,
+                            text = subtitleText,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

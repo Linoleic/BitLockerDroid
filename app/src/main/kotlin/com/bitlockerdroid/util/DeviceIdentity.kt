@@ -29,23 +29,33 @@ object DeviceIdentity {
             }
     }
 
+    data class PartitionPhysicalInfo(
+        val partitionIndex: Int = 0,
+        val startSector: Long = 0L,
+        val partitionNodeName: String = ""
+    )
+
     private val cache = java.util.concurrent.ConcurrentHashMap<String, DeviceInfo>()
     private val parentDiskCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val partitionInfoCache = java.util.concurrent.ConcurrentHashMap<String, PartitionPhysicalInfo>()
 
     fun clearCache() {
         cache.clear()
         parentDiskCache.clear()
+        partitionInfoCache.clear()
     }
 
     fun invalidate(devicePath: String) {
         cache.remove(devicePath)
         parentDiskCache.remove(devicePath)
+        partitionInfoCache.remove(devicePath)
     }
 
     fun retainOnly(validPaths: Collection<String>) {
         val validSet = validPaths.toSet()
         cache.keys.retainAll(validSet)
         parentDiskCache.keys.retainAll(validSet)
+        partitionInfoCache.keys.retainAll(validSet)
     }
 
     /**
@@ -330,5 +340,84 @@ object DeviceIdentity {
 
         parentDiskCache[devicePath] = devicePath
         return devicePath
+    }
+
+    /**
+     * Resolves physical partition index, start sector, and clean node name for any partition path.
+     * e.g. /dev/block/vold/public:8,101 -> PartitionPhysicalInfo(partitionIndex=5, startSector=4096, partitionNodeName="sdg5")
+     */
+    fun resolvePartitionInfo(devicePath: String): PartitionPhysicalInfo {
+        if (devicePath.isBlank()) return PartitionPhysicalInfo()
+        partitionInfoCache[devicePath]?.let { return it }
+
+        // 1. USB BOT URL: usb://deviceId/interface/lun/part or usb://deviceId/part
+        if (devicePath.startsWith("usb://")) {
+            val trimmed = devicePath.removePrefix("usb://")
+            val parts = trimmed.split('/')
+            val partIdx = parts.lastOrNull()?.toIntOrNull() ?: 1
+            val info = PartitionPhysicalInfo(
+                partitionIndex = partIdx,
+                startSector = partIdx.toLong() * 2048L,
+                partitionNodeName = "p$partIdx"
+            )
+            partitionInfoCache[devicePath] = info
+            return info
+        }
+
+        var partIndex = 0
+        var startSector = 0L
+        var nodeName = ""
+
+        try {
+            val fileName = File(devicePath).name
+            val majMin = when {
+                fileName.startsWith("public:") -> fileName.removePrefix("public:").replace(',', ':')
+                fileName.startsWith("disk:") -> fileName.removePrefix("disk:").replace(',', ':')
+                else -> null
+            }
+
+            if (majMin != null) {
+                val pFile = File("/sys/dev/block/$majMin/partition")
+                val sFile = File("/sys/dev/block/$majMin/start")
+                partIndex = try { if (pFile.exists()) pFile.readText().trim().toIntOrNull() ?: 0 else 0 } catch (_: Exception) { 0 }
+                startSector = try { if (sFile.exists()) sFile.readText().trim().toLongOrNull() ?: 0L else 0L } catch (_: Exception) { 0L }
+
+                try {
+                    val linkTarget = android.system.Os.readlink("/sys/dev/block/$majMin")
+                    if (linkTarget.isNotBlank()) {
+                        nodeName = File(linkTarget).name
+                    }
+                } catch (_: Throwable) {}
+            } else {
+                val pFile = File("/sys/class/block/$fileName/partition")
+                val sFile = File("/sys/class/block/$fileName/start")
+                partIndex = try { if (pFile.exists()) pFile.readText().trim().toIntOrNull() ?: 0 else 0 } catch (_: Exception) { 0 }
+                startSector = try { if (sFile.exists()) sFile.readText().trim().toLongOrNull() ?: 0L else 0L } catch (_: Exception) { 0L }
+                nodeName = fileName
+            }
+        } catch (_: Exception) {}
+
+        if (nodeName.isBlank()) {
+            nodeName = File(devicePath).name
+        }
+        if (partIndex <= 0) {
+            val sdMatch = Regex("""^sd[a-z](\d+)$""").find(nodeName)
+            if (sdMatch != null) {
+                partIndex = sdMatch.groupValues[1].toIntOrNull() ?: 0
+            } else {
+                val pMatch = Regex("""p(\d+)$""").find(nodeName)
+                if (pMatch != null) {
+                    partIndex = pMatch.groupValues[1].toIntOrNull() ?: 0
+                }
+            }
+        }
+
+        val info = PartitionPhysicalInfo(
+            partitionIndex = partIndex,
+            startSector = startSector,
+            partitionNodeName = nodeName
+        )
+        partitionInfoCache[devicePath] = info
+        return info
     }
 }

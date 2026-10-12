@@ -369,16 +369,22 @@ object BitLockerDetector {
         val sm = context.getSystemService(android.content.Context.STORAGE_SERVICE) as? android.os.storage.StorageManager ?: return emptyList()
 
         val mountsMap = mutableMapOf<String, String>()
+        val mountDevMap = mutableMapOf<String, String>()
         try {
             java.io.File("/proc/mounts").forEachLine { line ->
                 val parts = line.split("\\s+".toRegex())
                 if (parts.size >= 3) {
+                    val devNode = parts[0]
                     val mountPoint = parts[1]
                     val fs = parts[2]
                     if (mountPoint.startsWith("/storage/") || mountPoint.startsWith("/mnt/media_rw/")) {
                         mountsMap[mountPoint] = fs
+                        mountDevMap[mountPoint] = devNode
                         val uuid = mountPoint.substringAfterLast('/')
                         mountsMap["/storage/$uuid"] = fs
+                        mountDevMap["/storage/$uuid"] = devNode
+                        mountsMap["/mnt/media_rw/$uuid"] = fs
+                        mountDevMap["/mnt/media_rw/$uuid"] = devNode
                     }
                 }
             }
@@ -398,7 +404,13 @@ object BitLockerDetector {
             val mountPath = dir.absolutePath
             val desc = vol.getDescription(context)
             val label = if (!desc.isNullOrBlank()) desc else "U盘 ($uuid)"
-            val fsType = mountsMap[mountPath] ?: mountsMap["/storage/$uuid"] ?: ""
+            val fsType = mountsMap[mountPath] ?: mountsMap["/storage/$uuid"] ?: mountsMap["/mnt/media_rw/$uuid"] ?: ""
+            val blockDev = mountDevMap[mountPath] ?: mountDevMap["/storage/$uuid"] ?: mountDevMap["/mnt/media_rw/$uuid"]
+            val partInfo = if (!blockDev.isNullOrBlank()) {
+                com.bitlockerdroid.util.DeviceIdentity.resolvePartitionInfo(blockDev)
+            } else {
+                com.bitlockerdroid.util.DeviceIdentity.PartitionPhysicalInfo()
+            }
 
             val total = try { dir.totalSpace } catch (_: Exception) { 0L }
             val free = try { dir.freeSpace } catch (_: Exception) { 0L }
@@ -411,10 +423,13 @@ object BitLockerDetector {
                     mountPath = mountPath,
                     totalBytes = total,
                     freeBytes = free,
-                    uuid = uuid
+                    uuid = uuid,
+                    blockDevice = blockDev,
+                    partitionIndex = partInfo.partitionIndex,
+                    partitionName = partInfo.partitionNodeName
                 )
             )
-            LogFile.write("app", "scanUnencryptedVolumes: found unencrypted volume -> $label ($fsType) at $mountPath, total=$total, free=$free")
+            LogFile.write("app", "scanUnencryptedVolumes: found unencrypted volume -> $label ($fsType, dev=$blockDev, part=${partInfo.partitionIndex}) at $mountPath, total=$total, free=$free")
         }
         return results
     }

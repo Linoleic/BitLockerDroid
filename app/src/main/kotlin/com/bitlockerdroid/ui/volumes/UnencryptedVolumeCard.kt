@@ -65,8 +65,15 @@ fun UnencryptedVolumeCard(
                         overflow = TextOverflow.Ellipsis
                     )
                     Spacer(modifier = Modifier.height(2.dp))
+                    val partPrefix = when {
+                        volume.partitionIndex > 0 && volume.partitionName.isNotBlank() ->
+                            stringResource(R.string.partition_number_with_node, volume.partitionIndex, volume.partitionName) + " · "
+                        volume.partitionIndex > 0 ->
+                            stringResource(R.string.partition_number_format, volume.partitionIndex) + " · "
+                        else -> ""
+                    }
                     Text(
-                        text = volume.mountPath,
+                        text = "$partPrefix${volume.mountPath}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,

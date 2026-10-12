@@ -503,4 +503,6 @@
     <string name="device_group_unlocked_header">Mounted Partitions</string>
     <string name="device_group_unencrypted_header">Native Storage Partitions</string>
     <string name="device_smart_telemetry_btn">Hardware Health &amp; S.M.A.R.T.</string>
+    <string name="partition_number_format">Partition %1$d</string>
+    <string name="partition_number_with_node">Partition %1$d · %2$s</string>
 </resources>
