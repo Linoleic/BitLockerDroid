@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -685,7 +686,29 @@ fun UnlockedVolumeCard(
                                 }
                             )
 
-                            // 2. 卷序列号
+                            // 2. USB 传输协议
+                            var usbProtocolDesc by remember(volume.devicePath) {
+                                mutableStateOf(DeviceIdentity.getCachedUsbProtocolDesc(volume.devicePath, context))
+                            }
+                            LaunchedEffect(volume.devicePath) {
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    val desc = DeviceIdentity.getUsbProtocolDesc(volume.devicePath, context)
+                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                        usbProtocolDesc = desc
+                                    }
+                                }
+                            }
+                            VolumeDetailRow(
+                                label = stringResource(R.string.usb_protocol),
+                                value = usbProtocolDesc,
+                                isMonospace = false,
+                                onCopy = {
+                                    clipboardManager.setText(AnnotatedString(usbProtocolDesc))
+                                    Toast.makeText(context, R.string.usb_protocol_copied, Toast.LENGTH_SHORT).show()
+                                }
+                            )
+
+                            // 3. 卷序列号
                             if (volume.volumeSerial != 0L) {
                                 val hexSerial = if ((volume.volumeSerial ushr 32) != 0L) {
                                     "%016X".format(volume.volumeSerial)
@@ -703,7 +726,7 @@ fun UnlockedVolumeCard(
                                 )
                             }
 
-                            // 3. 扇区大小与对齐情况
+                            // 4. 扇区大小与对齐情况
                             val sectorDesc = if (volume.sectorSize >= 4096) {
                                 stringResource(R.string.sector_4kn_aligned, volume.sectorSize)
                             } else {
@@ -715,7 +738,7 @@ fun UnlockedVolumeCard(
                                 isMonospace = false
                             )
 
-                            // 4. 解锁方式
+                            // 5. 解锁方式
                             val unlockMethodDesc = if (volume.isRecovery) {
                                 stringResource(R.string.method_recovery_key)
                             } else {
@@ -727,7 +750,7 @@ fun UnlockedVolumeCard(
                                 isMonospace = false
                             )
 
-                            // 5. 系统挂载权限状态
+                            // 6. 系统挂载权限状态
                             val permissionDesc = if (volume.canWrite) {
                                 stringResource(R.string.perm_read_write)
                             } else {
@@ -739,7 +762,7 @@ fun UnlockedVolumeCard(
                                 isMonospace = false
                             )
 
-                            // 6. 文件系统健康度
+                            // 7. 文件系统健康度
                             val healthDesc = if (volume.isDirty) {
                                 stringResource(R.string.health_dirty)
                             } else {

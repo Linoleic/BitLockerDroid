@@ -206,6 +206,15 @@
     <string name="expand">展开 ▼</string>
     <string name="device_node">底层设备节点</string>
     <string name="device_node_copied">设备节点路径已复制</string>
+    <string name="usb_protocol">USB 传输协议</string>
+    <string name="usb_protocol_copied">USB 传输协议已复制</string>
+    <string name="usb_protocol_unknown">未知 / 非 USB 总线</string>
+    <string name="usb_protocol_gen2x2">USB 3.2 Gen 2x2 (20 Gbps 超高速)</string>
+    <string name="usb_protocol_superspeed_plus">USB 3.1 / 3.2 Gen 2 (10 Gbps 超高速)</string>
+    <string name="usb_protocol_superspeed">USB 3.0 (5 Gbps 高速)</string>
+    <string name="usb_protocol_high_speed">USB 2.0 (480 Mbps 高速)</string>
+    <string name="usb_protocol_full_speed">USB 1.1 (12 Mbps 全速)</string>
+    <string name="usb_protocol_format">USB (%1$d Mbps)</string>
     <string name="volume_serial">卷序列号</string>
     <string name="volume_serial_copied">卷序列号已复制</string>
     <string name="sector_and_alignment">扇区与对齐</string>
@@ -233,7 +242,7 @@
     <string name="benchmark_preparing">准备测试…</string>
     <string name="benchmark_error">测速异常: %1$s</string>
     <string name="benchmark_dialog_title">驱动器基准测速</string>
-    <string name="benchmark_intro">基准测试将通过底层驱动进行全链路读取与延时探测，并诊断 OTG 物理协议，全过程严格只读，不影响数据安全。</string>
+    <string name="benchmark_intro">基准测试将通过底层驱动测试顺序读写速率与 4K 随机寻道延时，全过程不影响分区结构与数据安全。</string>
     <string name="benchmark_results">基准测试结果</string>
     <string name="benchmark_seq_read">连续读取速率</string>
     <string name="benchmark_seq_write">连续写入速率</string>

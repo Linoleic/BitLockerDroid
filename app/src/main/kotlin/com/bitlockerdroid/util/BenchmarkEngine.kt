@@ -65,67 +65,7 @@ data class BenchmarkResult(
 object BenchmarkEngine {
 
     fun detectUsbSpeed(devicePath: String): Int? {
-        // Priority 1: Check non-root USB Storage Manager bulk endpoint packet size
-        if (devicePath.startsWith("usb://")) {
-            val speed = com.bitlockerdroid.usb.UsbStorageManager.getUsbSpeedMbps(devicePath)
-            if (speed != null && speed > 0) {
-                return speed
-            }
-        }
-
-        // Priority 2: Trace USB sysfs device tree from the specific block device via Root
-        if (RootAccess.hasSu()) {
-            try {
-                if (DevicePathSecurity.isValid(devicePath)) {
-                    val fileName = File(devicePath).name
-                    val majMin = when {
-                        fileName.startsWith("public:") -> fileName.removePrefix("public:").replace(',', ':')
-                        fileName.startsWith("disk:") -> fileName.removePrefix("disk:").replace(',', ':')
-                        else -> {
-                            val lsOut = RootAccess.exec("ls -l '$devicePath' 2>/dev/null")?.second
-                            val match = Regex("""(\d+),\s*(\d+)""").find(lsOut ?: "")
-                            if (match != null) "${match.groupValues[1]}:${match.groupValues[2]}" else null
-                        }
-                    }
-                    if (majMin != null) {
-                        val cmd = "p=\$(realpath /sys/dev/block/$majMin 2>/dev/null); while [ \"\$p\" != \"/\" -a -n \"\$p\" ]; do if [ -f \"\$p/speed\" ]; then cat \"\$p/speed\"; break; fi; p=\$(dirname \"\$p\"); done"
-                        val out = RootAccess.exec(cmd)?.second?.trim()
-                        val s = out?.toIntOrNull()
-                        if (s != null && s > 0) {
-                            return s
-                        }
-                    }
-                }
-                // Fallback: scan all active non-roothub USB device speeds via Root
-                val allSpeeds = RootAccess.exec("for s in /sys/bus/usb/devices/*/speed; do [ -f \"\$s\" ] && cat \"\$s\"; done 2>/dev/null")?.second
-                val list = allSpeeds?.lines()?.mapNotNull { it.trim().toIntOrNull() }?.filter { it > 0 }
-                if (!list.isNullOrEmpty()) {
-                    return list.maxOrNull()
-                }
-            } catch (_: Exception) {}
-        }
-
-        // Priority 3: Direct unprivileged sysfs read (if permitted by SELinux)
-        try {
-            val usbDir = File("/sys/bus/usb/devices")
-            if (usbDir.exists() && usbDir.isDirectory) {
-                val speeds = mutableListOf<Int>()
-                usbDir.listFiles()?.forEach { dev ->
-                    val speedFile = File(dev, "speed")
-                    val isRootHub = dev.name.startsWith("usb")
-                    if (!isRootHub && speedFile.exists()) {
-                        val s = speedFile.readText().trim().toIntOrNull()
-                        if (s != null && s > 0) {
-                            speeds.add(s)
-                        }
-                    }
-                }
-                if (speeds.isNotEmpty()) {
-                    return speeds.maxOrNull()
-                }
-            }
-        } catch (_: Exception) {}
-        return null
+        return DeviceIdentity.detectUsbSpeed(devicePath)
     }
 
     suspend fun testSequentialRead(
@@ -347,7 +287,7 @@ object BenchmarkEngine {
         onProgress: (phase: String, progress: Float) -> Unit
     ): BenchmarkResult = withContext(Dispatchers.IO) {
         val testsToRun = if (selectedTests.isEmpty()) BenchmarkTestType.ALL else selectedTests
-        val totalStages = testsToRun.size + 1 // +1 for link speed
+        val totalStages = testsToRun.size.coerceAtLeast(1)
         var completedStages = 0
 
         fun stageProgress(stageProg: Float): Float {
@@ -407,21 +347,11 @@ object BenchmarkEngine {
             completedStages++
         }
 
-        // Final: Detect Hardware Link Speed
-        val stepLink = context?.getString(R.string.benchmark_step_link) ?: "Detecting hardware link speed…"
-        onProgress(stepLink, stageProgress(0.5f))
-        val usbSpeed = detectUsbSpeed(core.devicePath)
-        val usbDesc = when {
-            usbSpeed == null -> context?.getString(R.string.benchmark_usb_unknown) ?: "Unknown USB Protocol"
-            usbSpeed >= 10000 -> context?.getString(R.string.benchmark_usb_superspeed_plus) ?: "USB 3.1+ (10 Gbps SuperSpeed+)"
-            usbSpeed >= 5000 -> context?.getString(R.string.benchmark_usb_superspeed) ?: "USB 3.0 (5 Gbps SuperSpeed)"
-            usbSpeed == 480 -> "USB 2.0 (480 Mbps)"
-            usbSpeed == 12 -> "USB 1.1 (12 Mbps)"
-            else -> "USB ($usbSpeed Mbps)"
-        }
-
         val stepDone = context?.getString(R.string.benchmark_done) ?: "Benchmark completed"
         onProgress(stepDone, 1.0f)
+
+        val usbSpeed = DeviceIdentity.detectUsbSpeed(core.devicePath)
+        val usbDesc = DeviceIdentity.getUsbProtocolDesc(core.devicePath, context)
 
         BenchmarkResult(
             sequentialReadMbPerSec = seqReadMb,

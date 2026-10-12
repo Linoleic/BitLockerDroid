@@ -206,6 +206,15 @@
     <string name="expand">Expand ▼</string>
     <string name="device_node">Block Device Node</string>
     <string name="device_node_copied">Device node path copied</string>
+    <string name="usb_protocol">USB Transmission Protocol</string>
+    <string name="usb_protocol_copied">USB transmission protocol copied</string>
+    <string name="usb_protocol_unknown">Unknown / Internal Bus</string>
+    <string name="usb_protocol_gen2x2">USB 3.2 Gen 2x2 (20 Gbps)</string>
+    <string name="usb_protocol_superspeed_plus">USB 3.1 / 3.2 Gen 2 (10 Gbps SuperSpeed+)</string>
+    <string name="usb_protocol_superspeed">USB 3.0 / 3.2 Gen 1 (5 Gbps SuperSpeed)</string>
+    <string name="usb_protocol_high_speed">USB 2.0 (480 Mbps High-Speed)</string>
+    <string name="usb_protocol_full_speed">USB 1.1 (12 Mbps Full-Speed)</string>
+    <string name="usb_protocol_format">USB (%1$d Mbps)</string>
     <string name="volume_serial">Volume Serial</string>
     <string name="volume_serial_copied">Volume serial copied</string>
     <string name="sector_and_alignment">Sector &amp; Alignment</string>
@@ -233,7 +242,7 @@
     <string name="benchmark_preparing">Preparing benchmark…</string>
     <string name="benchmark_error">Benchmark error: %1$s</string>
     <string name="benchmark_dialog_title">Drive Benchmark</string>
-    <string name="benchmark_intro">Benchmark tests sequential read, 4K latency, and physical link speed via the native driver. Entirely read-only and non-destructive.</string>
+    <string name="benchmark_intro">Benchmark measures sequential read/write speed and 4K random latency via the native driver.</string>
     <string name="benchmark_results">Benchmark Results</string>
     <string name="benchmark_seq_read">Sequential Read Speed</string>
     <string name="benchmark_seq_write">Sequential Write Speed</string>

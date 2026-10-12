@@ -1,5 +1,6 @@
 package com.bitlockerdroid.util
 
+import android.content.Context
 import com.bitlockerdroid.R
 import java.io.File
 import java.util.Locale
@@ -38,17 +39,20 @@ object DeviceIdentity {
     private val cache = java.util.concurrent.ConcurrentHashMap<String, DeviceInfo>()
     private val parentDiskCache = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val partitionInfoCache = java.util.concurrent.ConcurrentHashMap<String, PartitionPhysicalInfo>()
+    private val usbSpeedCache = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
     fun clearCache() {
         cache.clear()
         parentDiskCache.clear()
         partitionInfoCache.clear()
+        usbSpeedCache.clear()
     }
 
     fun invalidate(devicePath: String) {
         cache.remove(devicePath)
         parentDiskCache.remove(devicePath)
         partitionInfoCache.remove(devicePath)
+        usbSpeedCache.remove(devicePath)
     }
 
     fun retainOnly(validPaths: Collection<String>) {
@@ -56,6 +60,7 @@ object DeviceIdentity {
         cache.keys.retainAll(validSet)
         parentDiskCache.keys.retainAll(validSet)
         partitionInfoCache.keys.retainAll(validSet)
+        usbSpeedCache.keys.retainAll(validSet)
     }
 
     /**
@@ -419,5 +424,115 @@ object DeviceIdentity {
         )
         partitionInfoCache[devicePath] = info
         return info
+    }
+
+    fun getCachedUsbSpeed(devicePath: String): Int? {
+        return usbSpeedCache[devicePath]
+    }
+
+    fun detectUsbSpeed(devicePath: String): Int? {
+        if (devicePath.isBlank()) return null
+        usbSpeedCache[devicePath]?.let { return it }
+
+        // 1. USB Storage Manager (non-root OTG direct endpoint check)
+        if (devicePath.startsWith("usb://")) {
+            val speed = com.bitlockerdroid.usb.UsbStorageManager.getUsbSpeedMbps(devicePath)
+            if (speed != null && speed > 0) {
+                usbSpeedCache[devicePath] = speed
+                return speed
+            }
+        }
+
+        // 2. Direct sysfs upward traversal
+        try {
+            val fileName = File(devicePath).name
+            val majMin = when {
+                fileName.startsWith("public:") -> fileName.removePrefix("public:").replace(',', ':')
+                fileName.startsWith("disk:") -> fileName.removePrefix("disk:").replace(',', ':')
+                else -> null
+            }
+            val candidates = mutableListOf<File>()
+            if (majMin != null) candidates.add(File("/sys/dev/block/$majMin"))
+            candidates.add(File("/sys/block/$fileName"))
+            candidates.add(File("/sys/class/block/$fileName"))
+
+            for (cand in candidates) {
+                if (cand.exists()) {
+                    var cur: File? = try { cand.canonicalFile } catch (_: Exception) { null }
+                    while (cur != null && cur.path != "/" && cur.path != "/sys") {
+                        val speedFile = File(cur, "speed")
+                        if (speedFile.exists() && speedFile.canRead()) {
+                            val s = speedFile.readText().trim().toIntOrNull()
+                            if (s != null && s > 0) {
+                                usbSpeedCache[devicePath] = s
+                                return s
+                            }
+                        }
+                        cur = cur.parentFile
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 3. Root sysfs query fallback
+        if (RootAccess.hasSu() && DevicePathSecurity.isValid(devicePath)) {
+            try {
+                val fileName = File(devicePath).name
+                val majMin = when {
+                    fileName.startsWith("public:") -> fileName.removePrefix("public:").replace(',', ':')
+                    fileName.startsWith("disk:") -> fileName.removePrefix("disk:").replace(',', ':')
+                    else -> {
+                        val lsOut = RootAccess.exec("ls -l '$devicePath' 2>/dev/null")?.second
+                        val match = Regex("""(\d+),\s*(\d+)""").find(lsOut ?: "")
+                        if (match != null) "${match.groupValues[1]}:${match.groupValues[2]}" else null
+                    }
+                }
+                if (majMin != null) {
+                    val cmd = "p=\$(realpath /sys/dev/block/$majMin 2>/dev/null); while [ \"\$p\" != \"/\" -a -n \"\$p\" ]; do if [ -f \"\$p/speed\" ]; then cat \"\$p/speed\"; break; fi; p=\$(dirname \"\$p\"); done"
+                    val out = RootAccess.exec(cmd)?.second?.trim()
+                    val s = out?.toIntOrNull()
+                    if (s != null && s > 0) {
+                        usbSpeedCache[devicePath] = s
+                        return s
+                    }
+                }
+
+                // Fallback: check /sys/bus/usb/devices/*/speed
+                val allSpeeds = RootAccess.exec("for s in /sys/bus/usb/devices/*/speed; do [ -f \"\$s\" ] && cat \"\$s\"; done 2>/dev/null")?.second
+                val list = allSpeeds?.lines()?.mapNotNull { it.trim().toIntOrNull() }?.filter { it > 0 }
+                if (!list.isNullOrEmpty()) {
+                    val s = list.maxOrNull()
+                    if (s != null && s > 0) {
+                        usbSpeedCache[devicePath] = s
+                        return s
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        return null
+    }
+
+    fun getCachedUsbProtocolDesc(devicePath: String, context: Context? = null): String {
+        val cachedSpeed = usbSpeedCache[devicePath]
+        return formatUsbProtocol(cachedSpeed, context)
+    }
+
+    fun getUsbProtocolDesc(devicePath: String, context: Context? = null): String {
+        val speed = detectUsbSpeed(devicePath)
+        return formatUsbProtocol(speed, context)
+    }
+
+    fun formatUsbProtocol(speedMbps: Int?, context: Context? = null): String {
+        val ctx = context ?: try { ContextProvider.app } catch (_: Throwable) { null }
+        return when {
+            speedMbps == null -> ctx?.getString(R.string.usb_protocol_unknown) ?: "Unknown / Internal Bus"
+            speedMbps >= 20000 -> ctx?.getString(R.string.usb_protocol_gen2x2) ?: "USB 3.2 Gen 2x2 (20 Gbps)"
+            speedMbps >= 10000 -> ctx?.getString(R.string.usb_protocol_superspeed_plus) ?: "USB 3.1 / 3.2 Gen 2 (10 Gbps SuperSpeed+)"
+            speedMbps >= 5000 -> ctx?.getString(R.string.usb_protocol_superspeed) ?: "USB 3.0 / 3.2 Gen 1 (5 Gbps SuperSpeed)"
+            speedMbps == 480 -> ctx?.getString(R.string.usb_protocol_high_speed) ?: "USB 2.0 (480 Mbps High-Speed)"
+            speedMbps == 12 -> ctx?.getString(R.string.usb_protocol_full_speed) ?: "USB 1.1 (12 Mbps Full-Speed)"
+            else -> ctx?.getString(R.string.usb_protocol_format, speedMbps) ?: "USB ($speedMbps Mbps)"
+        }
     }
 }

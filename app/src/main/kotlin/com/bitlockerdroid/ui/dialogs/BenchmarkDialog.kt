@@ -325,49 +325,6 @@ fun BenchmarkDialog(
                     },
                     onRunSingle = { runTests(setOf(BenchmarkTestType.RAND_4K_WRITE)) }
                 )
-
-                // Physical Link Speed Summary Card
-                val linkDesc = result?.usbSpeedDesc
-                if (linkDesc != null && linkDesc != "Unknown") {
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = stringResource(R.string.benchmark_link_speed),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = if (result?.usbLinkSpeedMbps != null && result!!.usbLinkSpeedMbps!! >= 5000)
-                                    SuccessGreen.copy(alpha = 0.15f)
-                                else WarningAmber.copy(alpha = 0.15f)
-                            ) {
-                                Text(
-                                    text = linkDesc,
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontFamily = FontFamily.Monospace,
-                                        fontWeight = FontWeight.Bold
-                                    ),
-                                    color = if (result?.usbLinkSpeedMbps != null && result!!.usbLinkSpeedMbps!! >= 5000)
-                                        SuccessGreen
-                                    else WarningAmber,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-                    }
-                }
             }
         },
         confirmButton = {
