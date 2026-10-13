@@ -11,6 +11,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), adherin
 ## [Unreleased] - 暂存更新 / Staging Changes
 
 ### 中文
+- 暂无未发布暂存更改。
+
+### English
+- No unreleased staging changes yet.
+
+---
+
+## [v1.1.0] - 2026-10-13
+
+### 中文
 
 #### 新增
 - **物理块设备完整停机与下线脱机 (Physical Spindown & Safe Offline)**：
