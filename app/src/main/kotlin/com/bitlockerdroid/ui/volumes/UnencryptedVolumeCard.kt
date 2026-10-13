@@ -20,10 +20,12 @@ import com.bitlockerdroid.disaster.FveMetadataContainer
 import com.bitlockerdroid.service.UnencryptedVolume
 import com.bitlockerdroid.ui.theme.SuccessGreen
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun UnencryptedVolumeCard(
     volume: UnencryptedVolume,
     onOpen: () -> Unit,
+    isCompact: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
@@ -97,10 +99,10 @@ fun UnencryptedVolumeCard(
             Spacer(modifier = Modifier.height(14.dp))
 
             // Chips
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 if (volume.fsType.isNotBlank()) {
                     MetaChip(text = volume.fsType)

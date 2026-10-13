@@ -194,7 +194,12 @@ fun UnlockedVolumeCard(
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = volume.guid,
-                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp),
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = if (isCompact) 10.sp else 11.sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
@@ -242,8 +247,10 @@ fun UnlockedVolumeCard(
                                 text = volume.recoveryKeyId,
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     fontFamily = FontFamily.Monospace,
-                                    fontSize = 11.sp
+                                    fontSize = if (isCompact) 10.sp else 11.sp
                                 ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
@@ -273,13 +280,12 @@ fun UnlockedVolumeCard(
                         .fillMaxWidth()
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                    if (isCompact) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
                             Text(
                                 text = stringResource(R.string.posix_mount_path),
                                 style = MaterialTheme.typography.labelSmall,
@@ -291,46 +297,116 @@ fun UnlockedVolumeCard(
                                 text = vMount.mountPoint,
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     fontFamily = FontFamily.Monospace,
-                                    fontSize = 11.sp
+                                    fontSize = 10.sp
                                 ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                AppButton(
+                                    onClick = {
+                                        Thread {
+                                            VirtualStorageMountManager.unmount(volume.devicePath)
+                                            PreferenceHelper.setVolumeVirtualMountEnabled(context, volume.guid, volume.devicePath, false)
+                                            (context as? android.app.Activity)?.runOnUiThread {
+                                                Toast.makeText(context, R.string.unmount_success_toast, Toast.LENGTH_SHORT).show()
+                                            }
+                                        }.start()
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp),
+                                    containerColor = Color.Transparent,
+                                    contentColor = MaterialTheme.colorScheme.error
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.unmount_virtual_mount),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(4.dp))
+                                AppIconButton(
+                                    onClick = {
+                                        clipboardManager.setText(AnnotatedString(vMount.mountPoint))
+                                        Toast.makeText(context, R.string.mount_path_copied, Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        painter = copyPainter,
+                                        contentDescription = stringResource(R.string.copy_mount_path),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
                         }
-                        AppButton(
-                            onClick = {
-                                Thread {
-                                    VirtualStorageMountManager.unmount(volume.devicePath)
-                                    PreferenceHelper.setVolumeVirtualMountEnabled(context, volume.guid, volume.devicePath, false)
-                                    (context as? android.app.Activity)?.runOnUiThread {
-                                        Toast.makeText(context, R.string.unmount_success_toast, Toast.LENGTH_SHORT).show()
-                                    }
-                                }.start()
-                            },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                            modifier = Modifier.height(28.dp),
-                            containerColor = Color.Transparent,
-                            contentColor = MaterialTheme.colorScheme.error
+                    } else {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = stringResource(R.string.unmount_virtual_mount),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(4.dp))
-                        AppIconButton(
-                            onClick = {
-                                clipboardManager.setText(AnnotatedString(vMount.mountPoint))
-                                Toast.makeText(context, R.string.mount_path_copied, Toast.LENGTH_SHORT).show()
-                            },
-                            modifier = Modifier.size(28.dp)
-                        ) {
-                            Icon(
-                                painter = copyPainter,
-                                contentDescription = stringResource(R.string.copy_mount_path),
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.posix_mount_path),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = vMount.mountPoint,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            AppButton(
+                                onClick = {
+                                    Thread {
+                                        VirtualStorageMountManager.unmount(volume.devicePath)
+                                        PreferenceHelper.setVolumeVirtualMountEnabled(context, volume.guid, volume.devicePath, false)
+                                        (context as? android.app.Activity)?.runOnUiThread {
+                                            Toast.makeText(context, R.string.unmount_success_toast, Toast.LENGTH_SHORT).show()
+                                        }
+                                    }.start()
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp),
+                                containerColor = Color.Transparent,
+                                contentColor = MaterialTheme.colorScheme.error
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.unmount_virtual_mount),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            AppIconButton(
+                                onClick = {
+                                    clipboardManager.setText(AnnotatedString(vMount.mountPoint))
+                                    Toast.makeText(context, R.string.mount_path_copied, Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    painter = copyPainter,
+                                    contentDescription = stringResource(R.string.copy_mount_path),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -387,13 +463,12 @@ fun UnlockedVolumeCard(
                         .fillMaxWidth()
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                    if (isCompact) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
                             Text(
                                 text = stringResource(R.string.lan_share_title),
                                 style = MaterialTheme.typography.labelSmall,
@@ -405,54 +480,132 @@ fun UnlockedVolumeCard(
                                 text = shareState.primaryUrl,
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     fontFamily = FontFamily.Monospace,
-                                    fontSize = 11.sp
+                                    fontSize = 10.sp
                                 ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                AppButton(
+                                    onClick = onLanShareClick,
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp),
+                                    containerColor = Color.Transparent,
+                                    contentColor = MaterialTheme.colorScheme.primary
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.lan_share_manage_action),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(4.dp))
+                                AppButton(
+                                    onClick = {
+                                        com.bitlockerdroid.share.LanShareManager.stopSharing(context, effectiveShareGuid)
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp),
+                                    containerColor = Color.Transparent,
+                                    contentColor = MaterialTheme.colorScheme.error
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.lan_share_stop_action),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(4.dp))
+                                AppIconButton(
+                                    onClick = {
+                                        clipboardManager.setText(AnnotatedString(shareState.primaryUrl))
+                                        Toast.makeText(context, R.string.lan_share_copied, Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        painter = copyPainter,
+                                        contentDescription = stringResource(R.string.lan_share_copy_url),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
                         }
-                        AppButton(
-                            onClick = onLanShareClick,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                            modifier = Modifier.height(28.dp),
-                            containerColor = Color.Transparent,
-                            contentColor = MaterialTheme.colorScheme.primary
+                    } else {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = stringResource(R.string.lan_share_manage_action),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(4.dp))
-                        AppButton(
-                            onClick = {
-                                com.bitlockerdroid.share.LanShareManager.stopSharing(context, effectiveShareGuid)
-                            },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                            modifier = Modifier.height(28.dp),
-                            containerColor = Color.Transparent,
-                            contentColor = MaterialTheme.colorScheme.error
-                        ) {
-                            Text(
-                                text = stringResource(R.string.lan_share_stop_action),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(4.dp))
-                        AppIconButton(
-                            onClick = {
-                                clipboardManager.setText(AnnotatedString(shareState.primaryUrl))
-                                Toast.makeText(context, R.string.lan_share_copied, Toast.LENGTH_SHORT).show()
-                            },
-                            modifier = Modifier.size(28.dp)
-                        ) {
-                            Icon(
-                                painter = copyPainter,
-                                contentDescription = stringResource(R.string.lan_share_copy_url),
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.lan_share_title),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = shareState.primaryUrl,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            AppButton(
+                                onClick = onLanShareClick,
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp),
+                                containerColor = Color.Transparent,
+                                contentColor = MaterialTheme.colorScheme.primary
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.lan_share_manage_action),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            AppButton(
+                                onClick = {
+                                    com.bitlockerdroid.share.LanShareManager.stopSharing(context, effectiveShareGuid)
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp),
+                                containerColor = Color.Transparent,
+                                contentColor = MaterialTheme.colorScheme.error
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.lan_share_stop_action),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            AppIconButton(
+                                onClick = {
+                                    clipboardManager.setText(AnnotatedString(shareState.primaryUrl))
+                                    Toast.makeText(context, R.string.lan_share_copied, Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    painter = copyPainter,
+                                    contentDescription = stringResource(R.string.lan_share_copy_url),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -513,53 +666,27 @@ fun UnlockedVolumeCard(
             Spacer(modifier = Modifier.height(12.dp))
 
             // Badges row: FileSystem, Cipher, Size, Writable
-            if (!isCompact) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (volume.fsType.isNotBlank()) {
-                        MetaChip(text = volume.fsType)
-                    }
-                    if (volume.cipher.isNotBlank()) {
-                        MetaChip(text = volume.cipher)
-                    }
-                    MetaChip(text = formattedTotalSize)
-                    MetaChip(
-                        text = if (volume.canWrite) stringResource(R.string.writable) else stringResource(R.string.read_only),
-                        color = if (volume.canWrite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-                    )
-                    if (volume.isDirty) {
-                        MetaChip(
-                            text = stringResource(R.string.dirty_volume_warning_chip),
-                            color = WarningAmber
-                        )
-                    }
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (volume.fsType.isNotBlank()) {
+                    MetaChip(text = volume.fsType)
                 }
-            } else {
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    if (volume.fsType.isNotBlank()) {
-                        MetaChip(text = volume.fsType)
-                    }
-                    if (volume.cipher.isNotBlank()) {
-                        MetaChip(text = volume.cipher)
-                    }
-                    MetaChip(text = formattedTotalSize)
+                if (volume.cipher.isNotBlank()) {
+                    MetaChip(text = volume.cipher)
+                }
+                MetaChip(text = formattedTotalSize)
+                MetaChip(
+                    text = if (volume.canWrite) stringResource(R.string.writable) else stringResource(R.string.read_only),
+                    color = if (volume.canWrite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                )
+                if (volume.isDirty) {
                     MetaChip(
-                        text = if (volume.canWrite) stringResource(R.string.writable) else stringResource(R.string.read_only),
-                        color = if (volume.canWrite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                        text = stringResource(R.string.dirty_volume_warning_chip),
+                        color = WarningAmber
                     )
-                    if (volume.isDirty) {
-                        MetaChip(
-                            text = stringResource(R.string.dirty_volume_warning_chip),
-                            color = WarningAmber
-                        )
-                    }
                 }
             }
 
@@ -1039,7 +1166,7 @@ private fun VolumeDetailRow(
                 style = if (isMonospace) {
                     MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
                 } else {
-                    MaterialTheme.typography.bodySmall
+                    MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp)
                 },
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,

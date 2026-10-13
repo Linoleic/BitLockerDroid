@@ -19,6 +19,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bitlockerdroid.R
@@ -100,92 +101,75 @@ fun DeviceGroupCard(
                     .fillMaxWidth()
                     .padding(14.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), RoundedCornerShape(12.dp)),
-                        contentAlignment = Alignment.Center
+                if (!isCompact) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_storage_device),
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = group.deviceName,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            if (group.physicalDiskPath.isNotBlank() && !group.physicalDiskPath.startsWith("storage:")) {
-                                Text(
-                                    text = group.physicalDiskPath,
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 11.sp
-                                    ),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "·",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.outline
-                                )
-                            }
-                            if (formattedCapacity != null) {
-                                Text(
-                                    text = formattedCapacity,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "·",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.outline
-                                )
-                            }
-                            Text(
-                                text = partitionCountText,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    // S.M.A.R.T. Telemetry Action Button (Only shown on supported storage devices)
-                    if (isSmartSupported) {
-                        AppButton(
-                            onClick = { onSmartHealthClick(group.physicalDiskPath) },
-                            shape = RoundedCornerShape(10.dp),
-                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), RoundedCornerShape(12.dp)),
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                painter = painterResource(id = R.drawable.ic_smart_health),
+                                painter = painterResource(id = R.drawable.ic_storage_device),
                                 contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.primary
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
                             )
-                            if (!isCompact) {
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = group.deviceName,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            val infoParts = buildList {
+                                if (group.physicalDiskPath.isNotBlank() && !group.physicalDiskPath.startsWith("storage:")) {
+                                    add(group.physicalDiskPath)
+                                }
+                                if (formattedCapacity != null) {
+                                    add(formattedCapacity)
+                                }
+                                add(partitionCountText)
+                            }.joinToString(" · ")
+                            Text(
+                                text = infoParts,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp
+                                ),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        // S.M.A.R.T. Telemetry Action Button (Only shown on supported storage devices)
+                        if (isSmartSupported) {
+                            AppButton(
+                                onClick = { onSmartHealthClick(group.physicalDiskPath) },
+                                shape = RoundedCornerShape(10.dp),
+                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_smart_health),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
                                     text = stringResource(R.string.device_smart_telemetry_btn),
@@ -193,47 +177,43 @@ fun DeviceGroupCard(
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
+
+                            Spacer(modifier = Modifier.width(4.dp))
                         }
 
-                        Spacer(modifier = Modifier.width(4.dp))
-                    }
-
-                    // Eject All Action Button (Shown when group contains unlocked volumes)
-                    if (group.hasUnlocked && onEjectGroup != null) {
-                        val unlockedPaths = remember(group.unlockedVolumes) { group.unlockedVolumes.map { it.devicePath } }
-                        val isAnyEjecting = remember(unlockedPaths, ejectingPaths) {
-                            unlockedPaths.any { ejectingPaths.contains(it) }
-                        }
-                        AppButton(
-                            onClick = { onEjectGroup(unlockedPaths) },
-                            enabled = !isAnyEjecting,
-                            shape = RoundedCornerShape(10.dp),
-                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
-                            contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                        ) {
-                            if (isAnyEjecting) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onErrorContainer
-                                )
-                                if (!isCompact) {
+                        // Eject All Action Button (Shown when group contains unlocked volumes)
+                        if (group.hasUnlocked && onEjectGroup != null) {
+                            val unlockedPaths = remember(group.unlockedVolumes) { group.unlockedVolumes.map { it.devicePath } }
+                            val isAnyEjecting = remember(unlockedPaths, ejectingPaths) {
+                                unlockedPaths.any { ejectingPaths.contains(it) }
+                            }
+                            AppButton(
+                                onClick = { onEjectGroup(unlockedPaths) },
+                                enabled = !isAnyEjecting,
+                                shape = RoundedCornerShape(10.dp),
+                                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
+                                contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                if (isAnyEjecting) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onErrorContainer
+                                    )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = stringResource(R.string.safe_ejecting),
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.SemiBold
                                     )
-                                }
-                            } else {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ic_eject),
-                                    contentDescription = stringResource(R.string.notification_eject_all),
-                                    modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.onErrorContainer
-                                )
-                                if (!isCompact) {
+                                } else {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_eject),
+                                        contentDescription = stringResource(R.string.notification_eject_all),
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.onErrorContainer
+                                    )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = stringResource(R.string.notification_eject_all),
@@ -242,22 +222,166 @@ fun DeviceGroupCard(
                                     )
                                 }
                             }
+
+                            Spacer(modifier = Modifier.width(4.dp))
                         }
 
-                        Spacer(modifier = Modifier.width(4.dp))
+                        // Expand / Collapse Chevron
+                        AppIconButton(
+                            onClick = { isExpanded = !isExpanded },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                } else {
+                    // Compact Portrait Layout (Small screens)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), RoundedCornerShape(12.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_storage_device),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = group.deviceName,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            val infoParts = buildList {
+                                if (group.physicalDiskPath.isNotBlank() && !group.physicalDiskPath.startsWith("storage:")) {
+                                    add(group.physicalDiskPath)
+                                }
+                                if (formattedCapacity != null) {
+                                    add(formattedCapacity)
+                                }
+                                add(partitionCountText)
+                            }.joinToString(" · ")
+                            Text(
+                                text = infoParts,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp
+                                ),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(6.dp))
+
+                        // Expand / Collapse Chevron
+                        AppIconButton(
+                            onClick = { isExpanded = !isExpanded },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
 
-                    // Expand / Collapse Chevron
-                    AppIconButton(
-                        onClick = { isExpanded = !isExpanded },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
+                    // Compact secondary row for S.M.A.R.T. and Eject All
+                    val hasActions = isSmartSupported || (group.hasUnlocked && onEjectGroup != null)
+                    if (hasActions) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (isSmartSupported) {
+                                AppButton(
+                                    onClick = { onSmartHealthClick(group.physicalDiskPath) },
+                                    shape = RoundedCornerShape(10.dp),
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_smart_health),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(15.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = stringResource(R.string.device_smart_telemetry_btn),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+
+                            if (group.hasUnlocked && onEjectGroup != null) {
+                                val unlockedPaths = remember(group.unlockedVolumes) { group.unlockedVolumes.map { it.devicePath } }
+                                val isAnyEjecting = remember(unlockedPaths, ejectingPaths) {
+                                    unlockedPaths.any { ejectingPaths.contains(it) }
+                                }
+                                AppButton(
+                                    onClick = { onEjectGroup(unlockedPaths) },
+                                    enabled = !isAnyEjecting,
+                                    shape = RoundedCornerShape(10.dp),
+                                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
+                                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    if (isAnyEjecting) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(15.dp),
+                                            strokeWidth = 2.dp,
+                                            color = MaterialTheme.colorScheme.onErrorContainer
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = stringResource(R.string.safe_ejecting),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    } else {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.ic_eject),
+                                            contentDescription = stringResource(R.string.notification_eject_all),
+                                            modifier = Modifier.size(15.dp),
+                                            tint = MaterialTheme.colorScheme.onErrorContainer
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = stringResource(R.string.notification_eject_all),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -297,7 +421,8 @@ fun DeviceGroupCard(
                                 onMountReadOnlyChange = onMountReadOnlyChange,
                                 onUnlock = onUnlock,
                                 onBiometricUnlock = onBiometricUnlock,
-                                onDisasterClick = onDisaster
+                                onDisasterClick = onDisaster,
+                                isCompact = isCompact
                             )
                         }
                     }
@@ -361,7 +486,8 @@ fun DeviceGroupCard(
                             val onOpen = remember(unenc.id, onOpenUnencrypted) { { onOpenUnencrypted(unenc) } }
                             UnencryptedVolumeCard(
                                 volume = unenc,
-                                onOpen = onOpen
+                                onOpen = onOpen,
+                                isCompact = isCompact
                             )
                         }
                     }

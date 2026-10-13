@@ -31,6 +31,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), adherin
 - **OTG 插盘后台静默就绪 (Silent Auto-Mount)**：插入外接存储时后台静默探测并自动解锁已保存凭据的分区，推送就绪通知，支持一键打开。
 
 #### 优化
+- **小分辨率竖屏自适应布局重构**：
+  - 针对手机窄屏（宽度 < 600dp，如 360dp - 412dp）深度重构卡片响应式布局，调整断点阈值以全面适配竖屏握持。
+  - 解决物理磁盘卡片容量文本在动作按钮挤压下逐字竖向换行折行（`9 \n 3 \n 1 \n . \n 5 \n G \n B`）的问题，整合为单行防溢出显示，并将 S.M.A.R.T. 与全部弹出按钮自适应下沉至专属操作行。
+  - 优化盘符卡片中 36 字符卷 GUID 与 45 字符恢复密钥标识符的字号与溢出省略规则，避免卡片内部文字越界与双字符断行。
+  - 适配 POSIX 虚拟挂载与局域网无线共享在窄屏下的操作布局，防止按钮与地址挤压重叠。
+- **性能优化设置文案精简**：
+  - 精简性能优化设置与硬件加速对话框中冗长生涩的技术文案（流水线异步并发写、SAF 双重缓冲管道、ARMv8-A AES/SHA-2 硬件指令集状态）。
+  - 去除不必要的术语堆砌，统一使用“支持 / 不支持 / 已激活 / 已停用”等简洁明晰的状态徽章，大幅提升小屏浏览清爽度。
 - **USB 传输协议位置优化**：将 USB 传输协议识别从基准测速对话框移出，收纳至已解锁卷的“详细硬件与卷参数”展开列表中，并提供一键复制按钮（如 `USB 3.0 (5 Gbps 高速)`）。
 - **测速流程精简**：从基准测速流程中剔除冗余的“检测硬件链路速率…”阶段与延时，测速过程专注于顺序读写速率与 4K 随机延时。
 - **拔盘即时主动刷新**：监听系统 USB 插拔广播事件，外接盘拔出时毫秒级主动同步设备列表，彻底消除拔出后界面顿挫与延迟消失的问题。
@@ -62,6 +70,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), adherin
 - **Silent Auto-Mount on OTG Plug**: Automatically decrypts and mounts remembered BitLocker partitions in the background upon connection, posting a system notification for one-tap browsing.
 
 #### Optimized
+- **Responsive Layout for Small Portrait Screens**:
+  - Deeply refactored responsive layouts across drive cards for mobile portrait viewports (width < 600dp, e.g. 360dp - 412dp) with Material 3 compact breakpoints.
+  - Resolved character-by-character vertical text wrapping bugs on physical disk capacity subtitles by consolidating info strings and moving S.M.A.R.T. & Eject All buttons to a dedicated action row.
+  - Adjusted font sizes and ellipsis rules for 36-char volume GUIDs and 45-char Recovery Key IDs to prevent two-character orphan line breaks.
+  - Adapted POSIX virtual mount and LAN wireless share cards to wrap URL and action controls gracefully on compact displays.
+- **Concise Performance Optimization Descriptions**:
+  - Streamlined verbose technical descriptions for USB pipelined writing, SAF double-buffering, and ARMv8 Cryptography Extensions (AES/SHA-2).
+  - Simplified status badges across settings and optimization dialogs to clean, concise states (Supported, Unsupported, Active, Disabled).
 - **Relocated USB Protocol Detection**: Moved USB transmission protocol detection out of the benchmark speed test dialog into the "Hardware & Volume Details" expandable section on the volume card, with one-touch clipboard copy.
 - **Streamlined Benchmark Engine**: Eliminated the hardware link speed detection phase from the benchmark runner, removing artificial progress delays.
 - **Instant USB Detachment Refresh**: Listened directly to USB attach/detach broadcasts to instantly synchronize device lists, resolving UI hesitation when drives are unplugged.

@@ -63,7 +63,7 @@ fun VolumesTabContent(
     var diagnosticTarget by remember { mutableStateOf<UnlockedVolume?>(null) }
     var smartHealthTarget by remember { mutableStateOf<String?>(null) }
 
-    val isCompact = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 480
+    val isCompact = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
     val cardModifier = remember {
         Modifier
             .fillMaxWidth()

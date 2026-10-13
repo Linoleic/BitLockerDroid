@@ -68,16 +68,19 @@ fun PerformanceOptimizationDialog(
         try {
             val raw = NativeBridge.nativeGetHardwareAesDetails()
             if (isZh) {
-                if (raw.contains("Passed")) "HWCAP_AES: 支持 · 自检: XTS/CBC 回环测试全部通过"
-                else if (raw.contains("Failed")) "HWCAP_AES: 支持 · 自检: 失败 (已降级纯软件)"
-                else if (raw.contains("Missing")) "HWCAP_AES: 不支持 · CPU 缺失 ARMv8 CE 指令集"
+                if (raw.contains("Passed")) "支持 · 自检通过"
+                else if (raw.contains("Failed")) "支持 · 自检失败 (降级软件)"
+                else if (raw.contains("Missing")) "不支持 · 缺失 ARMv8 CE"
                 else raw
             } else {
-                raw
+                if (raw.contains("Passed")) "Supported · Self-test passed"
+                else if (raw.contains("Failed")) "Supported · Failed (Software fallback)"
+                else if (raw.contains("Missing")) "Unsupported · Missing ARMv8 CE"
+                else raw
             }
         } catch (_: Throwable) {
-            if (isHwAesSupported) "HWCAP_AES: Supported · Self-test: Passed"
-            else "HWCAP_AES: Unsupported"
+            if (isHwAesSupported) if (isZh) "支持 · 自检通过" else "Supported · Passed"
+            else if (isZh) "不支持" else "Unsupported"
         }
     }
 
@@ -85,16 +88,19 @@ fun PerformanceOptimizationDialog(
         try {
             val raw = NativeBridge.nativeGetHardwareSha2Details()
             if (isZh) {
-                if (raw.contains("Passed")) "HWCAP_SHA2: 支持 · 自检: NIST 向量与拉伸测试验证通过"
-                else if (raw.contains("Failed")) "HWCAP_SHA2: 支持 · 自检: 失败 (已降级纯软件)"
-                else if (raw.contains("Missing")) "HWCAP_SHA2: 不支持 · CPU 缺失 ARMv8 CE 指令集"
+                if (raw.contains("Passed")) "支持 · 自检通过"
+                else if (raw.contains("Failed")) "支持 · 自检失败 (降级软件)"
+                else if (raw.contains("Missing")) "不支持 · 缺失 ARMv8 CE"
                 else raw
             } else {
-                raw
+                if (raw.contains("Passed")) "Supported · Self-test passed"
+                else if (raw.contains("Failed")) "Supported · Failed (Software fallback)"
+                else if (raw.contains("Missing")) "Unsupported · Missing ARMv8 CE"
+                else raw
             }
         } catch (_: Throwable) {
-            if (isHwSha2Supported) "HWCAP_SHA2: Supported · Self-test: Passed"
-            else "HWCAP_SHA2: Unsupported"
+            if (isHwSha2Supported) if (isZh) "支持 · 自检通过" else "Supported · Passed"
+            else if (isZh) "不支持" else "Unsupported"
         }
     }
 

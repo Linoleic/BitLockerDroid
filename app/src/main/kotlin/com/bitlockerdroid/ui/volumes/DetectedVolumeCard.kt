@@ -24,6 +24,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bitlockerdroid.R
@@ -42,6 +43,7 @@ fun DetectedVolumeCard(
     onUnlock: () -> Unit,
     onBiometricUnlock: (() -> Unit)? = null,
     onDisasterClick: () -> Unit,
+    isCompact: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -61,6 +63,8 @@ fun DetectedVolumeCard(
     val formattedCapacity = remember(volume.capacity) {
         if (volume.capacity > 0L) DeviceIdentity.formatSize(volume.capacity) else null
     }
+
+    val showDualUnlock = hasSavedCredential && canBiometric && onBiometricUnlock != null
 
     Box(
         modifier = modifier
@@ -98,7 +102,9 @@ fun DetectedVolumeCard(
                         text = titleText,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     val statusText = if (formattedCapacity != null) {
@@ -114,17 +120,19 @@ fun DetectedVolumeCard(
                     Text(
                         text = subtitleText,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                if (hasSavedCredential && canBiometric && onBiometricUnlock != null) {
+                if (!isCompact && showDualUnlock) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         AppButton(
-                            onClick = onBiometricUnlock,
+                            onClick = onBiometricUnlock!!,
                             shape = RoundedCornerShape(12.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                         ) {
@@ -147,7 +155,7 @@ fun DetectedVolumeCard(
                             Text(text = stringResource(R.string.detected_unlock), fontSize = 12.sp)
                         }
                     }
-                } else {
+                } else if (!showDualUnlock) {
                     AppButton(
                         onClick = onUnlock,
                         shape = RoundedCornerShape(12.dp),
@@ -155,6 +163,52 @@ fun DetectedVolumeCard(
                         contentColor = Color.White
                     ) {
                         Text(text = stringResource(R.string.detected_unlock))
+                    }
+                }
+            }
+
+            // Compact mode dual unlock action buttons on separate line
+            if (isCompact && showDualUnlock) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AppButton(
+                        onClick = onBiometricUnlock!!,
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            painter = effectivePainters.fingerprint,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = stringResource(R.string.biometric_unlock_button),
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    AppButton(
+                        onClick = onUnlock,
+                        shape = RoundedCornerShape(12.dp),
+                        containerColor = Color.Transparent,
+                        contentColor = MaterialTheme.colorScheme.primary,
+                        borderColor = MaterialTheme.colorScheme.outlineVariant,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.detected_unlock),
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }
@@ -185,9 +239,11 @@ fun DetectedVolumeCard(
                                 text = volume.guid,
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     fontFamily = FontFamily.Monospace,
-                                    fontSize = 11.sp
+                                    fontSize = if (isCompact) 10.sp else 11.sp
                                 ),
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                         AppIconButton(
@@ -234,9 +290,11 @@ fun DetectedVolumeCard(
                                 text = volume.recoveryKeyId,
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     fontFamily = FontFamily.Monospace,
-                                    fontSize = 11.sp
+                                    fontSize = if (isCompact) 10.sp else 11.sp
                                 ),
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                         AppIconButton(
