@@ -81,6 +81,7 @@
     <string name="settings_align_status">现代系统架构支持</string>
     <string name="settings_align_ok">16KB 内存页对齐已就绪 (0x4000)</string>
     <string name="settings_view_log_desc">查看底层驱动与文件系统运行记录</string>
+    <string name="settings_view_log_badge">查看日志</string>
     <string name="settings_clear_log_desc">清空应用运行诊断日志</string>
     <string name="settings_header_about">关于与核心引擎</string>
     <string name="settings_about_desc">Android 原生 BitLocker 卷管理工具，支持 NTFS、FAT32 与 exFAT 分区解锁与文件透明读写访问。</string>

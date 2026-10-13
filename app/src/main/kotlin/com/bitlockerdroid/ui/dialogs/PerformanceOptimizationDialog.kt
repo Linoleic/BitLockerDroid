@@ -68,39 +68,48 @@ fun PerformanceOptimizationDialog(
         try {
             val raw = NativeBridge.nativeGetHardwareAesDetails()
             if (isZh) {
-                if (raw.contains("Passed")) "支持 · 自检通过"
-                else if (raw.contains("Failed")) "支持 · 自检失败 (降级软件)"
-                else if (raw.contains("Missing")) "不支持 · 缺失 ARMv8 CE"
+                if (raw.contains("Passed")) "HWCAP_AES · AESE/AESD/PMULL · AES-XTS/CBC 自检通过 (ARMv8 CE)"
+                else if (raw.contains("Failed")) "HWCAP_AES · 硬件指令存在但自检失败 (降级纯软件)"
+                else if (raw.contains("Missing")) "HWCAP_AES: 缺失 · CPU 缺少 ARMv8 密码学扩展指令"
                 else raw
             } else {
-                if (raw.contains("Passed")) "Supported · Self-test passed"
-                else if (raw.contains("Failed")) "Supported · Failed (Software fallback)"
-                else if (raw.contains("Missing")) "Unsupported · Missing ARMv8 CE"
+                if (raw.contains("Passed")) "HWCAP_AES · AESE/AESD/PMULL · AES-XTS & CBC Passed (ARMv8 CE)"
+                else if (raw.contains("Failed")) "HWCAP_AES · Self-Test Failed (Software fallback)"
+                else if (raw.contains("Missing")) "HWCAP_AES: Missing · CPU lacks ARMv8 CE instructions"
                 else raw
             }
         } catch (_: Throwable) {
-            if (isHwAesSupported) if (isZh) "支持 · 自检通过" else "Supported · Passed"
-            else if (isZh) "不支持" else "Unsupported"
+            if (isHwAesSupported) if (isZh) "HWCAP_AES · AESE/AESD/PMULL · 自检通过 (ARMv8 CE)" else "HWCAP_AES · AESE/AESD/PMULL · Passed (ARMv8 CE)"
+            else if (isZh) "HWCAP_AES: 缺失 · 不支持硬件加速" else "HWCAP_AES: Missing · Hardware acceleration unsupported"
         }
     }
 
-    val sha2Details = remember {
+    val sha2BenchmarkUs = remember {
+        try {
+            if (isHwSha2Supported) NativeBridge.nativeBenchmarkKeyStretching(1000) else -1L
+        } catch (_: Throwable) { -1L }
+    }
+
+    val sha2Details = remember(sha2BenchmarkUs) {
         try {
             val raw = NativeBridge.nativeGetHardwareSha2Details()
+            val benchmarkText = if (sha2BenchmarkUs > 0) {
+                if (isZh) " · 1000轮实测: ${sha2BenchmarkUs}µs" else " · 1000 rounds: ${sha2BenchmarkUs}µs"
+            } else ""
             if (isZh) {
-                if (raw.contains("Passed")) "支持 · 自检通过"
-                else if (raw.contains("Failed")) "支持 · 自检失败 (降级软件)"
-                else if (raw.contains("Missing")) "不支持 · 缺失 ARMv8 CE"
-                else raw
+                if (raw.contains("Passed")) "HWCAP_SHA2 · SHA256H/SHA256SU · NIST 向量与拉伸自检通过$benchmarkText"
+                else if (raw.contains("Failed")) "HWCAP_SHA2 · 硬件指令存在但自检失败 (降级 mbedtls)"
+                else if (raw.contains("Missing")) "HWCAP_SHA2: 缺失 · CPU 缺少 ARMv8 密码学扩展指令"
+                else raw + benchmarkText
             } else {
-                if (raw.contains("Passed")) "Supported · Self-test passed"
-                else if (raw.contains("Failed")) "Supported · Failed (Software fallback)"
-                else if (raw.contains("Missing")) "Unsupported · Missing ARMv8 CE"
-                else raw
+                if (raw.contains("Passed")) "HWCAP_SHA2 · SHA256H/SHA256SU · NIST & Stretch Passed$benchmarkText"
+                else if (raw.contains("Failed")) "HWCAP_SHA2 · Self-Test Failed (mbedtls fallback)"
+                else if (raw.contains("Missing")) "HWCAP_SHA2: Missing · CPU lacks ARMv8 CE instructions"
+                else raw + benchmarkText
             }
         } catch (_: Throwable) {
-            if (isHwSha2Supported) if (isZh) "支持 · 自检通过" else "Supported · Passed"
-            else if (isZh) "不支持" else "Unsupported"
+            if (isHwSha2Supported) if (isZh) "HWCAP_SHA2 · SHA256H/SHA256SU · 自检通过 (ARMv8 CE)" else "HWCAP_SHA2 · SHA256H/SHA256SU · Passed (ARMv8 CE)"
+            else if (isZh) "HWCAP_SHA2: 缺失 · 不支持硬件加速" else "HWCAP_SHA2: Missing · Hardware acceleration unsupported"
         }
     }
 

@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -323,6 +324,11 @@ class BitLockerSettingsActivity : FragmentActivity() {
     override fun onDestroy() {
         UnlockManager.removeListener(stateChangeListener)
         super.onDestroy()
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // Handled smoothly by Compose without Activity recreation or page reload
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -781,8 +787,8 @@ fun MainAppScreen(
     ejectingPaths: Set<String> = emptySet(),
     initialTab: Int = 0
 ) {
-    var selectedTab by remember { mutableStateOf(initialTab) }
-    var showCredentialsDialog by remember { mutableStateOf(false) }
+    var selectedTab by rememberSaveable { mutableStateOf(initialTab) }
+    var showCredentialsDialog by rememberSaveable { mutableStateOf(false) }
     var credentialForPasswordDialog by remember { mutableStateOf<PreferenceHelper.SavedCredential?>(null) }
 
     Scaffold(

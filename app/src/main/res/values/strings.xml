@@ -81,6 +81,7 @@
     <string name="settings_align_status">Modern OS Architecture</string>
     <string name="settings_align_ok">16KB Page Alignment Ready (0x4000)</string>
     <string name="settings_view_log_desc">Inspect driver and file system activity</string>
+    <string name="settings_view_log_badge">View Logs</string>
     <string name="settings_clear_log_desc">Clear diagnostic log</string>
     <string name="settings_header_about">About &amp; Core Engines</string>
     <string name="settings_about_desc">Native BitLocker volume manager for Android, supporting NTFS, FAT32, and exFAT partitions with transparent file read and write access</string>

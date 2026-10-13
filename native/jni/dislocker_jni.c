@@ -1090,11 +1090,20 @@ static jstring native_getHardwareAesDetails(JNIEnv *env, jobject thiz)
 #if defined(__aarch64__) && defined(HWCAP_AES)
 	unsigned long hwcap = getauxval(AT_HWCAP);
 	int has_hwcap = (hwcap & HWCAP_AES) != 0;
+	int has_pmull = 0;
+#if defined(HWCAP_PMULL)
+	has_pmull = (hwcap & HWCAP_PMULL) != 0;
+#endif
 	int supported = dislocker_is_armv8_ce_supported();
+	char buf[256];
 	if (supported) {
-		return (*env)->NewStringUTF(env, "HWCAP_AES: OK | Self-Test: AES-XTS & CBC Passed (ARMv8 CE)");
+		snprintf(buf, sizeof(buf), "HWCAP_AES: 0x%lx%s | AESE/AESD/PMULL | AES-XTS & CBC Passed (ARMv8 CE)",
+		         (unsigned long)(hwcap & HWCAP_AES), has_pmull ? "+PMULL" : "");
+		return (*env)->NewStringUTF(env, buf);
 	} else if (has_hwcap) {
-		return (*env)->NewStringUTF(env, "HWCAP_AES: OK | Self-Test: Failed (Fallback Software)");
+		snprintf(buf, sizeof(buf), "HWCAP_AES: 0x%lx | Self-Test: Failed (Fallback Software)",
+		         (unsigned long)(hwcap & HWCAP_AES));
+		return (*env)->NewStringUTF(env, buf);
 	} else {
 		return (*env)->NewStringUTF(env, "HWCAP_AES: Missing | CPU lacks ARMv8 CE instructions");
 	}
@@ -1110,10 +1119,15 @@ static jstring native_getHardwareSha2Details(JNIEnv *env, jobject thiz)
 	unsigned long hwcap = getauxval(AT_HWCAP);
 	int has_hwcap = (hwcap & HWCAP_SHA2) != 0;
 	int supported = dislocker_is_armv8_sha2_supported();
+	char buf[256];
 	if (supported) {
-		return (*env)->NewStringUTF(env, "HWCAP_SHA2: OK | Self-Test: NIST & Stretch Passed (ARMv8 CE)");
+		snprintf(buf, sizeof(buf), "HWCAP_SHA2: 0x%lx | SHA256H/SHA256SU0 | NIST & Stretch Passed (ARMv8 CE)",
+		         (unsigned long)(hwcap & HWCAP_SHA2));
+		return (*env)->NewStringUTF(env, buf);
 	} else if (has_hwcap) {
-		return (*env)->NewStringUTF(env, "HWCAP_SHA2: OK | Self-Test: Failed (Fallback mbedtls)");
+		snprintf(buf, sizeof(buf), "HWCAP_SHA2: 0x%lx | Self-Test: Failed (Fallback mbedtls)",
+		         (unsigned long)(hwcap & HWCAP_SHA2));
+		return (*env)->NewStringUTF(env, buf);
 	} else {
 		return (*env)->NewStringUTF(env, "HWCAP_SHA2: Missing | CPU lacks ARMv8 CE instructions");
 	}

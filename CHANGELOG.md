@@ -36,15 +36,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), adherin
   - 解决物理磁盘卡片容量文本在动作按钮挤压下逐字竖向换行折行（`9 \n 3 \n 1 \n . \n 5 \n G \n B`）的问题，整合为单行防溢出显示，并将 S.M.A.R.T. 与全部弹出按钮自适应下沉至专属操作行。
   - 优化盘符卡片中 36 字符卷 GUID 与 45 字符恢复密钥标识符的字号与溢出省略规则，避免卡片内部文字越界与双字符断行。
   - 适配 POSIX 虚拟挂载与局域网无线共享在窄屏下的操作布局，防止按钮与地址挤压重叠。
-- **性能优化设置文案精简**：
-  - 精简性能优化设置与硬件加速对话框中冗长生涩的技术文案（流水线异步并发写、SAF 双重缓冲管道、ARMv8-A AES/SHA-2 硬件指令集状态）。
-  - 去除不必要的术语堆砌，统一使用“支持 / 不支持 / 已激活 / 已停用”等简洁明晰的状态徽章，大幅提升小屏浏览清爽度。
+- **性能优化设置文案精简与底层指令集状态诊断细化**：
+  - 精简性能优化设置与硬件加速对话框中冗长生涩的技术文案（流水线异步并发写、SAF 双重缓冲管道），统一使用“支持 / 不支持 / 已激活 / 已停用”等简洁明晰的状态徽章。
+  - 深度扩充底层硬件密码学指令集诊断信息：在 JNI 原生层扩充 `native_getHardwareAesDetails` 与 `native_getHardwareSha2Details`，直观呈现内核 `HWCAP` 特性掩码、底层执行指令集族（`AESE/AESD/PMULL`、`SHA256H/SHA256SU0`）以及自检向量校验状态。
+  - 在“性能优化”与“系统环境与诊断”对话框中引入实时硬件微秒级密钥拉伸基准测试（`nativeBenchmarkKeyStretching`），显示 1000 轮密钥拉伸实测开销（例如：`135µs`），为排查移动端 CPU 硬件密码学加速性能提供精准依据。
 - **USB 传输协议位置优化**：将 USB 传输协议识别从基准测速对话框移出，收纳至已解锁卷的“详细硬件与卷参数”展开列表中，并提供一键复制按钮（如 `USB 3.0 (5 Gbps 高速)`）。
 - **测速流程精简**：从基准测速流程中剔除冗余的“检测硬件链路速率…”阶段与延时，测速过程专注于顺序读写速率与 4K 随机延时。
 - **拔盘即时主动刷新**：监听系统 USB 插拔广播事件，外接盘拔出时毫秒级主动同步设备列表，彻底消除拔出后界面顿挫与延迟消失的问题。
 - **外设过滤与防抖节流**：自动忽略鼠标、键盘等非存储类 USB 外设，加入解密唤醒防抖节流，避免高频广播造成重复唤醒。
 
 #### 修复
+- **运行诊断日志徽章文案修正**：修复“系统环境与诊断”对话框中“运行诊断日志”操作项的右侧状态徽章错误显示为“查看密码”的文案混淆问题，修正为“查看日志”。
+- **横竖屏旋转主页重复加载与防重载**：为 `BitLockerSettingsActivity` 与 `UnlockDialogActivity` 声明完整的 `android:configChanges`（`orientation|screenSize|smallestScreenSize|screenLayout|density|uiMode`），并在 Activity 中接管 `onConfigurationChanged` 旋转回调及记忆当前选中的 Tab 状态；彻底消除在屏幕旋转/横竖屏切换时 Activity 重新创建、盘符列表白屏重扫及刷新闪烁的问题。
 - **系统格式化提示屏蔽开关**：修复主界面设置中“屏蔽系统格式化提示”开关无法开启及点击无响应的问题，完善回调连接。
 
 ---
@@ -75,15 +78,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), adherin
   - Resolved character-by-character vertical text wrapping bugs on physical disk capacity subtitles by consolidating info strings and moving S.M.A.R.T. & Eject All buttons to a dedicated action row.
   - Adjusted font sizes and ellipsis rules for 36-char volume GUIDs and 45-char Recovery Key IDs to prevent two-character orphan line breaks.
   - Adapted POSIX virtual mount and LAN wireless share cards to wrap URL and action controls gracefully on compact displays.
-- **Concise Performance Optimization Descriptions**:
-  - Streamlined verbose technical descriptions for USB pipelined writing, SAF double-buffering, and ARMv8 Cryptography Extensions (AES/SHA-2).
-  - Simplified status badges across settings and optimization dialogs to clean, concise states (Supported, Unsupported, Active, Disabled).
+- **Concise Performance Descriptions & Detailed Instruction Set Diagnostics**:
+  - Streamlined verbose technical descriptions for USB pipelined writing and SAF double-buffering into clean, concise badges (Supported, Unsupported, Active, Disabled).
+  - Deeply expanded low-level cryptographic hardware instruction set diagnostics: extended JNI native helpers (`native_getHardwareAesDetails`, `native_getHardwareSha2Details`) to report kernel `HWCAP` hex bitmasks, execution instruction subsets (`AESE/AESD/PMULL`, `SHA256H/SHA256SU0`), and vector self-test status.
+  - Added real-time microsecond key-stretching benchmarks (`nativeBenchmarkKeyStretching`) in both "Performance Optimization" and "System Environment & Diagnostics" dialogs, measuring actual 1000-iteration key derivation latency (e.g. `135µs`) for detailed hardware profiling.
 - **Relocated USB Protocol Detection**: Moved USB transmission protocol detection out of the benchmark speed test dialog into the "Hardware & Volume Details" expandable section on the volume card, with one-touch clipboard copy.
 - **Streamlined Benchmark Engine**: Eliminated the hardware link speed detection phase from the benchmark runner, removing artificial progress delays.
 - **Instant USB Detachment Refresh**: Listened directly to USB attach/detach broadcasts to instantly synchronize device lists, resolving UI hesitation when drives are unplugged.
 - **Non-Storage Filtering & Throttling**: Automatically ignores non-storage peripherals (keyboards, mice, DACs) and throttles background unlock attempts against broadcast storms.
 
 #### Fixed
+- **Diagnostic Log Action Badge Text**: Corrected the action badge in the "System Environment & Diagnostics" dialog for "Running Diagnostic Logs", which previously erroneously displayed "View Password" instead of "View Logs".
+- **Prevent Activity Recreation & Drive Rescanning on Orientation Change**: Configured `android:configChanges` (`orientation|screenSize|smallestScreenSize|screenLayout|density|uiMode`) for `BitLockerSettingsActivity` and `UnlockDialogActivity`, handled `onConfigurationChanged`, and preserved selected navigation tabs via `rememberSaveable`; completely eliminating screen rotation activity teardown, empty white-flash reloading, and repetitive block device rescanning.
 - **Suppress System Format Prompt Toggle**: Fixed a callback wiring issue where the "Suppress System Format Prompt" toggle in Settings could not be enabled.
 
 ---

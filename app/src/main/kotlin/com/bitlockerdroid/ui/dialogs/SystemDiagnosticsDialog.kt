@@ -89,6 +89,27 @@ fun SystemDiagnosticsDialog(
                         badgeColor = if (selinuxStatus == "Enforcing") SuccessGreen else MaterialTheme.colorScheme.tertiary
                     )
 
+                    val isHwCryptoSupported = androidx.compose.runtime.remember {
+                        try {
+                            com.bitlockerdroid.util.NativeBridge.nativeIsHardwareAesSupported()
+                        } catch (_: Throwable) { false }
+                    }
+                    val cpuArch = androidx.compose.runtime.remember {
+                        android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown"
+                    }
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                    )
+
+                    SettingsStatusItem(
+                        title = stringResource(R.string.settings_hw_crypto_status),
+                        description = "ABI: $cpuArch · " + if (isHwCryptoSupported) "ARMv8 CE (HWCAP_AES + SHA2)" else "软件模式 (无硬件加速)",
+                        badgeText = if (isHwCryptoSupported) stringResource(R.string.settings_hw_crypto_active) else stringResource(R.string.settings_hw_crypto_unsupported),
+                        badgeColor = if (isHwCryptoSupported) SuccessGreen else MaterialTheme.colorScheme.outline
+                    )
+
                     HorizontalDivider(
                         modifier = Modifier.padding(horizontal = 16.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
@@ -97,7 +118,7 @@ fun SystemDiagnosticsDialog(
                     SettingsClickableItem(
                         title = stringResource(R.string.log_title),
                         description = stringResource(R.string.settings_view_log_desc),
-                        badgeText = stringResource(R.string.creds_view_password),
+                        badgeText = stringResource(R.string.settings_view_log_badge),
                         onClick = {
                             onDismiss()
                             onOpenLog()
