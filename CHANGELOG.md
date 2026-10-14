@@ -23,7 +23,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), adherin
 ### 中文
 
 #### 新增
-- **物理块设备完整停机与下线脱机 (Physical Spindown & Safe Offline)**：
+- **物理块设备完整停机与下线脱机**：
   - 彻底根治外接 PSSD 移动固态硬盘（如 Realtek RTL9210 / JMicron JMS583 / ASMedia 等桥接方案）每次拔出时 NVMe SMART 异常断电计数（`unsafe_shutdowns`）不断递增的问题。
   - 在“安全弹出”与“全部弹出”时完整补全了硬件级停机下线序列：
     1. 系统级脏页刷新：执行全系统 `sync` 与 `ioctl(BLKFLSBUF)`，清空内核与块层缓冲区。
@@ -38,7 +38,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), adherin
 - **多分区物理拓扑顺序对齐**：单盘多分区根据磁盘底层物理起始扇区（`startSector`）升序排序，严格还原物理空间布局。
 - **多分区节点角标细化**：分区徽章清晰标明分区序号与系统块设备节点（例如：`分区 5 · sdg5`），便于准确定位各分区。
 - **挂载状态常驻徽章**：盘符卡片右上角常驻 `已挂载` 与 `已解锁` 状态徽章，直观区分卷状态。
-- **OTG 插盘后台静默就绪 (Silent Auto-Mount)**：插入外接存储时后台静默探测并自动解锁已保存凭据的分区，推送就绪通知，支持一键打开。
+- **OTG 插盘后台静默就绪**：插入外接存储时后台静默探测并自动解锁已保存凭据的分区，推送就绪通知，支持一键打开。
 
 #### 优化
 - **小分辨率竖屏自适应布局重构**：
