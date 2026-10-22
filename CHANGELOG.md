@@ -11,10 +11,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), adherin
 ## [Unreleased] - 暂存更新 / Staging Changes
 
 ### 中文
-- 暂无未发布暂存更改。
+
+#### 修复
+- **多分区物理磁盘系统挂载隔离保护**：
+  - 针对单盘多分区混合场景（例如同一物理移动硬盘同时包含普通 exFAT/FAT32 系统挂载分区与 BitLocker 加密卷），弹出 BitLocker 卷前全面扫描 `/proc/mounts`、全局挂载命名空间（`su -M`）以及 `sysfs` holders。
+  - 若检测到该物理磁盘仍有其他分区被系统挂载使用，严格禁止触发物理停机和从内核注销块设备节点（`/sys/block/.../device/delete`），防止单卷弹出导致同盘其他系统分区意外掉线或损坏。
+- **SCSI 缓存同步与停机错误传递及通知分级**：
+  - 原生守护进程（`smart_reader.c`）和 USB BOT 驱动增加对 SCSI `SYNCHRONIZE CACHE` 与 `START STOP UNIT` 返回值和 sense 码的严格校验。
+  - 若缓存同步失败，立即阻断设备脱机流程，返回明确错误码，防止带脏数据直接注销设备。
+  - 界面与系统通知根据真实执行状态进行三级细分：“完全安全停机（可安全拔出）”、“卷已安全关闭（同盘仍有其他分区在使用，请勿拔出）”、“卷已关闭但停机失败（请谨慎拔出）”。
+- **多卷并发安全弹出竞争修复与物理磁盘串行化**：
+  - 引入基于物理磁盘父节点的互斥锁，同盘多个卷的弹出操作严格按序串行化执行。
+  - 引入 `closingSessions` 状态追踪机制，确保排空 SAF 写管道和底层会话刷盘期间该卷依然计入物理盘占用，彻底根除后触发卷提前关停并注销底层设备节点的并发写竞争问题。
+- **免 Root USB 模式多卷会话生命周期对齐**：
+  - 为 `UsbSession` 增加原子生命周期关闭回调，并在 `DislockerCore.close()` 触发时可靠通知 `UsbStorageManager` 注销对应的活动会话记录。
+  - 彻底解决先弹出卷的残留记录导致最后一个卷被误判同盘仍有活动会话而跳过物理停机的问题。
 
 ### English
-- No unreleased staging changes yet.
+
+#### Fixed
+- **Physical Disk System Mount Isolation for Mixed Partitions**:
+  - Before physical spindown and device node offlining, inspect `/proc/mounts`, global mount namespaces (`su -M`), and sysfs holders for sibling partitions on the same parent disk.
+  - If any other partition on the physical drive is actively mounted or used by Android system (e.g. standard exFAT/FAT32 automounts), physical spindown and `/sys/block/.../device/delete` are strictly skipped, preventing external partition drops or I/O corruption.
+- **SCSI Cache Sync Error Propagation & Tiered Eject Notifications**:
+  - Added strict validation of return codes and sense buffers for SCSI `SYNCHRONIZE CACHE (10)` and `START STOP UNIT` in both native daemon (`smart_reader.c`) and Non-Root USB BOT transport.
+  - Aborts device offlining immediately upon cache sync failures to avoid dropping unwritten sectors.
+  - Tiered eject status and notifications across the UI: "Fully Spun Down (Safe to remove)", "Volume Closed (Other drive partitions remain in use; do not unplug)", and "Volume Closed with Spindown Warning".
+- **Concurrent Safe Eject Serialization & Closing State Tracking**:
+  - Serialized safe eject operations per physical parent disk with dedicated mutex locks.
+  - Introduced a `closingSessions` tracking set to maintain drive occupancy across in-flight SAF write drain and disk flush steps, eliminating race conditions where concurrent ejects prematurely offlined active drives.
+- **Non-Root USB Multi-Volume Session Lifecycle Alignment**:
+  - Bound `UsbSession` lifecycle cleanup with atomic callbacks and ensured `DislockerCore.close()` explicitly unregisters the volume from `UsbStorageManager.activeSessions`.
+  - Fixed an issue where stale session records from earlier ejected volumes caused the final volume to skip physical spindown.
 
 ---
 
