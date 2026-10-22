@@ -535,4 +535,86 @@ object DeviceIdentity {
             else -> ctx?.getString(R.string.usb_protocol_format, speedMbps) ?: "USB ($speedMbps Mbps)"
         }
     }
+
+    /**
+     * Checks if a physical block disk or any of its sibling partitions are currently
+     * in use by Android system (e.g. system exFAT/FAT32 automounts) or other processes.
+     * Prevents ejecting one BitLocker volume from abruptly offlining other mounted partitions on the same disk.
+     */
+    fun isParentDiskInUseBySystem(parentDiskNode: String, excludeDevicePaths: Set<String> = emptySet()): Boolean {
+        if (parentDiskNode.isBlank() || parentDiskNode.startsWith("usb://")) return false
+        val parentDiskName = File(parentDiskNode).name
+        val normalizedExcluded = excludeDevicePaths.map { File(it).name }.toSet()
+
+        // 1. Check local /proc/mounts
+        try {
+            val lines = File("/proc/mounts").readLines()
+            for (line in lines) {
+                val parts = line.split("\\s+".toRegex())
+                if (parts.size >= 2) {
+                    val devNode = parts[0]
+                    val mountPoint = parts[1]
+                    if (devNode.startsWith("/dev/block/")) {
+                        val nodeName = File(devNode).name
+                        if (!normalizedExcluded.contains(nodeName) && !excludeDevicePaths.contains(devNode)) {
+                            val resolvedParent = resolveParentDiskNode(devNode)
+                            if (resolvedParent == parentDiskNode) {
+                                LogFile.write("app", "isParentDiskInUseBySystem: found active system mount for $devNode on $mountPoint (parent $parentDiskNode)")
+                                return true
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Throwable) {
+            android.util.Log.w("DeviceIdentity", "isParentDiskInUseBySystem /proc/mounts check error", e)
+        }
+
+        // 2. Check global mount namespace if root access is available
+        if (RootAccess.hasSu()) {
+            try {
+                val out = RootAccess.execTimeout("su -M -c 'cat /proc/mounts'", 2000)
+                if (!out.isNullOrBlank()) {
+                    for (line in out.lineSequence()) {
+                        val parts = line.split("\\s+".toRegex())
+                        if (parts.size >= 2) {
+                            val devNode = parts[0]
+                            val mountPoint = parts[1]
+                            if (devNode.startsWith("/dev/block/")) {
+                                val nodeName = File(devNode).name
+                                if (!normalizedExcluded.contains(nodeName) && !excludeDevicePaths.contains(devNode)) {
+                                    val resolvedParent = resolveParentDiskNode(devNode)
+                                    if (resolvedParent == parentDiskNode) {
+                                        LogFile.write("app", "isParentDiskInUseBySystem (su -M): found active system mount for $devNode on $mountPoint (parent $parentDiskNode)")
+                                        return true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Throwable) {
+                android.util.Log.w("DeviceIdentity", "isParentDiskInUseBySystem global mount check error", e)
+            }
+        }
+
+        // 3. Check sysfs holders: /sys/block/<diskName>/*/holders
+        try {
+            val diskDir = File("/sys/block/$parentDiskName")
+            if (diskDir.isDirectory) {
+                diskDir.listFiles()?.forEach { sub ->
+                    if (sub.isDirectory && sub.name.startsWith(parentDiskName) && !normalizedExcluded.contains(sub.name)) {
+                        val holdersDir = File(sub, "holders")
+                        val holders = holdersDir.listFiles()
+                        if (holders != null && holders.isNotEmpty()) {
+                            LogFile.write("app", "isParentDiskInUseBySystem: found active device holders under ${sub.name}/holders: ${holders.map { it.name }}")
+                            return true
+                        }
+                    }
+                }
+            }
+        } catch (_: Throwable) {}
+
+        return false
+    }
 }
