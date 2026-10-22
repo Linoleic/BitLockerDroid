@@ -528,23 +528,40 @@ int scsi_spindown_device(const char *dev_path) {
     if (fd < 0) {
         fd = open(actual_dev, O_RDONLY | O_LARGEFILE | O_CLOEXEC);
     }
+    if (fd < 0) {
+        return -errno != 0 ? -errno : -ENODEV;
+    }
 
-    if (fd >= 0) {
-        ioctl(fd, BLKFLSBUF, 0);
+    ioctl(fd, BLKFLSBUF, 0);
 
-        unsigned char sense[32];
+    unsigned char sense[32];
 
-        // Step 2: SCSI SYNCHRONIZE CACHE (10) (0x35)
-        unsigned char sync_cdb[10] = { 0x35, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-        memset(sense, 0, sizeof(sense));
-        do_sg_io(fd, sync_cdb, 10, NULL, 0, SG_DXFER_NONE, sense, sizeof(sense));
+    // Step 2: SCSI SYNCHRONIZE CACHE (10) (0x35)
+    // Synchronize disk internal write cache before spindown or offline
+    unsigned char sync_cdb[10] = { 0x35, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    memset(sense, 0, sizeof(sense));
+    int sync_ret = do_sg_io(fd, sync_cdb, 10, NULL, 0, SG_DXFER_NONE, sense, sizeof(sense));
+    if (sync_ret != 0) {
+        int sense_key = (sense[0] & 0x7E) ? (sense[2] & 0x0F) : -1;
+        // 0x05 is ILLEGAL REQUEST (e.g. simple thumb drive without volatile cache)
+        if (sense_key != 0x05) {
+            close(fd);
+            return -EIO;
+        }
+    }
 
-        // Step 3: SCSI START STOP UNIT (0x1B) with START=0 (Stop unit)
-        unsigned char stop_cdb[6] = { 0x1B, 0, 0, 0, 0x00, 0 };
-        memset(sense, 0, sizeof(sense));
-        do_sg_io(fd, stop_cdb, 6, NULL, 0, SG_DXFER_NONE, sense, sizeof(sense));
+    // Step 3: SCSI START STOP UNIT (0x1B) with START=0 (Stop unit / spindown)
+    unsigned char stop_cdb[6] = { 0x1B, 0, 0, 0, 0x00, 0 };
+    memset(sense, 0, sizeof(sense));
+    int stop_ret = do_sg_io(fd, stop_cdb, 6, NULL, 0, SG_DXFER_NONE, sense, sizeof(sense));
+    close(fd);
 
-        close(fd);
+    if (stop_ret != 0) {
+        int sense_key = (sense[0] & 0x7E) ? (sense[2] & 0x0F) : -1;
+        // If not ILLEGAL REQUEST, abort offlining
+        if (sense_key != 0x05) {
+            return -EIO;
+        }
     }
 
     // Step 4: Configure sysfs manage_start_stop = 1 if present

@@ -509,18 +509,22 @@ object RootAccess {
 
         val daemonPath = "/data/local/tmp/bitlocker_io"
         val daemonRes = exec("$daemonPath --spindown '$devicePath'", 6000)
-        if (daemonRes?.first == 0 && daemonRes.second.contains("\"success\":true")) {
-            Log.i(TAG, "spindownDevice succeeded via daemon for $devicePath")
-            return true
+        if (daemonRes != null) {
+            if (daemonRes.first == 0 && daemonRes.second.contains("\"success\":true")) {
+                Log.i(TAG, "spindownDevice succeeded via daemon for $devicePath")
+                return true
+            }
+            Log.e(TAG, "daemon spindown failed for $devicePath (code=${daemonRes.first}, out=${daemonRes.second}). Aborting to prevent data loss.")
+            return false
         }
 
-        Log.w(TAG, "daemon spindown failed or not available for $devicePath (${daemonRes?.second}), running shell fallback")
+        Log.w(TAG, "daemon not available for $devicePath, running shell fallback")
         val parentDisk = DeviceIdentity.resolveParentDiskNode(devicePath)
         val diskName = java.io.File(parentDisk).name
         val fallbackCmd = """
             sync
-            blockdev --flushbufs '$devicePath' 2>/dev/null
-            if [ -b '$parentDisk' ]; then blockdev --flushbufs '$parentDisk' 2>/dev/null; fi
+            blockdev --flushbufs '$devicePath' || exit 1
+            if [ -b '$parentDisk' ]; then blockdev --flushbufs '$parentDisk' || exit 1; fi
             for mss in /sys/block/$diskName/device/scsi_disk/*/manage_start_stop; do
                 if [ -f "${'$'}mss" ]; then echo 1 > "${'$'}mss" 2>/dev/null; fi
             done
