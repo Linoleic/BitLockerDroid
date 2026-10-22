@@ -93,10 +93,15 @@
     <string name="settings_hide_svi_desc">在文件管理器中隐藏 Windows 自动生成的 SVI 目录</string>
     <string name="safe_eject">安全弹出</string>
     <string name="safe_ejecting">正在安全同步与弹出…</string>
-    <string name="safe_eject_success">【%1$s】已安全弹出，现在可以安全拔出设备</string>
+    <string name="safe_eject_success">【%1$s】已安全弹出并停机，现在可以安全拔出设备</string>
+    <string name="safe_eject_part_success">【%1$s】已安全关闭。同盘仍有其他分区在使用，请勿拔出设备</string>
+    <string name="safe_eject_spindown_warning">【%1$s】卷已关闭，但硬盘硬件停机或缓存刷新失败，请谨慎拔出</string>
     <string name="safe_eject_failed">安全弹出遇到警告: %1$s</string>
-    <string name="safe_to_unplug_title">【%1$s】已安全弹出</string>
-    <string name="safe_to_unplug_desc">数据已全部同步，现在可以安全拔出设备</string>
+    <string name="safe_to_unplug_title">【%1$s】已安全停机</string>
+    <string name="safe_to_unplug_desc">数据已全部同步且硬盘已停机，现在可以安全拔出设备</string>
+    <string name="volume_closed_title">【%1$s】卷已安全关闭</string>
+    <string name="volume_closed_disk_busy_desc">卷已安全关闭。同盘仍有其他分区正在使用，请勿拔出设备</string>
+    <string name="volume_closed_spindown_failed_desc">卷已关闭，但硬盘硬件停机或缓存刷新失败，请谨慎拔出</string>
 
     <string name="settings_header_advanced">高级选项</string>
     <string name="settings_advanced_title">高级选项</string>

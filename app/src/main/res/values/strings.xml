@@ -93,10 +93,15 @@
     <string name="settings_hide_svi_desc">Hide Windows-generated SVI folders in the file manager</string>
     <string name="safe_eject">Safe Eject</string>
     <string name="safe_ejecting">Ejecting…</string>
-    <string name="safe_eject_success">Drive \"%1$s\" safely ejected. It is now safe to unplug the device.</string>
+    <string name="safe_eject_success">Drive \"%1$s\" safely ejected and spun down. It is now safe to unplug the device.</string>
+    <string name="safe_eject_part_success">Volume \"%1$s\" safely closed. Other partitions on this drive remain active; do not unplug the device yet.</string>
+    <string name="safe_eject_spindown_warning">Volume \"%1$s\" closed, but disk spindown or cache sync failed. Please unplug with caution.</string>
     <string name="safe_eject_failed">Safe eject warning: %1$s</string>
     <string name="safe_to_unplug_title">【%1$s】Safely Ejected</string>
-    <string name="safe_to_unplug_desc">All data synced. It is now safe to unplug the device.</string>
+    <string name="safe_to_unplug_desc">All data synced and drive spun down. It is now safe to unplug the device.</string>
+    <string name="volume_closed_title">【%1$s】Volume Closed</string>
+    <string name="volume_closed_disk_busy_desc">Volume safely closed. Other partitions on this drive remain active; do not unplug the device.</string>
+    <string name="volume_closed_spindown_failed_desc">Volume closed, but disk spindown or cache sync failed. Please unplug with caution.</string>
 
     <string name="settings_header_advanced">Advanced Options</string>
     <string name="settings_advanced_title">Advanced Options</string>

@@ -89,6 +89,12 @@ object UnlockManager {
     private val detected = HashMap<String, DetectedVolume>()
 
     private val lock = Any()
+    private val closingSessions = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val parentDiskLocks = java.util.concurrent.ConcurrentHashMap<String, Any>()
+
+    private fun getParentDiskLock(parentDisk: String): Any {
+        return parentDiskLocks.computeIfAbsent(parentDisk) { Any() }
+    }
 
     /** Tracks volumes that the user explicitly locked while plugged in, suppressing auto-unlock until replug or manual refresh. */
     private val manuallyLockedGuids = java.util.Collections.synchronizedSet(HashSet<String>())
@@ -513,123 +519,164 @@ object UnlockManager {
      * 1. Unmounts FUSE virtual mount and waits for daemon clean exit
      * 2. Drains in-flight SAF stream writes
      * 3. Flushes and closes decrypted session and block device
-     * 4. Updates DocumentsProvider roots, foreground state, and posts safe-to-unplug notification
+     * 4. Multi-Partition Safe Physical Spindown & Offline:
+     *    Checks remaining sessions AND sibling system partition mounts before spindown.
+     * 5. Updates DocumentsProvider roots, foreground state, and posts safe-to-unplug notification
      */
-    fun safeEject(devicePath: String): Result<String> {
+    fun safeEject(devicePath: String): Result<EjectResult> {
         val app = com.bitlockerdroid.util.ContextProvider.app
         val devInfo = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath, forceRefresh = true)
-        val stale: DislockerCore?
-        val effectiveLabel: String
-        synchronized(lock) {
-            val core = sessions.remove(devicePath)
-            stale = core
-            val guid = core?.volumeGuid ?: BitLockerDetector.getVolumeGuid(devicePath)
-            val recoveryKeyId = core?.recoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
-            if (!guid.isNullOrBlank()) {
-                manuallyLockedGuids.add(guid)
-            }
-            manuallyLockedGuids.add(devicePath)
-            val fallbackLabel = app.getString(R.string.notification_drive_title)
-            effectiveLabel = core?.volumeLabel?.ifBlank { devInfo.friendlyName.ifBlank { fallbackLabel } }
-                ?: devInfo.friendlyName.ifBlank { fallbackLabel }
-
-            LogFile.write("app", "UnlockManager.safeEject: ejecting $devicePath ($effectiveLabel, guid=$guid, rkId=$recoveryKeyId)")
-
-            val isRo = com.bitlockerdroid.util.PreferenceHelper.isVolumeReadOnly(app, guid, devicePath)
-            val partInfo = com.bitlockerdroid.util.DeviceIdentity.resolvePartitionInfo(devicePath)
-            detected[devicePath] = DetectedVolume(
-                devicePath = devicePath,
-                guid = guid,
-                recoveryKeyId = recoveryKeyId,
-                deviceName = devInfo.friendlyName,
-                capacity = devInfo.sizeBytes,
-                isReadOnly = isRo,
-                partitionIndex = partInfo.partitionIndex,
-                partitionName = partInfo.partitionNodeName
-            )
-        }
-        sessionCredentials.remove(devicePath)
-
-        // 0. Stop any active LAN sharing for this volume
-        try {
-            app?.let { appCtx ->
-                com.bitlockerdroid.share.LanShareManager.stopSharingForDevice(appCtx, devicePath, stale?.volumeGuid)
-            }
-        } catch (e: Throwable) {
-            Log.w(TAG, "LAN share stop warning for $devicePath", e)
-        }
-
-        // 1. Unmount POSIX FUSE mount first so external apps can no longer issue IO
-        try {
-            VirtualStorageMountManager.unmount(devicePath)
-        } catch (e: Throwable) {
-            Log.w(TAG, "Virtual mount unmount warning for $devicePath", e)
-        }
-
-        // 2. Drain in-flight SAF pipe writes (bounded wait)
-        com.bitlockerdroid.provider.BitLockerDocumentsProvider.drainActiveWrites()
-
-        // 3. Flush & close decrypted session
-        stale?.let { core ->
-            try {
-                core.flush()
-            } catch (e: Throwable) {
-                Log.w(TAG, "core flush warning during eject", e)
-            }
-            try {
-                core.close()
-            } catch (e: Throwable) {
-                Log.w(TAG, "core close warning during eject", e)
-            }
-        }
-
-        // 4. Multi-Partition Safe Physical Spindown & Offline:
-        // Check if any other active sessions remain on the same physical parent disk
         val parentDisk = com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(devicePath)
-        val hasOtherActiveSessions = synchronized(lock) {
-            sessions.keys.any { otherPath ->
-                otherPath != devicePath && com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(otherPath) == parentDisk
-            }
-        }
+        val diskLock = getParentDiskLock(parentDisk)
 
-        if (!hasOtherActiveSessions) {
-            LogFile.write("app", "UnlockManager.safeEject: no other active sessions on physical disk $parentDisk, initiating hardware spindown and offline")
+        synchronized(diskLock) {
+            closingSessions.add(devicePath)
             try {
+                val stale: DislockerCore?
+                val effectiveLabel: String
+                synchronized(lock) {
+                    val core = sessions.remove(devicePath)
+                    stale = core
+                    val guid = core?.volumeGuid ?: BitLockerDetector.getVolumeGuid(devicePath)
+                    val recoveryKeyId = core?.recoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
+                    if (!guid.isNullOrBlank()) {
+                        manuallyLockedGuids.add(guid)
+                    }
+                    manuallyLockedGuids.add(devicePath)
+                    val fallbackLabel = app.getString(R.string.notification_drive_title)
+                    effectiveLabel = core?.volumeLabel?.ifBlank { devInfo.friendlyName.ifBlank { fallbackLabel } }
+                        ?: devInfo.friendlyName.ifBlank { fallbackLabel }
+
+                    LogFile.write("app", "UnlockManager.safeEject: ejecting $devicePath ($effectiveLabel, guid=$guid, rkId=$recoveryKeyId)")
+
+                    val isRo = com.bitlockerdroid.util.PreferenceHelper.isVolumeReadOnly(app, guid, devicePath)
+                    val partInfo = com.bitlockerdroid.util.DeviceIdentity.resolvePartitionInfo(devicePath)
+                    detected[devicePath] = DetectedVolume(
+                        devicePath = devicePath,
+                        guid = guid,
+                        recoveryKeyId = recoveryKeyId,
+                        deviceName = devInfo.friendlyName,
+                        capacity = devInfo.sizeBytes,
+                        isReadOnly = isRo,
+                        partitionIndex = partInfo.partitionIndex,
+                        partitionName = partInfo.partitionNodeName
+                    )
+                }
+                sessionCredentials.remove(devicePath)
+
+                // 0. Stop any active LAN sharing for this volume
+                try {
+                    app?.let { appCtx ->
+                        com.bitlockerdroid.share.LanShareManager.stopSharingForDevice(appCtx, devicePath, stale?.volumeGuid)
+                    }
+                } catch (e: Throwable) {
+                    Log.w(TAG, "LAN share stop warning for $devicePath", e)
+                }
+
+                // 1. Unmount POSIX FUSE mount first so external apps can no longer issue IO
+                try {
+                    VirtualStorageMountManager.unmount(devicePath)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Virtual mount unmount warning for $devicePath", e)
+                }
+
+                // 2. Drain in-flight SAF pipe writes (bounded wait)
+                com.bitlockerdroid.provider.BitLockerDocumentsProvider.drainActiveWrites()
+
+                // 3. Flush & close decrypted session
+                stale?.let { core ->
+                    try {
+                        core.flush()
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "core flush warning during eject", e)
+                    }
+                    try {
+                        core.close()
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "core close warning during eject", e)
+                    }
+                }
+
+                // Ensure USB session cleanup in UsbStorageManager
                 if (devicePath.startsWith("usb://")) {
-                    com.bitlockerdroid.usb.UsbStorageManager.spindownDevice(devicePath)
-                } else if (com.bitlockerdroid.util.RootAccess.hasSu()) {
-                    com.bitlockerdroid.util.RootAccess.spindownDevice(devicePath)
+                    try {
+                        com.bitlockerdroid.usb.UsbStorageManager.closeSession(devicePath)
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "UsbStorageManager closeSession warning for $devicePath", e)
+                    }
                 }
-            } catch (e: Throwable) {
-                Log.w(TAG, "Physical spindown warning for $devicePath ($parentDisk)", e)
-            }
 
-            // Invalidate hardware identity caches for this device and its parent disk
-            com.bitlockerdroid.util.DeviceIdentity.invalidate(devicePath)
-            com.bitlockerdroid.util.DeviceIdentity.invalidate(parentDisk)
-
-            // Remove detected entries associated with this offlined parent disk
-            synchronized(lock) {
-                val toRemove = detected.keys.filter {
-                    it == devicePath || com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(it) == parentDisk
+                // 4. Multi-Partition Safe Physical Spindown & Offline:
+                // Check if any other active or closing sessions remain on the same physical parent disk
+                val hasOtherBitLockerSessions = synchronized(lock) {
+                    sessions.keys.any { otherPath ->
+                        otherPath != devicePath && com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(otherPath) == parentDisk
+                    }
+                } || closingSessions.any { otherPath ->
+                    otherPath != devicePath && com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(otherPath) == parentDisk
                 }
-                toRemove.forEach { detected.remove(it) }
+
+                // Check if any sibling partitions are mounted or in use by Android system
+                val hasSystemPartitionsInUse = com.bitlockerdroid.util.DeviceIdentity.isParentDiskInUseBySystem(
+                    parentDiskNode = parentDisk,
+                    excludeDevicePaths = setOf(devicePath)
+                )
+
+                val outcome: EjectStatus = if (hasOtherBitLockerSessions || hasSystemPartitionsInUse) {
+                    LogFile.write("app", "UnlockManager.safeEject: physical disk $parentDisk still in use (hasOtherBitLockerSessions=$hasOtherBitLockerSessions, hasSystemPartitionsInUse=$hasSystemPartitionsInUse), skipping hardware spindown and offlining")
+                    EjectStatus.VOLUME_CLOSED_DISK_BUSY
+                } else {
+                    LogFile.write("app", "UnlockManager.safeEject: no other active sessions or system partitions on physical disk $parentDisk, initiating hardware spindown and offline")
+                    var spindownOk = false
+                    try {
+                        spindownOk = if (devicePath.startsWith("usb://")) {
+                            com.bitlockerdroid.usb.UsbStorageManager.spindownDevice(devicePath)
+                        } else if (com.bitlockerdroid.util.RootAccess.hasSu()) {
+                            com.bitlockerdroid.util.RootAccess.spindownDevice(devicePath)
+                        } else {
+                            false
+                        }
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "Physical spindown warning for $devicePath ($parentDisk)", e)
+                        spindownOk = false
+                    }
+
+                    if (spindownOk) {
+                        // Invalidate hardware identity caches for this device and its parent disk
+                        com.bitlockerdroid.util.DeviceIdentity.invalidate(devicePath)
+                        com.bitlockerdroid.util.DeviceIdentity.invalidate(parentDisk)
+
+                        // Remove detected entries associated with this offlined parent disk
+                        synchronized(lock) {
+                            val toRemove = detected.keys.filter {
+                                it == devicePath || com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(it) == parentDisk
+                            }
+                            toRemove.forEach { detected.remove(it) }
+                        }
+                        EjectStatus.DISK_SPUN_DOWN
+                    } else {
+                        Log.w(TAG, "Physical spindown failed for $devicePath ($parentDisk)")
+                        EjectStatus.VOLUME_CLOSED_SPINDOWN_FAILED
+                    }
+                }
+
+                // 5. Update system framework, notifications and roots
+                app?.let {
+                    dismissAllNotificationsForDevice(it, devicePath)
+                    BitLockerCoreService.updateForegroundState(it)
+                    com.bitlockerdroid.provider.BitLockerDocumentsProvider.notifyRootsChanged(it)
+                    postSafeToUnplugNotification(it, devicePath, effectiveLabel, outcome)
+                }
+                notifyStateChanged()
+                return Result.success(EjectResult(effectiveLabel, outcome))
+            } finally {
+                closingSessions.remove(devicePath)
             }
         }
-
-        // 5. Update system framework, notifications and roots
-        app?.let {
-            dismissAllNotificationsForDevice(it, devicePath)
-            BitLockerCoreService.updateForegroundState(it)
-            com.bitlockerdroid.provider.BitLockerDocumentsProvider.notifyRootsChanged(it)
-            postSafeToUnplugNotification(it, devicePath, effectiveLabel)
-        }
-        notifyStateChanged()
-        return Result.success(effectiveLabel)
     }
 
-    fun lock(devicePath: String) {
-        safeEject(devicePath)
+    fun lock(devicePath: String): Result<EjectResult> {
+        return safeEject(devicePath)
     }
 
     /** Repairs unclean unmount dirty flags for the volume at [devicePath]. */
@@ -663,7 +710,7 @@ object UnlockManager {
     }
 
     /** Safely ejects all active unlocked BitLocker volumes. */
-    fun safeEjectAll(): List<Result<String>> {
+    fun safeEjectAll(): List<Result<EjectResult>> {
         val paths = synchronized(lock) { sessions.keys.toList() }
         val results = paths.map { safeEject(it) }
         sessionCredentials.clear()
@@ -1067,18 +1114,36 @@ object UnlockManager {
         dismissEjectedNotification(context, devicePath)
     }
 
-    fun postSafeToUnplugNotification(context: Context, devicePath: String, label: String) {
+    fun postSafeToUnplugNotification(
+        context: Context,
+        devicePath: String,
+        label: String,
+        status: EjectStatus = EjectStatus.DISK_SPUN_DOWN
+    ) {
         if (!PreferenceHelper.isNotificationsEnabled(context)) return
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         ensureChannels(context)
 
-        val title = context.getString(R.string.safe_to_unplug_title, label)
-        val text = context.getString(R.string.safe_to_unplug_desc)
+        val (title, text) = when (status) {
+            EjectStatus.DISK_SPUN_DOWN -> {
+                context.getString(R.string.safe_to_unplug_title, label) to
+                    context.getString(R.string.safe_to_unplug_desc)
+            }
+            EjectStatus.VOLUME_CLOSED_DISK_BUSY -> {
+                context.getString(R.string.volume_closed_title, label) to
+                    context.getString(R.string.volume_closed_disk_busy_desc)
+            }
+            EjectStatus.VOLUME_CLOSED_SPINDOWN_FAILED -> {
+                context.getString(R.string.volume_closed_title, label) to
+                    context.getString(R.string.volume_closed_spindown_failed_desc)
+            }
+        }
 
         val notif = NotificationCompat.Builder(context, CHANNEL_ID_ALERTS)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setAutoCancel(true)
             .setTimeoutAfter(8000)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -1125,6 +1190,21 @@ object UnlockManager {
     }
 
     fun ensureChannel(context: Context) = ensureChannels(context)
+}
+
+enum class EjectStatus {
+    DISK_SPUN_DOWN,
+    VOLUME_CLOSED_DISK_BUSY,
+    VOLUME_CLOSED_SPINDOWN_FAILED
+}
+
+@androidx.compose.runtime.Immutable
+data class EjectResult(
+    val label: String,
+    val status: EjectStatus,
+    val message: String? = null
+) {
+    override fun toString(): String = label
 }
 
 @androidx.compose.runtime.Immutable

@@ -27,6 +27,7 @@ import com.bitlockerdroid.provider.BitLockerDocumentsProvider
 import com.bitlockerdroid.service.BitLockerDetector
 import com.bitlockerdroid.service.DetectedVolume
 import com.bitlockerdroid.service.KeyGuardService
+import com.bitlockerdroid.service.EjectStatus
 import com.bitlockerdroid.service.UnencryptedVolume
 import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.service.UnlockedVolume
@@ -539,10 +540,16 @@ class BitLockerSettingsActivity : FragmentActivity() {
             withContext(Dispatchers.Main) {
                 ejectingPathsState.value = ejectingPathsState.value - devicePath
                 if (result.isSuccess) {
-                    val label = result.getOrNull() ?: ""
+                    val ejectRes = result.getOrNull()
+                    val label = ejectRes?.label ?: ""
+                    val msg = when (ejectRes?.status) {
+                        EjectStatus.DISK_SPUN_DOWN -> getString(R.string.safe_eject_success, label)
+                        EjectStatus.VOLUME_CLOSED_DISK_BUSY -> getString(R.string.safe_eject_part_success, label)
+                        EjectStatus.VOLUME_CLOSED_SPINDOWN_FAILED, null -> getString(R.string.safe_eject_spindown_warning, label)
+                    }
                     Toast.makeText(
                         this@BitLockerSettingsActivity,
-                        getString(R.string.safe_eject_success, label),
+                        msg,
                         Toast.LENGTH_LONG
                     ).show()
                 } else {
@@ -570,10 +577,16 @@ class BitLockerSettingsActivity : FragmentActivity() {
                 val failures = results.filter { !it.second.isSuccess }
                 if (failures.isEmpty()) {
                     if (targets.size == 1) {
-                        val label = results.first().second.getOrNull() ?: ""
+                        val ejectRes = results.first().second.getOrNull()
+                        val label = ejectRes?.label ?: ""
+                        val msg = when (ejectRes?.status) {
+                            EjectStatus.DISK_SPUN_DOWN -> getString(R.string.safe_eject_success, label)
+                            EjectStatus.VOLUME_CLOSED_DISK_BUSY -> getString(R.string.safe_eject_part_success, label)
+                            EjectStatus.VOLUME_CLOSED_SPINDOWN_FAILED, null -> getString(R.string.safe_eject_spindown_warning, label)
+                        }
                         Toast.makeText(
                             this@BitLockerSettingsActivity,
-                            getString(R.string.safe_eject_success, label),
+                            msg,
                             Toast.LENGTH_LONG
                         ).show()
                     } else {
