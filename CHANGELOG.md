@@ -11,6 +11,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), adherin
 ## [Unreleased] - 暂存更新 / Staging Changes
 
 ### 中文
+- 暂无未发布暂存更改。
+
+### English
+- No unreleased staging changes yet.
+
+---
+
+## [v1.1.1] - 2026-10-22
+
+### 中文
 
 #### 修复
 - **多分区物理磁盘系统挂载隔离保护**：

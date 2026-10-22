@@ -32,7 +32,7 @@ android {
         minSdk = 33
         targetSdk = 34
         versionCode = getGitCommitCount()
-        versionName = "1.1.0"
+        versionName = "1.1.1"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
