@@ -77,9 +77,16 @@ object UsbStorageManager {
     class UsbSession(
         val nativeFd: Int,
         val workerPfd: ParcelFileDescriptor,
-        val worker: UsbBlockDeviceWorker
+        val worker: UsbBlockDeviceWorker,
+        private val onClose: (() -> Unit)? = null
     ) : AutoCloseable {
+        private val isClosed = java.util.concurrent.atomic.AtomicBoolean(false)
+
         override fun close() {
+            if (!isClosed.compareAndSet(false, true)) return
+            try {
+                onClose?.invoke()
+            } catch (_: Exception) {}
             worker.closeWorker()
             try { workerPfd.close() } catch (_: Exception) {}
             try { worker.join(2000) } catch (_: Exception) {}
@@ -696,7 +703,9 @@ object UsbStorageManager {
         val worker = UsbBlockDeviceWorker(driver, workerPfd)
         worker.start()
 
-        val session = UsbSession(rawNativeFd, workerPfd, worker)
+        val session = UsbSession(rawNativeFd, workerPfd, worker) {
+            activeSessions.remove(devicePath)
+        }
         activeSessions[devicePath] = session
         return session
     }
@@ -776,13 +785,21 @@ object UsbStorageManager {
             val comm = holder.communication
             // 1. SCSI SYNCHRONIZE CACHE (10)
             val syncCdb = byteArrayOf(0x35.toByte(), 0, 0, 0, 0, 0, 0, 0, 0, 0)
-            sendScsiCommandNoData(comm, syncCdb, 0x1001)
+            val syncSuccess = sendScsiCommandNoData(comm, syncCdb, 0x1001)
+            if (!syncSuccess) {
+                Log.w(TAG, "spindownDevice: SCSI SYNCHRONIZE CACHE returned failure on USB device $devId. Aborting spindown.")
+                return false
+            }
 
             // 2. SCSI START STOP UNIT (START=0)
             val stopCdb = byteArrayOf(0x1B.toByte(), 0, 0, 0, 0x00.toByte(), 0)
-            sendScsiCommandNoData(comm, stopCdb, 0x1002)
+            val stopSuccess = sendScsiCommandNoData(comm, stopCdb, 0x1002)
+            if (!stopSuccess) {
+                Log.w(TAG, "spindownDevice: SCSI START STOP UNIT returned error or unsupported on USB device $devId")
+            }
         } catch (e: Throwable) {
-            Log.w(TAG, "spindownDevice warning during SCSI commands", e)
+            Log.w(TAG, "spindownDevice error during SCSI commands", e)
+            return false
         }
 
         closeDevice(devId)
