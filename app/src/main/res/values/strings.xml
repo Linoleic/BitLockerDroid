@@ -520,4 +520,11 @@
     <string name="device_smart_telemetry_btn">Hardware Health &amp; S.M.A.R.T.</string>
     <string name="partition_number_format">Partition %1$d</string>
     <string name="partition_number_with_node">Partition %1$d · %2$s</string>
+    <string name="creds_type_saved">Saved credential</string>
+    <string name="saved_credential_unlock_subtitle">Use the saved credential for volume "%1$s"</string>
+    <string name="saved_credential_quick_unlock_action">Quick Unlock</string>
+    <string name="unlock_authentication_required">Unlock this volume in the app before mounting it</string>
+    <string name="saved_credential_unlock_button">Use Saved Credential</string>
+    <string name="saved_credential_quick_unlock_banner">A saved credential is available for this volume.</string>
+    <string name="unlock_target_changed">The connected volume changed. Open the unlock dialog again.</string>
 </resources>

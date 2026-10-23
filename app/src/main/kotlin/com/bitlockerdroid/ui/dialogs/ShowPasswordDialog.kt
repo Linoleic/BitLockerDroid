@@ -1,7 +1,5 @@
 package com.bitlockerdroid.ui.dialogs
 
-import android.app.Activity
-import android.app.KeyguardManager
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
@@ -9,8 +7,6 @@ import android.content.Context
 import android.os.Build
 import android.os.PersistableBundle
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -25,7 +21,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bitlockerdroid.R
+import com.bitlockerdroid.service.SavedCredentialAccess
 import com.bitlockerdroid.util.PreferenceHelper
+import com.bitlockerdroid.util.findFragmentActivity
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Marks clipboard content as sensitive so clipboard history / password
  * managers (Android 13+) exclude it. */
@@ -44,101 +43,83 @@ fun ShowPasswordDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    val decryptedRaw = remember(credential) {
-        val blob = PreferenceHelper.getRememberedPassword(context, credential.id)
-        blob?.let { com.bitlockerdroid.service.KeyGuardService.decrypt(it) }
+    var decryptedRaw by remember(credential.id) { mutableStateOf<String?>(null) }
+    var visible by remember(credential.id) { mutableStateOf(false) }
+    val dialogActive = remember(credential.id) { AtomicBoolean(true) }
+    val currentCredentialId by rememberUpdatedState(credential.id)
+    DisposableEffect(credential.id) {
+        dialogActive.set(true)
+        onDispose { dialogActive.set(false) }
     }
     val isRecovery = decryptedRaw?.startsWith("RECOVERY:") == true
-    val passwordPlain = remember(decryptedRaw) {
-        if (isRecovery) decryptedRaw?.removePrefix("RECOVERY:") else decryptedRaw
+    val passwordPlain = decryptedRaw?.let { raw ->
+        if (raw.startsWith("RECOVERY:")) raw.removePrefix("RECOVERY:") else raw
     }
-    var visible by remember { mutableStateOf(false) }
 
-    // Reveal / copy require proving device ownership via Biometrics or device lock screen credentials
-    val keyguard = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-    val deviceSecure = keyguard?.isDeviceSecure == true
-    var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
-
-    val authLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val action = pendingAction
-        pendingAction = null
-        if (result.resultCode == Activity.RESULT_OK) {
-            action?.invoke()
-        } else {
-            Toast.makeText(context, R.string.auth_failed, Toast.LENGTH_SHORT).show()
+    fun requireCredential(action: String) {
+        val activity = context.findFragmentActivity()
+        if (activity == null || activity.isFinishing || activity.isDestroyed) {
+            Toast.makeText(context, R.string.auth_start_failed, Toast.LENGTH_SHORT).show()
+            return
         }
-    }
-
-    fun requireAuth(action: () -> Unit) {
-        val activity = context as? androidx.fragment.app.FragmentActivity
-        if (activity != null && com.bitlockerdroid.util.BiometricAuthHelper.canAuthenticate(activity)) {
-            com.bitlockerdroid.util.BiometricAuthHelper.authenticate(
-                activity = activity,
-                title = context.getString(R.string.auth_title),
-                subtitle = context.getString(R.string.biometric_auth_for_view),
-                onSuccess = action,
-                onError = { err ->
+        val requestedCredentialId = credential.id
+        SavedCredentialAccess.readForUserAction(
+            activity = activity,
+            volumeGuid = requestedCredentialId,
+            title = context.getString(R.string.auth_title),
+            subtitle = context.getString(R.string.biometric_auth_for_view),
+            onSuccess = { raw ->
+                if (!dialogActive.get() || currentCredentialId != requestedCredentialId) return@readForUserAction
+                decryptedRaw = raw
+                val recovery = raw.startsWith("RECOVERY:")
+                val cleanCredential = if (recovery) raw.removePrefix("RECOVERY:") else raw
+                when (action) {
+                    "show" -> visible = true
+                    "copy" -> {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        val clip = ClipData.newPlainText("BitLocker Credential", cleanCredential)
+                        markClipboardSensitive(clip)
+                        cm?.setPrimaryClip(clip)
+                        Toast.makeText(
+                            context,
+                            if (recovery) R.string.recovery_key_copied else R.string.password_copied,
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            },
+            onError = { err ->
+                if (dialogActive.get() && currentCredentialId == requestedCredentialId) {
                     Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
                 }
-            )
-            return
-        }
-
-        if (!deviceSecure) {
-            action()
-            return
-        }
-        @Suppress("DEPRECATION")
-        val intent = keyguard?.createConfirmDeviceCredentialIntent(
-            context.getString(R.string.auth_title),
-            context.getString(R.string.auth_subtitle)
+            }
         )
-        if (intent == null) {
-            action()
-            return
-        }
-        pendingAction = action
-        try {
-            authLauncher.launch(intent)
-        } catch (e: Exception) {
-            pendingAction = null
-            Toast.makeText(context, R.string.auth_start_failed, Toast.LENGTH_SHORT).show()
-        }
+    }
+
+    fun dismissDialog() {
+        dialogActive.set(false)
+        onDismiss()
     }
 
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { dismissDialog() },
         confirmButton = {
             Button(
-                onClick = onDismiss,
+                onClick = { dismissDialog() },
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Text(text = stringResource(R.string.close))
             }
         },
         dismissButton = {
-            if (passwordPlain != null) {
-                TextButton(
-                    onClick = {
-                        requireAuth {
-                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                            val clip = ClipData.newPlainText("BitLocker Password", passwordPlain)
-                            markClipboardSensitive(clip)
-                            cm?.setPrimaryClip(clip)
-                            Toast.makeText(context, R.string.copied_to_clipboard, Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                ) {
+            TextButton(onClick = { requireCredential("copy") }) {
                     Icon(
                         painter = painterResource(id = R.drawable.ic_content_copy),
                         contentDescription = null,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = stringResource(R.string.copy_password))
-                }
+                    Text(text = stringResource(R.string.copy_credential))
             }
         },
         title = {
@@ -219,19 +200,20 @@ fun ShowPasswordDialog(
                         modifier = Modifier.padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Text(
-                            text = if (isRecovery) stringResource(R.string.bitlocker_recovery_key_title) else stringResource(R.string.bitlocker_password_title),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
-                        if (passwordPlain != null) {
-                            Row(
+                        if (decryptedRaw != null) {
+                            Text(
+                                text = if (isRecovery) stringResource(R.string.bitlocker_recovery_key_title) else stringResource(R.string.bitlocker_password_title),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text(
-                                    text = if (visible) passwordPlain else "••••••••••••••••",
+                                    text = if (visible && passwordPlain != null) passwordPlain else "••••••••••••••••",
                                     style = MaterialTheme.typography.titleMedium.copy(
                                         fontFamily = FontFamily.Monospace,
                                         fontSize = if (isRecovery && visible) 12.sp else 16.sp
@@ -242,7 +224,7 @@ fun ShowPasswordDialog(
                                 )
                                 IconButton(
                                     onClick = {
-                                        requireAuth { visible = !visible }
+                                        if (visible) visible = false else requireCredential("show")
                                     },
                                     modifier = Modifier.size(32.dp)
                                 ) {
@@ -255,15 +237,7 @@ fun ShowPasswordDialog(
                                 }
                                 if (visible) {
                                     IconButton(
-                                        onClick = {
-                                            requireAuth {
-                                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                                val clip = ClipData.newPlainText("BitLocker Credential", passwordPlain)
-                                                markClipboardSensitive(clip)
-                                                cm?.setPrimaryClip(clip)
-                                                Toast.makeText(context, if (isRecovery) R.string.recovery_key_copied else R.string.password_copied, Toast.LENGTH_SHORT).show()
-                                            }
-                                        },
+                                        onClick = { requireCredential("copy") },
                                         modifier = Modifier.size(32.dp)
                                     ) {
                                         Icon(
@@ -275,13 +249,6 @@ fun ShowPasswordDialog(
                                     }
                                 }
                             }
-                        } else {
-                            Text(
-                                text = stringResource(R.string.credential_corrupted),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
                     }
                 }
             }

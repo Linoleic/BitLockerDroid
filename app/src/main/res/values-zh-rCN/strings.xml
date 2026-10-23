@@ -518,4 +518,11 @@
     <string name="device_smart_telemetry_btn">硬件健康与 S.M.A.R.T. 监测</string>
     <string name="partition_number_format">分区 %1$d</string>
     <string name="partition_number_with_node">分区 %1$d · %2$s</string>
+    <string name="creds_type_saved">已保存的凭据</string>
+    <string name="saved_credential_unlock_subtitle">使用已保存凭据解锁卷「%1$s」</string>
+    <string name="saved_credential_quick_unlock_action">快捷解锁</string>
+    <string name="unlock_authentication_required">请先在应用内解锁此卷，再进行挂载</string>
+    <string name="saved_credential_unlock_button">使用已保存凭据解锁</string>
+    <string name="saved_credential_quick_unlock_banner">此卷有可用的已保存凭据。</string>
+    <string name="unlock_target_changed">连接的卷已更换，请重新打开解锁窗口。</string>
 </resources>

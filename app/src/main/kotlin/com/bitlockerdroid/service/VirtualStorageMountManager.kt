@@ -242,38 +242,26 @@ object VirtualStorageMountManager {
      */
     fun mountRemembered(context: Context, devicePath: String, expectedGuid: String? = null): Result<VirtualMountInfo> {
         val guid = expectedGuid?.takeIf { it.isNotBlank() }
-            ?: UnlockManager.getGuidForPath(devicePath)
             ?: BitLockerDetector.getVolumeGuid(devicePath)
-            ?: return Result.failure(IllegalStateException(context.getString(R.string.mount_err_cannot_get_guid)))
+            ?: return Result.failure(IllegalStateException("Volume GUID is unavailable"))
         if (UnlockManager.isManuallyLocked(guid, devicePath)) {
             return Result.failure(IllegalStateException(context.getString(R.string.mount_err_manually_locked)))
         }
 
-        val sessionCred = UnlockManager.getSessionCredential(devicePath, guid)
-        val (cleanKey, isRecovery) = if (sessionCred != null) {
-            sessionCred
-        } else {
-            val blob = PreferenceHelper.getRememberedPassword(context, guid)
-                ?: return Result.failure(IllegalStateException(context.getString(R.string.mount_err_no_saved_password)))
-            val password = KeyGuardService.decrypt(blob)
-                ?: return Result.failure(IllegalStateException(context.getString(R.string.mount_err_decrypt_password_failed)))
-            val rec = password.startsWith(UnlockManager.RECOVERY_PREFIX)
-            val k = if (rec) password.removePrefix(UnlockManager.RECOVERY_PREFIX) else password
-            Pair(k, rec)
+        var sessionCred = UnlockManager.getSessionCredential(devicePath, guid)
+        if (sessionCred == null) {
+            UnlockManager.ensureUnlocked(context, devicePath, 0L, guid)
+            sessionCred = UnlockManager.getSessionCredential(devicePath, guid)
         }
+        val (cleanKey, isRecovery) = sessionCred
+            ?: return Result.failure(IllegalStateException(context.getString(R.string.unlock_authentication_required)))
         val devInfo = DeviceIdentity.queryDeviceInfo(devicePath)
 
         val resolvedPath = resolveBlockDevice(devicePath, guid)
             ?: return Result.failure(IllegalStateException(context.getString(R.string.mount_err_no_block_device)))
-
         return mount(
-            context = context,
-            devicePath = resolvedPath,
-            offset = 0L,
-            key = cleanKey,
-            isRecovery = isRecovery,
-            volumeLabel = devInfo.friendlyName,
-            volumeGuid = guid,
+            context = context, devicePath = resolvedPath, offset = 0L, key = cleanKey,
+            isRecovery = isRecovery, volumeLabel = devInfo.friendlyName, volumeGuid = guid,
             originalPath = devicePath
         )
     }

@@ -26,6 +26,7 @@ import com.bitlockerdroid.ui.theme.SuccessGreen
 import com.bitlockerdroid.util.BiometricAuthHelper
 import com.bitlockerdroid.util.PreferenceHelper
 import com.bitlockerdroid.util.findFragmentActivity
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Credentials Management Dialog (Biometric KeyStore Vault) */
 @Composable
@@ -39,40 +40,53 @@ fun CredentialsManagerDialog(
 ) {
     val context = LocalContext.current
     val activity = (context as? FragmentActivity) ?: context.findFragmentActivity()
-
-    fun safeDelete(credId: String) {
-        if (PreferenceHelper.isBiometricVaultEnabled(context) && activity != null && BiometricAuthHelper.canAuthenticate(activity)) {
-            BiometricAuthHelper.authenticate(
-                activity = activity,
-                title = context.getString(R.string.auth_title),
-                subtitle = context.getString(R.string.creds_delete),
-                onSuccess = { onDeleteCredential(credId) },
-                onError = { err -> Toast.makeText(context, err, Toast.LENGTH_SHORT).show() }
-            )
-        } else {
-            onDeleteCredential(credId)
-        }
+    val dialogActive = remember { AtomicBoolean(true) }
+    DisposableEffect(Unit) {
+        dialogActive.set(true)
+        onDispose { dialogActive.set(false) }
     }
 
-    fun safeClearAll() {
-        if (PreferenceHelper.isBiometricVaultEnabled(context) && activity != null && BiometricAuthHelper.canAuthenticate(activity)) {
-            BiometricAuthHelper.authenticate(
-                activity = activity,
-                title = context.getString(R.string.auth_title),
-                subtitle = context.getString(R.string.settings_credentials_clear),
-                onSuccess = { onClearAllCredentials() },
-                onError = { err -> Toast.makeText(context, err, Toast.LENGTH_SHORT).show() }
-            )
-        } else {
-            onClearAllCredentials()
+    fun runCredentialAction(subtitle: String, action: () -> Unit) {
+        if (!PreferenceHelper.isBiometricVaultEnabled(context)) {
+            if (dialogActive.get()) action()
+            return
         }
+        val authActivity = activity
+        if (authActivity == null || authActivity.isFinishing || authActivity.isDestroyed ||
+            !BiometricAuthHelper.canAuthenticate(authActivity)
+        ) {
+            Toast.makeText(context, R.string.auth_failed, Toast.LENGTH_SHORT).show()
+            return
+        }
+        BiometricAuthHelper.authenticate(
+            activity = authActivity,
+            title = context.getString(R.string.auth_title),
+            subtitle = subtitle,
+            onSuccess = { if (dialogActive.get()) action() },
+            onError = { err ->
+                if (dialogActive.get()) Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
+    fun safeDelete(credId: String) = runCredentialAction(context.getString(R.string.creds_delete)) {
+        onDeleteCredential(credId)
+    }
+
+    fun safeClearAll() = runCredentialAction(context.getString(R.string.settings_credentials_clear)) {
+        onClearAllCredentials()
+    }
+
+    fun dismissDialog() {
+        dialogActive.set(false)
+        onDismiss()
     }
 
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { dismissDialog() },
         confirmButton = {
             Button(
-                onClick = onDismiss,
+                onClick = { dismissDialog() },
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Text(text = stringResource(R.string.done))

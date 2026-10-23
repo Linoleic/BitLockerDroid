@@ -37,7 +37,7 @@ import androidx.lifecycle.lifecycleScope
 import com.bitlockerdroid.R
 import com.bitlockerdroid.service.BitLockerDetector
 import com.bitlockerdroid.service.DislockerCore
-import com.bitlockerdroid.service.KeyGuardService
+import com.bitlockerdroid.service.SavedCredentialAccess
 import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.ui.theme.BitLockerTheme
 import com.bitlockerdroid.ui.theme.ThemeMode
@@ -69,6 +69,7 @@ class UnlockDialogActivity : FragmentActivity() {
     private var offset: Long = 0
     private var initialGuid: String? by mutableStateOf<String?>(null)
     private var initialRecoveryKeyId: String? by mutableStateOf<String?>(null)
+    private var requestGeneration: Long by mutableStateOf(0L)
 
     /**
      * Validates and applies a launch intent. Shared by onCreate and
@@ -83,6 +84,7 @@ class UnlockDialogActivity : FragmentActivity() {
             finish()
             return
         }
+        requestGeneration += 1
         devicePath = rawPath!!
         offset = intent.getLongExtra(EXTRA_OFFSET, 0)
         initialGuid = intent.getStringExtra(EXTRA_GUID)
@@ -113,20 +115,32 @@ class UnlockDialogActivity : FragmentActivity() {
         setContent {
             val themeMode = ThemeMode.fromString(PreferenceHelper.themeMode)
             BitLockerTheme(themeMode = themeMode) {
-                UnlockDialogScreen(
-                    devicePath = devicePath,
-                    initialGuid = initialGuid,
-                    initialRecoveryKeyId = initialRecoveryKeyId,
-                    onDismiss = { finish() },
-                    onUnlock = { value, isRecovery, remember, autoUnlock, onError, onSuccess ->
+                key(devicePath, initialGuid, initialRecoveryKeyId, offset, requestGeneration) {
+                    val screenGeneration = requestGeneration
+                    UnlockDialogScreen(
+                        devicePath = devicePath,
+                        offset = offset,
+                        requestGeneration = requestGeneration,
+                        initialGuid = initialGuid,
+                        initialRecoveryKeyId = initialRecoveryKeyId,
+                        onDismiss = { finish() },
+                        onUnlock = unlock@ { value, isRecovery, remember, autoUnlock, onError, onSuccess ->
+                        if (requestGeneration != screenGeneration || isFinishing || isDestroyed) return@unlock
+                        // Snapshot the target before dispatching. onNewIntent can
+                        // replace these Activity fields while this request waits
+                        // for IO or device access.
+                        val targetPath = devicePath
+                        val targetGuid = initialGuid
+                        val targetOffset = offset
+                        val targetGeneration = requestGeneration
                         lifecycleScope.launch(Dispatchers.IO) {
                             var errorMsg: String? = null
-                            val guid = initialGuid ?: com.bitlockerdroid.service.BitLockerDetector.getVolumeGuid(devicePath)
+                            val guid = targetGuid ?: com.bitlockerdroid.service.BitLockerDetector.getVolumeGuid(targetPath)
                             val res = if (isRecovery) {
                                 UnlockManager.unlockWithRecoveryKey(
                                     this@UnlockDialogActivity,
-                                    devicePath,
-                                    offset,
+                                    targetPath,
+                                    targetOffset,
                                     value,
                                     remember,
                                     expectedGuid = guid
@@ -134,8 +148,8 @@ class UnlockDialogActivity : FragmentActivity() {
                             } else {
                                 UnlockManager.unlockWithPassword(
                                     this@UnlockDialogActivity,
-                                    devicePath,
-                                    offset,
+                                    targetPath,
+                                    targetOffset,
                                     value,
                                     remember,
                                     expectedGuid = guid
@@ -157,6 +171,7 @@ class UnlockDialogActivity : FragmentActivity() {
                             }
 
                             withContext(Dispatchers.Main) {
+                                if (requestGeneration != targetGeneration) return@withContext
                                 if (success) {
                                     Toast.makeText(this@UnlockDialogActivity, R.string.unlock_success, Toast.LENGTH_SHORT).show()
                                     onSuccess()
@@ -168,6 +183,7 @@ class UnlockDialogActivity : FragmentActivity() {
                         }
                     }
                 )
+                }
             }
         }
     }
@@ -178,13 +194,23 @@ private data class VolumePreflight(
     val guid: String?,
     val recoveryKeyId: String?,
     val savedPlain: String?,
+    val hasSavedCredential: Boolean,
     val devInfo: com.bitlockerdroid.util.DeviceIdentity.DeviceInfo
+)
+
+private data class UnlockDialogTarget(
+    val devicePath: String,
+    val guid: String?,
+    val offset: Long,
+    val generation: Long
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UnlockDialogScreen(
     devicePath: String,
+    offset: Long = 0L,
+    requestGeneration: Long = 0L,
     initialGuid: String? = null,
     initialRecoveryKeyId: String? = null,
     onDismiss: () -> Unit,
@@ -198,62 +224,74 @@ fun UnlockDialogScreen(
     ) -> Unit
 ) {
     val context = LocalContext.current
+    var vaultProtected by remember {
+        mutableStateOf(PreferenceHelper.isBiometricVaultEnabled(context))
+    }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                vaultProtected = PreferenceHelper.isBiometricVaultEnabled(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
-    // Resolving the volume GUID reads the device header through root, and the
-    // saved-password path decrypts via AndroidKeyStore — both would block the
-    // main thread during composition, so load them asynchronously.
-    var preflight by remember(devicePath, initialGuid, initialRecoveryKeyId) { mutableStateOf<VolumePreflight?>(null) }
-    LaunchedEffect(devicePath, initialGuid, initialRecoveryKeyId) {
+    // Resolving the volume GUID reads the device header through root, so load
+    // the preflight asynchronously. SavedCredentialAccess enforces the vault
+    // policy before returning any saved plaintext.
+    var preflight by remember(devicePath, offset, requestGeneration, initialGuid, initialRecoveryKeyId) {
+        mutableStateOf<VolumePreflight?>(null)
+    }
+    LaunchedEffect(devicePath, offset, requestGeneration, initialGuid, initialRecoveryKeyId) {
+        preflight = null
         preflight = withContext(Dispatchers.IO) {
             val g = initialGuid ?: BitLockerDetector.getVolumeGuid(devicePath)
             val rkId = initialRecoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
-            val saved = if (!g.isNullOrBlank()) {
-                PreferenceHelper.getRememberedPassword(context, g)?.let { KeyGuardService.decrypt(it) }
-            } else null
+            val hasSavedCredential = !g.isNullOrBlank() &&
+                PreferenceHelper.getRememberedPassword(context, g) != null
+            val saved = SavedCredentialAccess.readForPrefill(context, g)
             val dev = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath, forceRefresh = true)
-            VolumePreflight(g, rkId, saved, dev)
+            VolumePreflight(g, rkId, saved, hasSavedCredential, dev)
         }
     }
     val guid = preflight?.guid
     val recoveryKeyId = preflight?.recoveryKeyId
     val savedPlain = preflight?.savedPlain
+    val currentTarget by rememberUpdatedState(UnlockDialogTarget(devicePath, guid, offset, requestGeneration))
 
-    var isRecoveryKey by remember { mutableStateOf(false) }
-    var inputValue by remember { mutableStateOf("") }
-    var passwordVisible by remember { mutableStateOf(false) }
-    var rememberPassword by remember { mutableStateOf(false) }
-    var autoUnlockOnScan by remember { mutableStateOf(true) }
-
-    val isVaultProtected = remember { PreferenceHelper.isBiometricVaultEnabled(context) }
+    var isRecoveryKey by remember(devicePath, offset, requestGeneration, initialGuid) { mutableStateOf(false) }
+    var inputValue by remember(devicePath, offset, requestGeneration, initialGuid) { mutableStateOf("") }
+    var passwordVisible by remember(devicePath, offset, requestGeneration, initialGuid) { mutableStateOf(false) }
+    var rememberPassword by remember(devicePath, offset, requestGeneration, initialGuid) { mutableStateOf(false) }
+    var autoUnlockOnScan by remember(devicePath, offset, requestGeneration, initialGuid) { mutableStateOf(true) }
 
     // Fill in the saved credentials once the preflight arrives — but only if
-    // the user has not started typing yet and biometric vault is not locking it.
+    // the user has not started typing yet. Protected credentials are never
+    // returned by readForPrefill, so they cannot enter the dialog state here.
     LaunchedEffect(preflight) {
         val pf = preflight ?: return@LaunchedEffect
         if (inputValue.isEmpty()) {
             pf.savedPlain?.let { saved ->
-                if (!isVaultProtected) {
-                    if (saved.startsWith(UnlockManager.RECOVERY_PREFIX)) {
-                        isRecoveryKey = true
-                        inputValue = saved.removePrefix(UnlockManager.RECOVERY_PREFIX)
-                        rememberPassword = true
-                    } else {
-                        isRecoveryKey = false
-                        inputValue = saved
-                        rememberPassword = true
-                    }
+                if (saved.startsWith(UnlockManager.RECOVERY_PREFIX)) {
+                    isRecoveryKey = true
+                    inputValue = saved.removePrefix(UnlockManager.RECOVERY_PREFIX)
+                    rememberPassword = true
                 } else {
-                    // Biometric vault protection active: keep password masked until biometric auth
+                    isRecoveryKey = false
+                    inputValue = saved
                     rememberPassword = true
                 }
             }
         }
+        if (pf.hasSavedCredential) rememberPassword = true
         if (!pf.guid.isNullOrBlank()) {
             autoUnlockOnScan = PreferenceHelper.isAutoUnlockEnabled(context, pf.guid)
         }
     }
-    var isUnlocking by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isUnlocking by remember(devicePath, offset, requestGeneration, initialGuid) { mutableStateOf(false) }
+    var errorMessage by remember(devicePath, offset, requestGeneration, initialGuid) { mutableStateOf<String?>(null) }
 
     val recoveryPattern = remember { Pattern.compile("^(\\d{6}-){7}\\d{6}$") }
 
@@ -286,26 +324,31 @@ fun UnlockDialogScreen(
         triggerUnlockWithValue(inputValue, isRecoveryKey)
     }
 
-    val triggerBiometricUnlock: () -> Unit = {
+    val triggerSavedCredentialUnlock: () -> Unit = {
         val pf = preflight
-        val saved = pf?.savedPlain
         val activity = context as? androidx.fragment.app.FragmentActivity
-        if (pf != null && saved != null && activity != null && com.bitlockerdroid.util.BiometricAuthHelper.canAuthenticate(activity)) {
+        val targetPath = devicePath
+        val targetGuid = pf?.guid
+        val target = UnlockDialogTarget(targetPath, targetGuid, offset, requestGeneration)
+        if (pf != null && pf.hasSavedCredential && !targetGuid.isNullOrBlank() && activity != null) {
             val devName = pf.devInfo?.friendlyName?.ifBlank { pf.guid ?: "" } ?: pf.guid ?: ""
-            com.bitlockerdroid.util.BiometricAuthHelper.authenticate(
+            SavedCredentialAccess.readForUserAction(
                 activity = activity,
+                volumeGuid = targetGuid,
                 title = context.getString(R.string.biometric_unlock_prompt_title),
-                subtitle = context.getString(R.string.biometric_unlock_prompt_subtitle, devName),
-                onSuccess = {
-                    val isRec = saved.startsWith(UnlockManager.RECOVERY_PREFIX)
-                    val cleanKey = if (isRec) saved.removePrefix(UnlockManager.RECOVERY_PREFIX) else saved
-                    isRecoveryKey = isRec
-                    inputValue = cleanKey
-                    rememberPassword = true
+                subtitle = context.getString(
+                    if (vaultProtected) R.string.biometric_unlock_prompt_subtitle
+                    else R.string.saved_credential_unlock_subtitle,
+                    devName
+                ),
+                onSuccess = { raw ->
+                    if (currentTarget != target) return@readForUserAction
+                    val isRec = raw.startsWith(UnlockManager.RECOVERY_PREFIX)
+                    val cleanKey = if (isRec) raw.removePrefix(UnlockManager.RECOVERY_PREFIX) else raw
                     triggerUnlockWithValue(cleanKey, isRec)
                 },
                 onError = { err ->
-                    errorMessage = err
+                    if (currentTarget == target) errorMessage = err
                 }
             )
         }
@@ -540,8 +583,8 @@ fun UnlockDialogScreen(
                     }
                 }
 
-                // Biometric Vault Quick Unlock Card
-                if (savedPlain != null && com.bitlockerdroid.util.BiometricAuthHelper.canAuthenticate(context)) {
+                // Saved-credential quick unlock follows the live vault setting.
+                if (preflight?.hasSavedCredential == true) {
                     Spacer(modifier = Modifier.height(14.dp))
                     Surface(
                         shape = RoundedCornerShape(12.dp),
@@ -549,7 +592,7 @@ fun UnlockDialogScreen(
                         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable(enabled = !isUnlocking) { triggerBiometricUnlock() }
+                            .clickable(enabled = !isUnlocking) { triggerSavedCredentialUnlock() }
                     ) {
                         Row(
                             modifier = Modifier
@@ -563,25 +606,40 @@ fun UnlockDialogScreen(
                                 modifier = Modifier.size(36.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        painter = androidx.compose.ui.res.painterResource(id = R.drawable.ic_fingerprint),
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
+                                    if (vaultProtected) {
+                                        Icon(
+                                            painter = androidx.compose.ui.res.painterResource(id = R.drawable.ic_fingerprint),
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
                                 }
                             }
                             Spacer(modifier = Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = stringResource(R.string.biometric_unlock_button),
+                                    text = stringResource(
+                                        if (vaultProtected) R.string.biometric_unlock_button
+                                        else R.string.saved_credential_unlock_button
+                                    ),
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = stringResource(R.string.biometric_quick_unlock_banner),
+                                    text = stringResource(
+                                        if (vaultProtected) R.string.biometric_quick_unlock_banner
+                                        else R.string.saved_credential_quick_unlock_banner
+                                    ),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -589,14 +647,17 @@ fun UnlockDialogScreen(
                             }
                             Spacer(modifier = Modifier.width(6.dp))
                             FilledTonalButton(
-                                onClick = { triggerBiometricUnlock() },
+                                onClick = { triggerSavedCredentialUnlock() },
                                 enabled = !isUnlocking,
                                 shape = RoundedCornerShape(10.dp),
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                 modifier = Modifier.height(32.dp)
                             ) {
                                 Text(
-                                    text = stringResource(R.string.biometric_quick_unlock_action),
+                                    text = stringResource(
+                                        if (vaultProtected) R.string.biometric_quick_unlock_action
+                                        else R.string.saved_credential_quick_unlock_action
+                                    ),
                                     style = MaterialTheme.typography.labelSmall
                                 )
                             }

@@ -145,15 +145,8 @@ object PreferenceHelper {
                     else -> context.getString(R.string.usb_storage_device)
                 }
 
-                val rawBlob = p.getString(key, null)
-                val isRecovery = if (rawBlob != null) {
-                    try {
-                        val decrypted = com.bitlockerdroid.service.KeyGuardService.decrypt(rawBlob)
-                        decrypted?.startsWith("RECOVERY:") == true
-                    } catch (_: Exception) { false }
-                } else false
-
-                val credType = if (isRecovery) context.getString(R.string.creds_type_recovery) else context.getString(R.string.creds_type_password)
+                // Listing credentials must never decrypt a protected secret just to label its type.
+                val credType = context.getString(R.string.creds_type_saved)
                 val subtitle = if (isGuid) {
                     context.getString(R.string.creds_subtitle_guid, shortGuid, credType)
                 } else {
@@ -166,7 +159,7 @@ object PreferenceHelper {
                     displayLabel = displayLabel,
                     subtitle = subtitle,
                     autoUnlock = autoUnlock,
-                    isRecoveryKey = isRecovery
+                    isRecoveryKey = false
                 )
             }
     }

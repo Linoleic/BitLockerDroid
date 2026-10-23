@@ -27,6 +27,7 @@ import com.bitlockerdroid.provider.BitLockerDocumentsProvider
 import com.bitlockerdroid.service.BitLockerDetector
 import com.bitlockerdroid.service.DetectedVolume
 import com.bitlockerdroid.service.KeyGuardService
+import com.bitlockerdroid.service.SavedCredentialAccess
 import com.bitlockerdroid.service.EjectStatus
 import com.bitlockerdroid.service.UnencryptedVolume
 import com.bitlockerdroid.service.UnlockManager
@@ -483,38 +484,44 @@ class BitLockerSettingsActivity : FragmentActivity() {
             promptUnlock(devicePath)
             return
         }
-        val rememberBlob = PreferenceHelper.getRememberedPassword(this, guid)
-        if (rememberBlob == null) {
-            promptUnlock(devicePath)
-            return
-        }
         val friendlyName = detectedVol?.deviceName?.ifBlank { guid } ?: guid
 
-        BiometricAuthHelper.authenticate(
+        val targetPath = devicePath
+        val targetGuid = guid
+        SavedCredentialAccess.readForUserAction(
             activity = this,
+            volumeGuid = targetGuid,
             title = getString(R.string.biometric_unlock_prompt_title),
             subtitle = getString(R.string.biometric_unlock_prompt_subtitle, friendlyName),
-            onSuccess = {
-                val raw = KeyGuardService.decrypt(rememberBlob)
-                if (raw == null) {
-                    Toast.makeText(this, R.string.credential_corrupted, Toast.LENGTH_SHORT).show()
-                    promptUnlock(devicePath)
-                    return@authenticate
+            onSuccess = { raw ->
+                val stillDetected = UnlockManager.detectedVolumes.any {
+                    it.devicePath == targetPath && it.guid.equals(targetGuid, ignoreCase = true)
                 }
+                if (!stillDetected) return@readForUserAction
                 val isRecovery = raw.startsWith(UnlockManager.RECOVERY_PREFIX)
                 val cleanKey = if (isRecovery) raw.removePrefix(UnlockManager.RECOVERY_PREFIX) else raw
                 Toast.makeText(this, R.string.biometric_unlocking, Toast.LENGTH_SHORT).show()
                 lifecycleScope.launch(Dispatchers.IO) {
                     val result = UnlockManager.unlockWithCredential(
                         this@BitLockerSettingsActivity,
-                        devicePath,
+                        targetPath,
                         0L,
                         cleanKey,
                         isRecovery,
                         remember = true,
-                        expectedGuid = guid
+                        expectedGuid = targetGuid
                     )
                     withContext(Dispatchers.Main) {
+                        // Successful publication removes the target from detectedVolumes.
+                        // Validate the published session instead of suppressing success feedback.
+                        val stillTarget = if (result.isSuccess) {
+                            UnlockManager.get(targetPath) === result.getOrNull()
+                        } else {
+                            UnlockManager.detectedVolumes.any {
+                                it.devicePath == targetPath && it.guid.equals(targetGuid, ignoreCase = true)
+                            }
+                        }
+                        if (!stillTarget) return@withContext
                         if (result.isSuccess) {
                             Toast.makeText(this@BitLockerSettingsActivity, R.string.unlock_success, Toast.LENGTH_SHORT).show()
                             refreshData()
@@ -526,7 +533,9 @@ class BitLockerSettingsActivity : FragmentActivity() {
                 }
             },
             onError = { err ->
-                Toast.makeText(this, err, Toast.LENGTH_SHORT).show()
+                if (UnlockManager.detectedVolumes.any {
+                        it.devicePath == targetPath && it.guid.equals(targetGuid, ignoreCase = true)
+                    }) Toast.makeText(this, err, Toast.LENGTH_SHORT).show()
             }
         )
     }

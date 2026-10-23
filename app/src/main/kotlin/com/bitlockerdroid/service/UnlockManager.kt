@@ -13,6 +13,7 @@ import com.bitlockerdroid.R
 import com.bitlockerdroid.ui.BitLockerSettingsActivity
 import com.bitlockerdroid.ui.UnlockDialogActivity
 import com.bitlockerdroid.util.PreferenceHelper
+import com.bitlockerdroid.service.SavedCredentialAccess
 import com.bitlockerdroid.util.LogFile
 
 /**
@@ -505,11 +506,16 @@ object UnlockManager {
             sessions[devicePath]?.let { return it }
         }
         val volId = guid ?: BitLockerDetector.getVolumeGuid(devicePath) ?: return null
-        val blob = PreferenceHelper.getRememberedPassword(context, volId) ?: return null
-        val raw = KeyGuardService.decrypt(blob) ?: return null
+        val raw = SavedCredentialAccess.readForAutomaticUnlock(
+            context, volId, isManuallyLocked(volId, devicePath), closingSessions.contains(devicePath)
+        ) ?: return null
+        // Recheck the mutable policy after decrypting the stored credential.
+        if (!SavedCredentialAccess.canAutomaticallyUnlock(
+                context, volId, isManuallyLocked(volId, devicePath), closingSessions.contains(devicePath)
+            )
+        ) return null
         val isRecovery = raw.startsWith(RECOVERY_PREFIX)
         val cleanKey = if (isRecovery) raw.removePrefix(RECOVERY_PREFIX) else raw
-        // Re-unlock with the saved credential; keep it remembered.
         val result = unlockWithCredential(context, devicePath, offset, cleanKey, isRecovery, true, expectedGuid = volId)
         return result.getOrNull()
     }

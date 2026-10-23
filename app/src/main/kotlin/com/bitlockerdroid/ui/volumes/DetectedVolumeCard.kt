@@ -64,7 +64,7 @@ fun DetectedVolumeCard(
         if (volume.capacity > 0L) DeviceIdentity.formatSize(volume.capacity) else null
     }
 
-    val showDualUnlock = hasSavedCredential && canBiometric && onBiometricUnlock != null
+    val showDualUnlock = hasSavedCredential && onBiometricUnlock != null
 
     Box(
         modifier = modifier
@@ -136,13 +136,21 @@ fun DetectedVolumeCard(
                             shape = RoundedCornerShape(12.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                         ) {
-                            Icon(
-                                painter = effectivePainters.fingerprint,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
+                            if (canBiometric) {
+                                Icon(
+                                    painter = effectivePainters.fingerprint,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                            }
+                            Text(
+                                text = stringResource(
+                                    if (canBiometric) R.string.biometric_unlock_button
+                                    else R.string.saved_credential_unlock_button
+                                ),
+                                fontSize = 12.sp
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(text = stringResource(R.string.biometric_unlock_button), fontSize = 12.sp)
                         }
                         AppButton(
                             onClick = onUnlock,
@@ -181,14 +189,19 @@ fun DetectedVolumeCard(
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Icon(
-                            painter = effectivePainters.fingerprint,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        if (canBiometric) {
+                            Icon(
+                                painter = effectivePainters.fingerprint,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                        }
                         Text(
-                            text = stringResource(R.string.biometric_unlock_button),
+                            text = stringResource(
+                                if (canBiometric) R.string.biometric_unlock_button
+                                else R.string.saved_credential_unlock_button
+                            ),
                             fontSize = 12.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
