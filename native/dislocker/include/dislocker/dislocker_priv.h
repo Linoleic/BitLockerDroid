@@ -62,6 +62,7 @@ struct _dis_ctx {
 	/* Persistent I/O daemon (root helper over pipes) */
 	int io_in_fd;
 	int io_out_fd;
+	int io_poisoned;
 	pid_t io_pid;
 	pthread_mutex_t io_lock;
 };

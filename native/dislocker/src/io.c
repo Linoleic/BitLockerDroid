@@ -225,6 +225,34 @@ static const char *find_daemon_binary(void)
 	return DAEMON_PATHS[0]; // fallback
 }
 
+static int is_fd_transport(const dis_ctx_t *ctx)
+{
+	return ctx && strncmp(ctx->device_path, "fd:", 3) == 0;
+}
+
+static int io_is_poisoned(const dis_ctx_t *ctx)
+{
+	return __atomic_load_n(&ctx->io_poisoned, __ATOMIC_ACQUIRE) != 0;
+}
+
+/* Caller holds io_lock after initialization. fd: descriptors are transferred
+ * to native ownership, so close each distinct endpoint exactly once. */
+static void poison_fd_transport_locked(dis_ctx_t *ctx)
+{
+	if (!is_fd_transport(ctx)) return;
+	__atomic_store_n(&ctx->io_poisoned, 1, __ATOMIC_RELEASE);
+	if (ctx->io_in_fd >= 0) close(ctx->io_in_fd);
+	if (ctx->io_out_fd >= 0 && ctx->io_out_fd != ctx->io_in_fd) close(ctx->io_out_fd);
+	ctx->io_in_fd = -1;
+	ctx->io_out_fd = -1;
+}
+
+static int set_nonblocking(int fd)
+{
+	int flags = fcntl(fd, F_GETFL, 0);
+	return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 ? 0 : -1;
+}
+
 int dis_io_init(dis_ctx_t *ctx)
 {
 	if (!ctx) return -1;
@@ -237,6 +265,7 @@ int dis_io_init(dis_ctx_t *ctx)
 	ctx->fd = -1;
 	ctx->io_in_fd = -1;
 	ctx->io_out_fd = -1;
+	ctx->io_poisoned = 0;
 	ctx->io_pid = -1;
 
 	if (!is_safe_device_path(ctx->device_path)) {
@@ -255,6 +284,14 @@ int dis_io_init(dis_ctx_t *ctx)
 			ctx->io_out_fd = in_fd;
 		}
 		if (ctx->io_in_fd >= 0 && ctx->io_out_fd >= 0) {
+			if (set_nonblocking(ctx->io_in_fd) != 0 ||
+				(ctx->io_out_fd != ctx->io_in_fd && set_nonblocking(ctx->io_out_fd) != 0)) {
+				dis_set_error("Could not enable nonblocking I/O on fd transport");
+				pthread_mutex_lock(&ctx->io_lock);
+				poison_fd_transport_locked(ctx);
+				pthread_mutex_unlock(&ctx->io_lock);
+				return -1;
+			}
 			int32_t magic = 0;
 			int r = pipe_read_exact(ctx->io_out_fd, &magic, sizeof(magic), 5000);
 			if (r == sizeof(magic) && magic == DAEMON_MAGIC) {
@@ -263,6 +300,9 @@ int dis_io_init(dis_ctx_t *ctx)
 			}
 			ELOG("Handshake failed on in-process fd (ret=%d, magic=0x%08x)", r, (unsigned int)magic);
 			dis_set_error("In-process I/O handshake failed on %s", ctx->device_path);
+			pthread_mutex_lock(&ctx->io_lock);
+			poison_fd_transport_locked(ctx);
+			pthread_mutex_unlock(&ctx->io_lock);
 			return -1;
 		}
 		dis_set_error("Invalid fd path %s", ctx->device_path);
@@ -395,6 +435,7 @@ void dis_io_destroy(dis_ctx_t *ctx)
 		}
 		ctx->io_in_fd = -1;
 		ctx->io_out_fd = -1;
+		__atomic_store_n(&ctx->io_poisoned, 1, __ATOMIC_RELEASE);
 		pthread_mutex_unlock(&ctx->io_lock);
 
 		if (ctx->io_pid > 0) {
@@ -526,6 +567,11 @@ static int dis_blk_write_dd(dis_ctx_t *ctx, const uint8_t *buf, off_t offset, si
 
 static int dis_blk_read_internal(dis_ctx_t *ctx, uint8_t *buf, off_t offset, size_t len)
 {
+	if (io_is_poisoned(ctx)) {
+		dis_set_error("I/O channel is poisoned after a previous protocol failure");
+		return -1;
+	}
+
 	// 1. Direct fd
 	if (ctx->fd >= 0) {
 		ssize_t n = pread(ctx->fd, buf, len, (off_t)(ctx->offset + offset));
@@ -535,8 +581,12 @@ static int dis_blk_read_internal(dis_ctx_t *ctx, uint8_t *buf, off_t offset, siz
 	}
 
 	// 2. Persistent daemon
-	if (ctx->io_in_fd >= 0) {
+	if (is_fd_transport(ctx) || ctx->io_in_fd >= 0) {
 		pthread_mutex_lock(&ctx->io_lock);
+		if (io_is_poisoned(ctx) || ctx->io_in_fd < 0 || ctx->io_out_fd < 0) {
+			pthread_mutex_unlock(&ctx->io_lock);
+			return -1;
+		}
 
 		uint8_t req[13];
 		req[0] = CMD_READ;
@@ -548,6 +598,7 @@ static int dis_blk_read_internal(dis_ctx_t *ctx, uint8_t *buf, off_t offset, siz
 		int wr = pipe_write_exact(ctx->io_in_fd, req, sizeof(req), 5000);
 		if (wr != sizeof(req)) {
 			ELOG("dis_blk_read: write req failed wr=%d (expected %zu), errno=%d (%s)", wr, sizeof(req), errno, strerror(errno));
+			poison_fd_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
 			dis_set_error("Daemon read write failed");
 			return -1;
@@ -557,6 +608,7 @@ static int dis_blk_read_internal(dis_ctx_t *ctx, uint8_t *buf, off_t offset, siz
 		int rr = pipe_read_exact(ctx->io_out_fd, &status, sizeof(status), 5000);
 		if (rr != sizeof(status) || status != (int32_t)len) {
 			ELOG("dis_blk_read: read status failed rr=%d, status=%d (expected %zu), errno=%d (%s)", rr, status, len, errno, strerror(errno));
+			poison_fd_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
 			dis_set_error("Daemon read returned error: %d", (int)status);
 			return -1;
@@ -565,6 +617,7 @@ static int dis_blk_read_internal(dis_ctx_t *ctx, uint8_t *buf, off_t offset, siz
 		int pr = pipe_read_exact(ctx->io_out_fd, buf, len, 10000);
 		if (pr != (int)len) {
 			ELOG("dis_blk_read: read payload failed pr=%d (expected %zu), errno=%d (%s)", pr, len, errno, strerror(errno));
+			poison_fd_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
 			dis_set_error("Daemon read payload truncated");
 			return -1;
@@ -572,6 +625,12 @@ static int dis_blk_read_internal(dis_ctx_t *ctx, uint8_t *buf, off_t offset, siz
 
 		pthread_mutex_unlock(&ctx->io_lock);
 		return (int)len;
+	}
+
+	// An fd: transport is a framed socket, not a device path for dd.
+	if (is_fd_transport(ctx) || io_is_poisoned(ctx)) {
+		dis_set_error("fd transport is unavailable");
+		return -1;
 	}
 
 	// 3. Fallback to su -c dd
@@ -590,6 +649,9 @@ int dis_blk_read(dis_ctx_t *ctx, uint8_t *buf, off_t offset, size_t len)
 
 	int ret = dis_blk_read_internal(ctx, buf, offset, len);
 	if (ret >= 0) return ret;
+	// Never recover a failed framed fd: request/response alignment may be lost,
+	// and zero-filling sectors would falsely report corrupted data as a read.
+	if (is_fd_transport(ctx) || io_is_poisoned(ctx)) return -1;
 
 	// Resilient fallback for bad sectors on larger reads
 	if (len > 512) {
@@ -621,6 +683,10 @@ static int dis_blk_write_internal(dis_ctx_t *ctx, const uint8_t *buf, off_t offs
 {
 	if (!ctx || !buf || len == 0 || !ctx->device_path[0])
 		return -1;
+	if (io_is_poisoned(ctx)) {
+		dis_set_error("I/O channel is poisoned after a previous protocol failure");
+		return -1;
+	}
 
 	if (check_barrier) {
 		/* Write barrier: protect BitLocker volume header (sectors 0..15) and metadata blocks */
@@ -660,8 +726,12 @@ static int dis_blk_write_internal(dis_ctx_t *ctx, const uint8_t *buf, off_t offs
 	}
 
 	// 2. Persistent daemon
-	if (ctx->io_in_fd >= 0) {
+	if (is_fd_transport(ctx) || ctx->io_in_fd >= 0) {
 		pthread_mutex_lock(&ctx->io_lock);
+		if (io_is_poisoned(ctx) || ctx->io_in_fd < 0 || ctx->io_out_fd < 0) {
+			pthread_mutex_unlock(&ctx->io_lock);
+			return -1;
+		}
 
 		uint8_t req[13];
 		req[0] = CMD_WRITE;
@@ -677,6 +747,7 @@ static int dis_blk_write_internal(dis_ctx_t *ctx, const uint8_t *buf, off_t offs
 		iov[1].iov_len = len;
 
 		if (pipe_writev_exact(ctx->io_in_fd, iov, 2, 15000) != (int)(sizeof(req) + len)) {
+			poison_fd_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
 			dis_set_error("Daemon write failed");
 			return -1;
@@ -684,6 +755,7 @@ static int dis_blk_write_internal(dis_ctx_t *ctx, const uint8_t *buf, off_t offs
 
 		int32_t status = 0;
 		if (pipe_read_exact(ctx->io_out_fd, &status, sizeof(status), 5000) != sizeof(status) || status != (int32_t)len) {
+			poison_fd_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
 			dis_set_error("Daemon write returned error: %d", (int)status);
 			return -1;
@@ -691,6 +763,11 @@ static int dis_blk_write_internal(dis_ctx_t *ctx, const uint8_t *buf, off_t offs
 
 		pthread_mutex_unlock(&ctx->io_lock);
 		return (int)len;
+	}
+
+	if (is_fd_transport(ctx) || io_is_poisoned(ctx)) {
+		dis_set_error("fd transport is unavailable");
+		return -1;
 	}
 
 	// 3. Fallback to su -c dd
@@ -710,6 +787,7 @@ int dis_blk_write_raw(dis_ctx_t *ctx, const uint8_t *buf, off_t offset, size_t l
 uint64_t dis_blk_get_size(dis_ctx_t *ctx)
 {
 	if (!ctx || !ctx->device_path[0]) return 0;
+	if (io_is_poisoned(ctx)) return 0;
 
 	// 1. Direct fd
 	if (ctx->fd >= 0) {
@@ -723,15 +801,21 @@ uint64_t dis_blk_get_size(dis_ctx_t *ctx)
 	}
 
 	// 2. Persistent daemon
-	if (ctx->io_in_fd >= 0) {
+	if (is_fd_transport(ctx) || ctx->io_in_fd >= 0) {
 		pthread_mutex_lock(&ctx->io_lock);
+		if (io_is_poisoned(ctx) || ctx->io_in_fd < 0 || ctx->io_out_fd < 0) {
+			pthread_mutex_unlock(&ctx->io_lock);
+			return 0;
+		}
 		uint8_t cmd = CMD_SIZE;
 		if (pipe_write_exact(ctx->io_in_fd, &cmd, 1, 3000) != 1) {
+			poison_fd_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
 			return 0;
 		}
 		uint64_t size = 0;
 		if (pipe_read_exact(ctx->io_out_fd, &size, sizeof(size), 3000) != sizeof(size)) {
+			poison_fd_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
 			return 0;
 		}
@@ -745,26 +829,42 @@ uint64_t dis_blk_get_size(dis_ctx_t *ctx)
 int dis_blk_sync(dis_ctx_t *ctx)
 {
 	if (!ctx) return -1;
+	if (io_is_poisoned(ctx)) {
+		dis_set_error("I/O channel is poisoned after a previous protocol failure");
+		return -1;
+	}
 
 	if (ctx->fd >= 0) {
 		return fdatasync(ctx->fd) == 0 ? 0 : -1;
 	}
 
-	if (ctx->io_in_fd >= 0) {
+	if (is_fd_transport(ctx) || ctx->io_in_fd >= 0) {
 		pthread_mutex_lock(&ctx->io_lock);
+		if (io_is_poisoned(ctx) || ctx->io_in_fd < 0 || ctx->io_out_fd < 0) {
+			pthread_mutex_unlock(&ctx->io_lock);
+			return -1;
+		}
 		uint8_t cmd = CMD_SYNC;
 		if (pipe_write_exact(ctx->io_in_fd, &cmd, 1, 5000) != 1) {
+			poison_fd_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
 			return -1;
 		}
 		int32_t status = 0;
 		if (pipe_read_exact(ctx->io_out_fd, &status, sizeof(status), 5000) != sizeof(status)) {
+			poison_fd_transport_locked(ctx);
+			pthread_mutex_unlock(&ctx->io_lock);
+			return -1;
+		}
+		if (status != 0) {
+			poison_fd_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
 			return -1;
 		}
 		pthread_mutex_unlock(&ctx->io_lock);
-		return status == 0 ? 0 : -1;
+		return 0;
 	}
 
-	return 0;
+	dis_set_error("No active I/O channel available for cache synchronization");
+	return -1;
 }
