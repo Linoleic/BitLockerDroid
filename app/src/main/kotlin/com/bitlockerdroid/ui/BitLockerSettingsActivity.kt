@@ -144,10 +144,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
             isSwitchingModeProcessingState.value = true
             lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    if (unlockedVolumesState.value.isNotEmpty()) {
-                        UnlockManager.safeEjectAll().firstOrNull { it.isFailure }?.getOrThrow()
-                    }
-                    VirtualStorageMountManager.unmountAll()
+                    UnlockManager.prepareForModeSwitch().getOrThrow()
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
                         isSwitchingModeProcessingState.value = false

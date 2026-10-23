@@ -29,6 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### 修复
 
+- 切换模式时暂停扫描和新解锁，等待正在进行的操作结束后再安全关闭卷。
 - 调试解锁接口未指定保存选项时不再删除已有凭据；自动和快捷解锁保留原保存项，快捷解锁成功后正常提示。
 - 修复设置分组和驱动器卡片隐藏子控件的无障碍信息，使入口、开关和解锁按钮可被识别。
 - 自动解锁统一遵守全局开关、单卷开关和手动锁定设置。
@@ -63,6 +64,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### Fixed
 
+- Pause scans and new unlocks during mode switching, and wait for ongoing operations before safely closing volumes.
 - Preserve saved credentials when debug unlock calls omit the save option. Automatic and quick unlocks keep existing entries, and quick unlocks show success feedback.
 - Restore accessibility information for controls inside settings groups and drive cards, including unlock buttons.
 - Apply global, per-volume, and manual-lock settings consistently to automatic unlocking.

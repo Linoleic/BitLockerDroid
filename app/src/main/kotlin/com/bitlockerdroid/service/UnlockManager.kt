@@ -437,8 +437,15 @@ object UnlockManager {
         remember: Boolean?,
         expectedGuid: String? = null
     ): Result<DislockerCore> {
-        return synchronized(getParentDiskLock(com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(devicePath))) {
-            unlockWithCredentialLocked(context, devicePath, offset, credential, isRecovery, remember, expectedGuid)
+        return when (val admission = ProcessSessionTransition.gate.admit {
+            synchronized(getParentDiskLock(com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(devicePath))) {
+                unlockWithCredentialLocked(context, devicePath, offset, credential, isRecovery, remember, expectedGuid)
+            }
+        }) {
+            is SessionTransitionGate.Admission.Accepted -> admission.value
+            SessionTransitionGate.Admission.Rejected -> Result.failure(
+                IllegalStateException("Session admission is closed for mode transition")
+            )
         }
     }
 
@@ -570,30 +577,35 @@ object UnlockManager {
      * Returns the core or null.
      */
     fun ensureUnlocked(context: Context, devicePath: String, offset: Long, guid: String? = null): DislockerCore? {
-        if (closingSessions.contains(devicePath)) return null
-        return synchronized(getParentDiskLock(com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(devicePath))) {
-            if (closingSessions.contains(devicePath)) return@synchronized null
-            val existing = synchronized(lock) { sessions[devicePath] }
-            if (existing != null && !existing.isClosed &&
-                (guid.isNullOrBlank() || existing.volumeGuid.equals(guid, ignoreCase = true))) {
-                return@synchronized existing
-            }
-            val actualGuid = if (devicePath.startsWith("/dev/block/")) BitLockerDetector.getVolumeGuid(devicePath) else null
-            if (devicePath.startsWith("/dev/block/") &&
-                (actualGuid.isNullOrBlank() || (!guid.isNullOrBlank() && !actualGuid.equals(guid, ignoreCase = true)))) {
-                return@synchronized null
-            }
-            val volId = actualGuid ?: guid ?: return@synchronized null
-            val raw = SavedCredentialAccess.readForAutomaticUnlock(
-                context, volId, isManuallyLocked(volId, devicePath), closingSessions.contains(devicePath)
-            ) ?: return@synchronized null
-            // Settings can change while the Keystore operation is running.
-            if (!SavedCredentialAccess.canAutomaticallyUnlock(
+        return when (val admission = ProcessSessionTransition.gate.admit {
+            if (closingSessions.contains(devicePath)) return@admit null
+            synchronized(getParentDiskLock(com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(devicePath))) {
+                if (closingSessions.contains(devicePath)) return@synchronized null
+                val existing = synchronized(lock) { sessions[devicePath] }
+                if (existing != null && !existing.isClosed &&
+                    (guid.isNullOrBlank() || existing.volumeGuid.equals(guid, ignoreCase = true))) {
+                    return@synchronized existing
+                }
+                val actualGuid = if (devicePath.startsWith("/dev/block/")) BitLockerDetector.getVolumeGuid(devicePath) else null
+                if (devicePath.startsWith("/dev/block/") &&
+                    (actualGuid.isNullOrBlank() || (!guid.isNullOrBlank() && !actualGuid.equals(guid, ignoreCase = true)))) {
+                    return@synchronized null
+                }
+                val volId = actualGuid ?: guid ?: return@synchronized null
+                val raw = SavedCredentialAccess.readForAutomaticUnlock(
                     context, volId, isManuallyLocked(volId, devicePath), closingSessions.contains(devicePath)
-                )) return@synchronized null
-            val isRecovery = raw.startsWith(RECOVERY_PREFIX)
-            val cleanKey = if (isRecovery) raw.removePrefix(RECOVERY_PREFIX) else raw
-            unlockWithCredentialLocked(context, devicePath, offset, cleanKey, isRecovery, null, volId).getOrNull()
+                ) ?: return@synchronized null
+                // Settings can change while the Keystore operation is running.
+                if (!SavedCredentialAccess.canAutomaticallyUnlock(
+                        context, volId, isManuallyLocked(volId, devicePath), closingSessions.contains(devicePath)
+                    )) return@synchronized null
+                val isRecovery = raw.startsWith(RECOVERY_PREFIX)
+                val cleanKey = if (isRecovery) raw.removePrefix(RECOVERY_PREFIX) else raw
+                unlockWithCredentialLocked(context, devicePath, offset, cleanKey, isRecovery, null, volId).getOrNull()
+            }
+        }) {
+            is SessionTransitionGate.Admission.Accepted -> admission.value
+            SessionTransitionGate.Admission.Rejected -> null
         }
     }
 
@@ -807,6 +819,21 @@ object UnlockManager {
         return results
     }
 
+    /** Quiesces sessions and shared USB state before changing connection mode. */
+    fun prepareForModeSwitch(): Result<Unit> = try {
+        ProcessSessionTransition.gate.prepare {
+            val results = safeEjectAll()
+            val failure = results.firstOrNull { it.isFailure }?.exceptionOrNull()
+            if (failure != null) throw failure
+            VirtualStorageMountManager.unmountAll()
+            Unit
+        }
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Log.w(TAG, "Mode switch preparation failed", e)
+        Result.failure(e)
+    }
+
     /**
      * Removes detected-but-not-unlocked entries whose block node is no longer
      * present on the bus (device unplugged). Also closes and drops unlocked
@@ -936,6 +963,26 @@ object UnlockManager {
         context: Context?,
         key: String? = null,
         isRecovery: Boolean = false
+    ) {
+        when (ProcessSessionTransition.gate.admit {
+            registerDirectAdmitted(core, context, key, isRecovery)
+        }) {
+            is SessionTransitionGate.Admission.Accepted -> Unit
+            SessionTransitionGate.Admission.Rejected -> {
+                try {
+                    core.close()
+                } catch (closeFailure: Throwable) {
+                    LogFile.write("app", "registerDirect: failed to close rejected session ${core.devicePath}: ${closeFailure.message}")
+                }
+            }
+        }
+    }
+
+    private fun registerDirectAdmitted(
+        core: DislockerCore,
+        context: Context?,
+        key: String?,
+        isRecovery: Boolean
     ) {
         var stale: DislockerCore? = null
         val admission = SessionAdmission.validateBeforePublish(

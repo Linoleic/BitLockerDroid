@@ -38,6 +38,15 @@ object BitLockerDetector {
      */
     @Synchronized
     fun scanAndDetect(context: Context): Int {
+        return when (val admission = ProcessSessionTransition.gate.admit {
+            scanAndDetectAdmitted(context)
+        }) {
+            is SessionTransitionGate.Admission.Accepted -> admission.value
+            SessionTransitionGate.Admission.Rejected -> 0
+        }
+    }
+
+    private fun scanAndDetectAdmitted(context: Context): Int {
         var found = 0
         val presentBlockNodes = mutableListOf<String>()
         val useRoot = com.bitlockerdroid.util.PreferenceHelper.useRootAccess && RootAccess.hasSu()

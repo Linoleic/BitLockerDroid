@@ -482,14 +482,11 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         }
         if (method == "switch_mode_and_restart") {
             val target = if (extras != null && extras.containsKey("target_root")) extras.getBoolean("target_root") else (arg == "true")
-            val failed = UnlockManager.safeEjectAll().firstOrNull { it.isFailure }
-            if (failed != null) return Bundle().apply {
+            val preparation = UnlockManager.prepareForModeSwitch()
+            if (preparation.isFailure) return Bundle().apply {
                 putBoolean("success", false)
-                putString("error", failed.exceptionOrNull()?.message)
+                putString("error", preparation.exceptionOrNull()?.message)
             }
-            try {
-                com.bitlockerdroid.service.VirtualStorageMountManager.unmountAll()
-            } catch (_: Throwable) {}
             if (!target) {
                 com.bitlockerdroid.service.VirtualStorageMountManager.unbindUsbStorage()
             }
