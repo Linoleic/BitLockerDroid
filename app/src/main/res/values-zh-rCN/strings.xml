@@ -525,4 +525,9 @@
     <string name="saved_credential_unlock_button">使用已保存凭据解锁</string>
     <string name="saved_credential_quick_unlock_banner">此卷有可用的已保存凭据。</string>
     <string name="unlock_target_changed">连接的卷已更换，请重新打开解锁窗口。</string>
+    <string name="smart_usb_unavailable">USB 连接不可用，请重新插入并授权后重试。</string>
+    <string name="smart_usb_unverified">尚未验证此 USB 桥接芯片的 SMART 查询方式，未发送探测命令。</string>
+    <string name="smart_usb_close_volumes">请先安全关闭此设备上已解锁的卷，再查询磁盘健康。</string>
+    <string name="smart_query_retry">健康查询失败，USB 连接已恢复。尚未确认 SMART 支持，可重新查询。</string>
+    <string name="smart_status_unconfirmed">尚未确认 SMART 支持</string>
 </resources>

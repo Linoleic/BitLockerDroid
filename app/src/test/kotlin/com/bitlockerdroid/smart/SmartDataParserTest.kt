@@ -67,6 +67,19 @@ class SmartDataParserTest {
     }
 
     @Test
+    fun unconfirmedUsbResponseDoesNotClaimHardwareIsUnsupported() {
+        val info = SmartDataParser.parseJson("""{
+            "supported": false,
+            "status": "UNCONFIRMED",
+            "reason": "USB bridge has no verified query route"
+        }""")
+
+        assertFalse(info.isSupported)
+        assertEquals(SmartOverallStatus.UNCONFIRMED, info.status)
+        assertEquals("USB bridge has no verified query route", info.reason)
+    }
+
+    @Test
     fun testParseUnsupportedSmartJson() {
         val json = """
             {

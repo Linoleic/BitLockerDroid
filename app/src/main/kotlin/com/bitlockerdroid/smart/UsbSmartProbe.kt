@@ -1,284 +1,389 @@
 package com.bitlockerdroid.smart
 
-import android.util.Log
 import me.jahnen.libaums.core.usb.UsbCommunication
+import java.io.IOException
+import java.math.BigInteger
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.charset.StandardCharsets
+import java.util.concurrent.atomic.AtomicInteger
 
-/**
- * Non-Root USB BOT SCSI SAT & NVMe SMART Probe.
- * Sends raw SCSI CDBs encapsulated in 31-byte BOT Command Block Wrappers (CBW).
- */
+/** BOT failed, recovery succeeded, and a later idle probe may retry safely. */
+class RecoveredProbeException(message: String, cause: IOException) : IOException(message, cause)
+
+/** Read-only SMART access for the explicitly supported Realtek RTL9210 bridge. */
 object UsbSmartProbe {
 
-    private const val TAG = "UsbSmartProbe"
-    private const val CBW_SIGNATURE = 0x43425355 // 'USBC'
-    private const val CSW_SIGNATURE = 0x53425355 // 'USBS'
-    private var tagCounter = 1000
+    private const val CBW_SIGNATURE = 0x43425355 // "USBC" on the wire
+    private const val CSW_SIGNATURE = 0x53425355 // "USBS" on the wire
+    private const val CBW_SIZE = 31
+    private const val CSW_SIZE = 13
+    private const val NVME_IDENTIFY_SIZE = 4096
+    private const val NVME_SMART_LOG_SIZE = 512
+    private const val NVME_ADMIN_IDENTIFY = 0x06
+    private const val NVME_ADMIN_GET_LOG_PAGE = 0x02
+    private const val NVME_IDENTIFY_CONTROLLER_CDW10 = 0x01
+    private const val NVME_SMART_HEALTH_LOG_ID = 0x02
 
-    @Synchronized
-    private fun getNextTag(): Int = tagCounter++
+    private val nextTag = AtomicInteger(1)
 
-    private fun buildCbw(tag: Int, transferLength: Int, cdb: ByteArray): ByteBuffer {
-        val buf = ByteBuffer.allocate(31).order(ByteOrder.LITTLE_ENDIAN)
-        buf.putInt(CBW_SIGNATURE)
-        buf.putInt(tag)
-        buf.putInt(transferLength)
-        buf.put(0x80.toByte()) // Direction: IN (Device to Host)
-        buf.put(0.toByte())    // LUN: 0
-        buf.put(cdb.size.toByte())
-        buf.put(cdb)
-        // Pad rest of the 16-byte CDB area to 0
-        val remainingCdb = 16 - cdb.size
-        for (i in 0 until remainingCdb) {
-            buf.put(0.toByte())
-        }
-        buf.flip()
-        return buf
+    /**
+     * Probe only a bridge with a known Realtek identity. Unknown USB devices return before
+     * reading any communication property or issuing a USB request.
+     */
+    fun probeSmart(
+        comm: UsbCommunication,
+        deviceNode: String? = null,
+        vendorId: Int = 0,
+        productId: Int = 0
+    ): SmartHealthInfo {
+        val profile = UsbSmartProfile.profileFor(vendorId, productId)
+            ?: return unsupportedUnknownBridge(deviceNode, vendorId, productId)
+        return probeProfile(profile, deviceNode, CommunicationBotTransport(comm))
     }
 
-    private fun executeScsiIn(
-        comm: UsbCommunication,
+    /** Small transport seam used by JVM tests to exercise BOT without Android USB objects. */
+    internal fun probeSmartWithTransport(
+        vendorId: Int,
+        productId: Int,
+        deviceNode: String? = null,
+        transport: BotTransport
+    ): SmartHealthInfo {
+        val profile = UsbSmartProfile.profileFor(vendorId, productId)
+            ?: return unsupportedUnknownBridge(deviceNode, vendorId, productId)
+        return probeProfile(profile, deviceNode, transport)
+    }
+
+    private fun unsupportedUnknownBridge(node: String?, vendorId: Int, productId: Int) =
+        SmartHealthInfo.unconfirmed(
+            node = node,
+            reason = "USB SMART probing is disabled for unrecognized bridge %04x:%04x."
+                .format(vendorId and 0xffff, productId and 0xffff)
+        )
+
+    private fun probeProfile(
+        profile: UsbSmartProfile,
+        node: String?,
+        transport: BotTransport
+    ): SmartHealthInfo {
+        val identifyCdb = ByteArray(16).apply {
+            this[0] = REALTEK_NVME_CDB.toByte()
+            putLe16(this, 1, NVME_IDENTIFY_SIZE)
+            this[3] = NVME_ADMIN_IDENTIFY.toByte()
+            this[4] = NVME_IDENTIFY_CONTROLLER_CDW10.toByte()
+        }
+        val identifyResult = executeReadCommand(transport, identifyCdb, NVME_IDENTIFY_SIZE)
+        if (identifyResult.commandFailed) {
+            return unsupportedForProfile(
+                profile,
+                node,
+                "RTL9210 did not accept NVMe Identify Controller; SATA/SAT fallback is not enabled."
+            )
+        }
+
+        val identity = parseControllerIdentity(identifyResult.data)
+            ?: return unsupportedForProfile(profile, node, "RTL9210 returned an empty or invalid NVMe controller identity.")
+
+        val smartCdb = ByteArray(16).apply {
+            this[0] = REALTEK_NVME_CDB.toByte()
+            putLe16(this, 1, NVME_SMART_LOG_SIZE)
+            this[3] = NVME_ADMIN_GET_LOG_PAGE.toByte()
+            this[4] = NVME_SMART_HEALTH_LOG_ID.toByte()
+        }
+        val smartResult = executeReadCommand(transport, smartCdb, NVME_SMART_LOG_SIZE)
+        if (smartResult.commandFailed) {
+            return unsupportedForProfile(profile, node, "RTL9210 did not provide the NVMe SMART/Health log.")
+        }
+
+        return parseSmartLog(identity, smartResult.data, node)
+            ?: unsupportedForProfile(profile, node, "RTL9210 returned an invalid NVMe SMART/Health log.")
+    }
+
+    private fun unsupportedForProfile(profile: UsbSmartProfile, node: String?, reason: String) =
+        SmartHealthInfo.unconfirmed(
+            vendor = "0x%04X".format(profile.vendorId),
+            product = profile.name,
+            node = node,
+            reason = reason
+        )
+
+    private data class CommandResult(val data: ByteArray, val commandFailed: Boolean)
+
+    /**
+     * Issues one BOT data-in command. A status-1 CSW is a complete SCSI command failure and
+     * leaves support unconfirmed; malformed BOT or transport failures attempt one
+     * BOT reset recovery and are reported as recoverable or unrecovered IOExceptions.
+     */
+    private fun executeReadCommand(
+        transport: BotTransport,
         cdb: ByteArray,
         expectedLength: Int
-    ): Pair<Boolean, ByteArray?> {
-        val tag = getNextTag()
-        val cbw = buildCbw(tag, expectedLength, cdb)
-
-        try {
-            comm.bulkOutTransfer(cbw)
-
-            val dataBuf = ByteBuffer.allocate(expectedLength)
-            comm.bulkInTransfer(dataBuf)
-            val dataBytes = dataBuf.array()
-
-            val cswBuf = ByteBuffer.allocate(13).order(ByteOrder.LITTLE_ENDIAN)
-            comm.bulkInTransfer(cswBuf)
-            cswBuf.flip()
-
-            if (cswBuf.remaining() >= 13) {
-                val sig = cswBuf.getInt()
-                val retTag = cswBuf.getInt()
-                val residue = cswBuf.getInt()
-                val status = cswBuf.get().toInt() and 0xFF
-
-                if (sig == CSW_SIGNATURE && retTag == tag && status == 0) {
-                    return Pair(true, dataBytes)
-                }
-            }
-            return Pair(false, dataBytes)
-        } catch (e: Exception) {
-            Log.d(TAG, "SCSI transfer exception: ${e.message}")
-            return Pair(false, null)
+    ): CommandResult {
+        require(cdb.size == 16)
+        val tag = nextTag.getAndIncrement()
+        val cbw = ByteBuffer.allocate(CBW_SIZE).order(ByteOrder.LITTLE_ENDIAN).apply {
+            putInt(CBW_SIGNATURE)
+            putInt(tag)
+            putInt(expectedLength)
+            put(0x80.toByte()) // data-in
+            put(0) // LUN 0
+            put(cdb.size.toByte())
+            put(cdb)
+            while (hasRemaining()) put(0)
+            flip()
         }
-    }
 
-    fun probeSmart(comm: UsbCommunication, deviceNode: String? = null): SmartHealthInfo {
         try {
-            // 1. SCSI INQUIRY (36 bytes)
-            var vendor = ""
-            var product = ""
-            var rev = ""
-            val inqCdb = byteArrayOf(0x12, 0, 0, 0, 36, 0)
-            val (inqOk, inqData) = executeScsiIn(comm, inqCdb, 36)
-            if (inqOk && inqData != null && inqData.size >= 36) {
-                vendor = String(inqData, 8, 8, Charsets.US_ASCII).trim()
-                product = String(inqData, 16, 16, Charsets.US_ASCII).trim()
-                rev = String(inqData, 32, 4, Charsets.US_ASCII).trim()
-            }
+            transferCbwOnce(transport, cbw)
+            val data = ByteArray(expectedLength)
+            var transferred = 0
+            var csw: Csw? = null
 
-            // 2. SAT ATA IDENTIFY (512 bytes)
-            var model = ""
-            var serial = ""
-            var firmware = ""
-            var diskType = "Unknown"
-            val ataIdCdb = byteArrayOf(
-                0x85.toByte(), 0x08, 0x0E, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0xEC.toByte(), 0
-            )
-            val (ataIdOk, ataIdData) = executeScsiIn(comm, ataIdCdb, 512)
-            if (ataIdOk && ataIdData != null && ataIdData.size >= 512) {
-                val modelChars = CharArray(40)
-                for (i in 0 until 20) {
-                    modelChars[i * 2] = ataIdData[54 + i * 2 + 1].toInt().toChar()
-                    modelChars[i * 2 + 1] = ataIdData[54 + i * 2].toInt().toChar()
-                }
-                model = String(modelChars).trim()
-
-                val serialChars = CharArray(20)
-                for (i in 0 until 10) {
-                    serialChars[i * 2] = ataIdData[20 + i * 2 + 1].toInt().toChar()
-                    serialChars[i * 2 + 1] = ataIdData[20 + i * 2].toInt().toChar()
-                }
-                serial = String(serialChars).trim()
-
-                val fwChars = CharArray(8)
-                for (i in 0 until 4) {
-                    fwChars[i * 2] = ataIdData[46 + i * 2 + 1].toInt().toChar()
-                    fwChars[i * 2 + 1] = ataIdData[46 + i * 2].toInt().toChar()
-                }
-                firmware = String(fwChars).trim()
-
-                val rotRate = (ataIdData[434].toInt() and 0xFF) or ((ataIdData[435].toInt() and 0xFF) shl 8)
-                diskType = if (rotRate == 1) "SSD" else if (rotRate > 1) "HDD" else "Unknown"
-            }
-
-            // 3. Try Realtek RTL9210 NVMe Tunnel (0xE4, 512 bytes)
-            val rtkCdb = byteArrayOf(
-                0xE4.toByte(), 0x00, 0x02, 0x02, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-            )
-            var (nvmeOk, nvmeData) = executeScsiIn(comm, rtkCdb, 512)
-
-            // 4. Try ASMedia ASM2362 NVMe Tunnel (0xE6) if RTL failed
-            if (!nvmeOk || nvmeData == null) {
-                val asmCdb = byteArrayOf(
-                    0xE6.toByte(), 0x02, 0, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-                )
-                val asmRes = executeScsiIn(comm, asmCdb, 512)
-                if (asmRes.first && asmRes.second != null) {
-                    nvmeOk = true
-                    nvmeData = asmRes.second
-                }
-            }
-
-            if (nvmeOk && nvmeData != null && nvmeData.size >= 512) {
-                val critWarn = nvmeData[0].toInt() and 0xFF
-                val kelvin = (nvmeData[1].toInt() and 0xFF) or ((nvmeData[2].toInt() and 0xFF) shl 8)
-                val tempC = if (kelvin > 273) kelvin - 273 else 0
-                val availSpare = nvmeData[3].toInt() and 0xFF
-                val spareThresh = nvmeData[4].toInt() and 0xFF
-                val percentUsed = nvmeData[5].toInt() and 0xFF
-                val healthPct = if (percentUsed <= 100) 100 - percentUsed else 0
-
-                val buf = ByteBuffer.wrap(nvmeData).order(ByteOrder.LITTLE_ENDIAN)
-                val unitsRead = buf.getLong(32)
-                val unitsWritten = buf.getLong(48)
-                val hostReads = buf.getLong(64)
-                val hostWrites = buf.getLong(80)
-                val ctrlBusy = buf.getLong(96)
-                val powerCycles = buf.getLong(112)
-                val powerHours = buf.getLong(128)
-                val unsafeShutdowns = buf.getLong(144)
-                val mediaErrs = buf.getLong(160)
-                val errEntries = buf.getLong(176)
-                val rawPageHex = nvmeData.take(512).joinToString("") { "%02X".format(it) }
-
-                val status = if (critWarn == 0 && healthPct >= 10) SmartOverallStatus.HEALTHY
-                             else if (healthPct < 10) SmartOverallStatus.CRITICAL
-                             else SmartOverallStatus.WARNING
-
-                return SmartHealthInfo(
-                    isSupported = true,
-                    status = status,
-                    diskType = "NVMe SSD",
-                    model = model.ifBlank { product },
-                    serial = serial.ifBlank { null },
-                    firmware = firmware.ifBlank { rev },
-                    vendor = vendor.ifBlank { null },
-                    product = product.ifBlank { null },
-                    temperatureCelsius = tempC,
-                    healthPercentage = healthPct,
-                    availableSpare = availSpare,
-                    spareThreshold = spareThresh,
-                    criticalWarning = critWarn,
-                    powerCycles = powerCycles,
-                    powerHours = powerHours,
-                    unsafeShutdowns = unsafeShutdowns,
-                    totalBytesRead = unitsRead * 512000L,
-                    totalBytesWritten = unitsWritten * 512000L,
-                    hostReadCommands = hostReads,
-                    hostWriteCommands = hostWrites,
-                    controllerBusyMinutes = ctrlBusy,
-                    mediaErrors = mediaErrs,
-                    errorLogEntries = errEntries,
-                    deviceNode = deviceNode,
-                    rawPageHex = rawPageHex
-                )
-            }
-
-            // 5. Try SATA ATA SMART READ DATA (0xB0, 0xD0)
-            val smartCdb = byteArrayOf(
-                0x85.toByte(), 0x08, 0x0E, 0, 0xD0.toByte(), 0, 1, 0, 0, 0, 0x4F, 0, 0xC2.toByte(), 0, 0xB0.toByte(), 0
-            )
-            val (sataOk, sataData) = executeScsiIn(comm, smartCdb, 512)
-            if (sataOk && sataData != null && sataData.size >= 512) {
-                var tempC: Int? = null
-                var healthPct: Int? = 100
-                var powerHours: Long? = null
-                var powerCycles: Long? = null
-                var reallocated: Long? = null
-                var pending: Long? = null
-                var uncorrectable: Long? = null
-                var bytesWritten: Long? = null
-
-                for (i in 0 until 30) {
-                    val off = 2 + i * 12
-                    val id = sataData[off].toInt() and 0xFF
-                    if (id == 0) continue
-                    val current = sataData[off + 3].toInt() and 0xFF
-                    val raw = (sataData[off + 5].toLong() and 0xFF) or
-                              ((sataData[off + 6].toLong() and 0xFF) shl 8) or
-                              ((sataData[off + 7].toLong() and 0xFF) shl 16) or
-                              ((sataData[off + 8].toLong() and 0xFF) shl 24) or
-                              ((sataData[off + 9].toLong() and 0xFF) shl 32) or
-                              ((sataData[off + 10].toLong() and 0xFF) shl 40)
-
-                    when (id) {
-                        0x05 -> reallocated = raw
-                        0x09 -> powerHours = raw
-                        0x0C -> powerCycles = raw
-                        0xC2, 0xBE -> tempC = (raw and 0xFF).toInt()
-                        0xC5 -> pending = raw
-                        0xC6 -> uncorrectable = raw
-                        0xE7, 0xA9, 0xB1, 0xE8 -> {
-                            if (current in 1..100) healthPct = current
-                            else if (raw in 1..100) healthPct = raw.toInt()
-                        }
-                        0xF1 -> bytesWritten = raw * 512L
-                    }
-                }
-
-                val status = if ((reallocated ?: 0L) == 0L && (pending ?: 0L) == 0L && (uncorrectable ?: 0L) == 0L) {
-                    SmartOverallStatus.HEALTHY
-                } else if ((uncorrectable ?: 0L) > 0L) {
-                    SmartOverallStatus.CRITICAL
+            while (transferred < expectedLength && csw == null) {
+                val chunk = ByteBuffer.allocate(expectedLength - transferred)
+                val read = transferOnceIn(transport, chunk)
+                val bytes = chunk.array()
+                if (read == CSW_SIZE && readLe32(bytes, 0) == CSW_SIGNATURE) {
+                    csw = parseCsw(bytes.copyOf(CSW_SIZE), expectedLength, tag, transferred)
                 } else {
-                    SmartOverallStatus.WARNING
+                    System.arraycopy(bytes, 0, data, transferred, read)
+                    transferred += read
                 }
-
-                val rawPageHex = sataData.take(512).joinToString("") { "%02X".format(it) }
-
-                return SmartHealthInfo(
-                    isSupported = true,
-                    status = status,
-                    diskType = if (diskType != "Unknown") diskType else "SATA SSD",
-                    model = model.ifBlank { product },
-                    serial = serial.ifBlank { null },
-                    firmware = firmware.ifBlank { rev },
-                    vendor = vendor.ifBlank { null },
-                    product = product.ifBlank { null },
-                    temperatureCelsius = tempC,
-                    healthPercentage = healthPct,
-                    reallocatedSectors = reallocated,
-                    pendingSectors = pending,
-                    uncorrectableSectors = uncorrectable,
-                    powerCycles = powerCycles,
-                    powerHours = powerHours,
-                    totalBytesWritten = bytesWritten,
-                    deviceNode = deviceNode,
-                    rawPageHex = rawPageHex
-                )
             }
 
-            // 6. Controller lacks ATA/NVMe S.M.A.R.T.
-            return SmartHealthInfo.unsupported(
-                vendor = vendor.ifBlank { null },
-                product = product.ifBlank { null },
-                node = deviceNode,
-                reason = "Storage controller lacks standard ATA/NVMe S.M.A.R.T. telemetry."
-            )
-        } catch (e: Exception) {
-            Log.w(TAG, "probeSmart failed", e)
-            return SmartHealthInfo.unsupported(node = deviceNode, reason = e.message)
+            if (csw == null) {
+                csw = readCsw(transport, expectedLength, tag, transferred)
+            }
+
+            return when (csw.status) {
+                0 -> {
+                    if (csw.residue != 0 || transferred != expectedLength) {
+                        throw IOException(
+                            "BOT success CSW has incomplete data (received=$transferred, " +
+                                "expected=$expectedLength, residue=${csw.residue})"
+                        )
+                    }
+                    CommandResult(data, commandFailed = false)
+                }
+                1 -> CommandResult(data, commandFailed = true)
+                else -> throw IOException("BOT CSW reported phase error status ${csw.status}")
+            }
+        } catch (failure: IOException) {
+            recoverOnce(transport, failure)
         }
     }
+
+    private data class Csw(val residue: Int, val status: Int)
+
+    private fun readCsw(
+        transport: BotTransport,
+        expectedLength: Int,
+        tag: Int,
+        transferred: Int
+    ): Csw {
+        val buffer = ByteBuffer.allocate(CSW_SIZE)
+        transferFullyIn(transport, buffer)
+        return parseCsw(buffer.array(), expectedLength, tag, transferred)
+    }
+
+    private fun parseCsw(bytes: ByteArray, expectedLength: Int, tag: Int, transferred: Int): Csw {
+        if (bytes.size != CSW_SIZE) throw IOException("BOT CSW must be exactly $CSW_SIZE bytes")
+        val signature = readLe32(bytes, 0)
+        val returnedTag = readLe32(bytes, 4)
+        val residue = readLe32(bytes, 8)
+        val status = bytes[12].toInt() and 0xff
+        if (signature != CSW_SIGNATURE) throw IOException("Invalid BOT CSW signature")
+        if (returnedTag != tag) throw IOException("BOT CSW tag mismatch")
+        if (residue < 0 || residue != expectedLength - transferred) {
+            throw IOException("BOT CSW residue mismatch (residue=$residue, transferred=$transferred)")
+        }
+        if (status !in 0..2) throw IOException("Invalid BOT CSW status $status")
+        return Csw(residue, status)
+    }
+
+    private fun transferCbwOnce(transport: BotTransport, buffer: ByteBuffer) {
+        val before = buffer.position()
+        val count = transport.bulkOutTransfer(buffer)
+        if (count != CBW_SIZE || buffer.position() - before != CBW_SIZE) {
+            throw IOException(
+                "BOT CBW must be sent in one complete bulk OUT transfer " +
+                    "(result=$count, advanced=${buffer.position() - before})"
+            )
+        }
+    }
+
+    private fun transferFullyIn(transport: BotTransport, buffer: ByteBuffer) {
+        while (buffer.hasRemaining()) {
+            val before = buffer.position()
+            val count = transport.bulkInTransfer(buffer)
+            validateProgress("bulk IN", count, before, buffer.position(), buffer.limit())
+        }
+    }
+
+    private fun transferOnceIn(transport: BotTransport, buffer: ByteBuffer): Int {
+        val before = buffer.position()
+        val count = transport.bulkInTransfer(buffer)
+        validateProgress("bulk IN", count, before, buffer.position(), buffer.limit())
+        return count
+    }
+
+    private fun validateProgress(direction: String, count: Int, before: Int, after: Int, limit: Int) {
+        val advanced = after - before
+        if (count <= 0) throw IOException("$direction made no progress (result=$count)")
+        if (count > limit - before || advanced != count) {
+            throw IOException("$direction returned an invalid length (result=$count, advanced=$advanced)")
+        }
+    }
+
+    private fun recoverOnce(transport: BotTransport, original: IOException): Nothing {
+        try {
+            transport.resetBotAndClearHalts()
+        } catch (recoveryFailure: Exception) {
+            original.addSuppressed(recoveryFailure)
+            throw IOException("BOT recovery failed after transport/protocol error", original)
+        }
+        throw RecoveredProbeException(
+            "BOT transport recovered after ${original.message}; retry when the device is idle",
+            original
+        )
+    }
+
+    private data class ControllerIdentity(
+        val vendorId: Int,
+        val serial: String,
+        val model: String,
+        val firmware: String
+    )
+
+    private fun parseControllerIdentity(data: ByteArray): ControllerIdentity? {
+        if (data.size != NVME_IDENTIFY_SIZE || data.all { it == 0.toByte() }) return null
+        val vendorId = readLe16(data, 0)
+        if (vendorId == 0 || vendorId == 0xffff) return null
+        val serial = nvmeAscii(data, 4, 20) ?: return null
+        val model = nvmeAscii(data, 24, 40) ?: return null
+        val firmware = nvmeAscii(data, 64, 8) ?: return null
+        if (serial.length < 3 || model.length < 3 || firmware.isBlank()) return null
+        return ControllerIdentity(vendorId, serial, model, firmware)
+    }
+
+    private fun nvmeAscii(data: ByteArray, offset: Int, size: Int): String? {
+        val value = String(data, offset, size, StandardCharsets.US_ASCII).trim(' ', '\u0000')
+        if (value.isBlank() || value.any { it !in ' '..'~' }) return null
+        return value
+    }
+
+    private fun parseSmartLog(
+        identity: ControllerIdentity,
+        data: ByteArray,
+        node: String?
+    ): SmartHealthInfo? {
+        if (data.size != NVME_SMART_LOG_SIZE || data.all { it == 0.toByte() } ||
+            data.all { it == 0xff.toByte() }) return null
+        val criticalWarning = data[0].toInt() and 0xff
+        val kelvin = readLe16(data, 1)
+        val availableSpare = data[3].toInt() and 0xff
+        val spareThreshold = data[4].toInt() and 0xff
+        val percentageUsed = data[5].toInt() and 0xff
+        // Keep the same page validation as the native root reader. A zero
+        // temperature means unavailable; Percent Used may exceed 100.
+        if ((criticalWarning and 0xc0) != 0 || (kelvin != 0 && kelvin !in 200..500) ||
+            availableSpare !in 0..100 || spareThreshold !in 0..100) return null
+
+        val status = when {
+            criticalWarning != 0 -> SmartOverallStatus.CRITICAL
+            availableSpare <= spareThreshold || percentageUsed >= 100 -> SmartOverallStatus.WARNING
+            else -> SmartOverallStatus.HEALTHY
+        }
+        return SmartHealthInfo(
+            isSupported = true,
+            status = status,
+            diskType = "NVMe SSD",
+            model = identity.model,
+            serial = identity.serial,
+            firmware = identity.firmware,
+            vendor = "NVMe VID 0x%04X".format(identity.vendorId),
+            product = "Realtek RTL9210",
+            temperatureCelsius = if (kelvin == 0) null else kelvin - 273,
+            healthPercentage = (100 - percentageUsed).coerceIn(0, 100),
+            availableSpare = availableSpare,
+            spareThreshold = spareThreshold,
+            criticalWarning = criticalWarning,
+            totalBytesRead = nvmeCounterBytes(data, 32),
+            totalBytesWritten = nvmeCounterBytes(data, 48),
+            hostReadCommands = nvmeCounter(data, 64),
+            hostWriteCommands = nvmeCounter(data, 80),
+            controllerBusyMinutes = nvmeCounter(data, 96),
+            powerCycles = nvmeCounter(data, 112),
+            powerHours = nvmeCounter(data, 128),
+            unsafeShutdowns = nvmeCounter(data, 144),
+            mediaErrors = nvmeCounter(data, 160),
+            errorLogEntries = nvmeCounter(data, 176),
+            deviceNode = node,
+            rawPageHex = data.joinToString("") { "%02X".format(it.toInt() and 0xff) }
+        )
+    }
+
+    private fun nvmeCounter(data: ByteArray, offset: Int): Long =
+        BigInteger(1, data.copyOfRange(offset, offset + 16).reversedArray()).let {
+            if (it > LONG_MAX) Long.MAX_VALUE else it.toLong()
+        }
+
+    private fun nvmeCounterBytes(data: ByteArray, offset: Int): Long =
+        BigInteger(1, data.copyOfRange(offset, offset + 16).reversedArray())
+            .multiply(BigInteger.valueOf(512_000L))
+            .let { if (it > LONG_MAX) Long.MAX_VALUE else it.toLong() }
+
+    private fun readLe16(data: ByteArray, offset: Int): Int =
+        (data[offset].toInt() and 0xff) or ((data[offset + 1].toInt() and 0xff) shl 8)
+
+    private fun readLe32(data: ByteArray, offset: Int): Int =
+        (data[offset].toInt() and 0xff) or
+            ((data[offset + 1].toInt() and 0xff) shl 8) or
+            ((data[offset + 2].toInt() and 0xff) shl 16) or
+            (data[offset + 3].toInt() shl 24)
+
+    private fun putLe16(data: ByteArray, offset: Int, value: Int) {
+        data[offset] = value.toByte()
+        data[offset + 1] = (value ushr 8).toByte()
+    }
+
+    internal interface BotTransport {
+        fun bulkOutTransfer(src: ByteBuffer): Int
+        fun bulkInTransfer(dest: ByteBuffer): Int
+        fun resetBotAndClearHalts()
+    }
+
+    private class CommunicationBotTransport(private val comm: UsbCommunication) : BotTransport {
+        override fun bulkOutTransfer(src: ByteBuffer): Int = comm.bulkOutTransfer(src)
+        override fun bulkInTransfer(dest: ByteBuffer): Int = comm.bulkInTransfer(dest)
+
+        override fun resetBotAndClearHalts() {
+            val result = comm.controlTransfer(
+                0x21, // Host-to-device, class, interface
+                0xff, // Bulk-Only Mass Storage Reset
+                0,
+                comm.usbInterface.id,
+                ByteArray(0),
+                0
+            )
+            if (result != 0) throw IOException("BOT class reset failed (result=$result)")
+            clearEndpointHalt(comm, comm.inEndpoint.address)
+            clearEndpointHalt(comm, comm.outEndpoint.address)
+        }
+    }
+
+    private fun clearEndpointHalt(comm: UsbCommunication, endpointAddress: Int) {
+        val result = comm.controlTransfer(
+            0x02, // Host-to-device, standard, endpoint
+            0x01, // CLEAR_FEATURE
+            0, // ENDPOINT_HALT
+            endpointAddress,
+            ByteArray(0),
+            0
+        )
+        if (result != 0) throw IOException("CLEAR_FEATURE(ENDPOINT_HALT) failed for 0x%02x (result=$result)".format(endpointAddress))
+    }
+
+    private val LONG_MAX = BigInteger.valueOf(Long.MAX_VALUE)
+    private const val REALTEK_NVME_CDB = 0xe4
 }

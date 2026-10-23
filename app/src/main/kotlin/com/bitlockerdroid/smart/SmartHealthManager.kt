@@ -2,6 +2,7 @@ package com.bitlockerdroid.smart
 
 import android.content.Context
 import android.util.Log
+import com.bitlockerdroid.R
 import com.bitlockerdroid.usb.UsbStorageManager
 import com.bitlockerdroid.util.NativeBridge
 import com.bitlockerdroid.util.PreferenceHelper
@@ -35,6 +36,7 @@ object SmartHealthManager {
         }
     }
 
+    /** USB results only indicate a known query route; hardware support is confirmed on explicit query. */
     suspend fun isDeviceSmartSupported(
         context: Context,
         devicePath: String,
@@ -45,14 +47,30 @@ object SmartHealthManager {
         if (key.isBlank() || key.startsWith("storage:") || devicePath.isBlank() || devicePath.startsWith("storage:")) {
             return@withContext false
         }
-        smartSupportCache[key]?.let { return@withContext it }
 
-        val info = querySmartInternal(context, devicePath, usbDeviceId)
-        smartSupportCache[key] = info.isSupported
-        if (info.isSupported) {
-            smartInfoCache[key] = info
+        val isUsbUri = devicePath.startsWith("usb://")
+        if (isUsbUri || usbDeviceId != null) {
+            val holder = usbHolder(devicePath, usbDeviceId) ?: return@withContext false
+            return@withContext UsbSmartProfile.profileFor(holder.usbDevice.vendorId, holder.usbDevice.productId) != null
         }
-        info.isSupported
+        if (!isUsbUri) smartSupportCache[key]?.let { return@withContext it }
+
+        runAutomaticSupportCheck(
+            isUsbUri = isUsbUri,
+            query = {
+                val info = querySmartInternal(context, devicePath)
+                smartSupportCache[key] = info.isSupported
+                if (info.isSupported) {
+                    smartInfoCache[key] = info
+                }
+                info.isSupported
+            },
+            unsupported = {
+                smartSupportCache[key] = false
+                smartInfoCache.remove(key)
+                false
+            }
+        )
     }
 
     suspend fun querySmart(
@@ -66,6 +84,8 @@ object SmartHealthManager {
         smartSupportCache[key] = info.isSupported
         if (info.isSupported) {
             smartInfoCache[key] = info
+        } else {
+            smartInfoCache.remove(key)
         }
         info
     }
@@ -75,13 +95,45 @@ object SmartHealthManager {
         devicePath: String,
         usbDeviceId: Int? = null
     ): SmartHealthInfo = withContext(Dispatchers.IO) {
+        if (devicePath.startsWith("usb://") || usbDeviceId != null) {
+            val holder = usbHolder(devicePath, usbDeviceId)
+                ?: return@withContext SmartHealthInfo.unconfirmed(node = devicePath,
+                    reason = context.getString(R.string.smart_usb_unavailable))
+            if (UsbSmartProfile.profileFor(holder.usbDevice.vendorId, holder.usbDevice.productId) == null) {
+                return@withContext SmartHealthInfo.unconfirmed(node = devicePath,
+                    reason = context.getString(R.string.smart_usb_unverified))
+            }
+            if (!holder.transportHealthy) {
+                return@withContext SmartHealthInfo.unconfirmed(node = devicePath,
+                    reason = context.getString(R.string.smart_usb_unavailable))
+            }
+            return@withContext UsbStorageManager.withIdleDeviceProbe(holder.usbDevice.deviceId) { current ->
+                try {
+                    UsbSmartProbe.probeSmart(current.communication, devicePath,
+                        current.usbDevice.vendorId, current.usbDevice.productId)
+                } catch (e: RecoveredProbeException) {
+                    Log.w(TAG, "SMART query failed but BOT recovery completed", e)
+                    SmartHealthInfo.unconfirmed(node = devicePath,
+                        reason = context.getString(R.string.smart_query_retry))
+                } catch (e: java.io.IOException) {
+                    // There are no open volume sessions here. Refuse new sessions on an
+                    // untrusted transport until physical reconnection; never terminate a live volume.
+                    current.transportHealthy = false
+                    Log.w(TAG, "SMART transport recovery failed for ${current.usbDevice.deviceName}", e)
+                    SmartHealthInfo.unconfirmed(node = devicePath,
+                        reason = context.getString(R.string.smart_usb_unavailable))
+                }
+            } ?: SmartHealthInfo.unconfirmed(node = devicePath,
+                reason = context.getString(R.string.smart_usb_close_volumes))
+        }
+
         val useRoot = PreferenceHelper.useRootAccess && RootAccess.hasSu()
 
         if (useRoot) {
             try {
                 RootAccess.ensureDaemonInstalled(context)
                 val daemonPath = "/data/local/tmp/bitlocker_io"
-                val res = RootAccess.exec("$daemonPath --smart '$devicePath'", 6000)
+                val res = RootAccess.exec("$daemonPath --smart '$devicePath'", 12000)
                 if (res != null && res.first == 0 && res.second.isNotBlank()) {
                     val info = SmartDataParser.parseJson(res.second)
                     // The root daemon executes SCSI, SAT, and NVMe queries.
@@ -105,27 +157,29 @@ object SmartHealthManager {
             }
         } catch (_: Throwable) {}
 
-        // Try Non-Root USB BOT probe
-        try {
-            val holder = (usbDeviceId?.let { UsbStorageManager.getActiveHolder(it) })
-                ?: UsbStorageManager.getAnyActiveHolder()
-
-            if (holder != null) {
-                val info = UsbSmartProbe.probeSmart(holder.communication, devicePath)
-                if (info.isSupported) {
-                    return@withContext info
-                } else if (!useRoot) {
-                    return@withContext info
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Non-Root USB SMART probe error", e)
-        }
-
         SmartHealthInfo.unsupported(
             node = devicePath,
             reason = if (useRoot) "该介质（普通 U 盘 / 存储卡）未内置标准 ATA/NVMe S.M.A.R.T. 硬件监控传感器"
                      else "当前运行模式或外设主控未提供标准 S.M.A.R.T. 传感器数据"
         )
     }
+
+    private fun usbHolder(devicePath: String, requestedId: Int?): UsbStorageManager.UsbDeviceConnectionHolder? {
+        val pathId = if (devicePath.startsWith("usb://")) {
+            devicePath.removePrefix("usb://").substringBefore('/').toIntOrNull()
+        } else null
+        if (pathId != null && requestedId != null && pathId != requestedId) return null
+        return UsbStorageManager.getActiveHolder(pathId ?: requestedId ?: return null)
+    }
+
+    /**
+     * Automatic UI support checks must never run non-root raw SMART commands on USB BOT.
+     * Root-based checks use the native reader; explicit USB queries use the guarded
+     * bridge-specific path above instead of this automatic-check helper.
+     */
+    internal suspend fun <T> runAutomaticSupportCheck(
+        isUsbUri: Boolean,
+        query: suspend () -> T,
+        unsupported: () -> T
+    ): T = if (isUsbUri) unsupported() else query()
 }

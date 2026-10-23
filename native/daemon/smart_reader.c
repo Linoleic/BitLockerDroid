@@ -1,15 +1,13 @@
 /*
- * smart_reader.c -- High-performance SCSI, ATA SAT, and NVMe-over-SCSI SMART reader.
+ * smart_reader.c -- Conservative SMART reader with bridge-specific NVMe support.
  *
  * Implements:
  * 1. Automatic partition-to-disk resolution via sysfs (/sys/dev/block/M:m)
  * 2. Standard SCSI INQUIRY (0x12)
- * 3. ANSI T10 SAT ATA PASS-THROUGH (16) (0x85) for ATA IDENTIFY (0xEC)
- * 4. Realtek RTL9210 SCSI NVMe Tunnel (0xE4)
- * 5. ASMedia ASM2362/ASM2464 SCSI NVMe Tunnel (0xE6)
- * 6. JMicron JMS583 SCSI NVMe Tunnel (0xDF)
- * 7. ATA SMART READ DATA (0xB0, 0xD0) and SMART RETURN STATUS (0xB0, 0xDA)
- * 8. Standardized JSON output generation
+ * 3. USB bridge allowlisting from the physical sysfs ancestry
+ * 4. Realtek RTL9210 E4 NVMe Identify + SMART log only
+ * 5. ATA SAT SMART on non-USB devices
+ * 6. Standardized JSON output generation
  */
 #define _GNU_SOURCE 1
 #include "smart_reader.h"
@@ -29,6 +27,10 @@
 #include <dirent.h>
 #include <linux/fs.h>
 
+static int sg_response_ok(int status, int host_status, int driver_status, int resid, int data_len) {
+    return status == 0 && host_status == 0 && driver_status == 0 && resid == 0 && data_len >= 0;
+}
+
 static int do_sg_io(int fd, const unsigned char *cdb, int cdb_len,
                     unsigned char *data, int data_len, int dxfer_dir,
                     unsigned char *sense, int sense_len) {
@@ -47,11 +49,163 @@ static int do_sg_io(int fd, const unsigned char *cdb, int cdb_len,
     if (ioctl(fd, SG_IO, &io_hdr) < 0) {
         return -1;
     }
-    if (io_hdr.status != 0) {
+    if (!sg_response_ok(io_hdr.status, io_hdr.host_status, io_hdr.driver_status,
+                        io_hdr.resid, data_len)) {
         return -1;
     }
     return 0;
 }
+
+enum usb_bridge_kind { USB_BRIDGE_NONE = 0, USB_BRIDGE_UNKNOWN = 1, USB_BRIDGE_RTL9210 = 2 };
+static void trim_trailing(char *s);
+
+static int read_hex_id(const char *path, unsigned int *value) {
+    char text[32];
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
+    int ok = fgets(text, sizeof(text), f) != NULL;
+    fclose(f);
+    if (!ok) return -1;
+    char *end = NULL;
+    unsigned long parsed = strtoul(text, &end, 16);
+    if (end == text || parsed > 0xffff) return -1;
+    *value = (unsigned int)parsed;
+    return 0;
+}
+
+/* Walk the resolved block-device ancestry. Vendor and product must come from
+ * the same USB device directory; a nearby unrelated ancestor is not enough. */
+static int detect_usb_ids_from_sysfs(const char *sysfs_path,
+                                     unsigned int *vendor, unsigned int *product) {
+    if (!sysfs_path || !vendor || !product) return USB_BRIDGE_UNKNOWN;
+    char path[PATH_MAX];
+    if (!realpath(sysfs_path, path)) return USB_BRIDGE_UNKNOWN;
+    int saw_usb = 0;
+    for (int depth = 0; depth < 16; depth++) {
+        char vpath[PATH_MAX], ppath[PATH_MAX];
+        if (snprintf(vpath, sizeof(vpath), "%s/idVendor", path) >= (int)sizeof(vpath) ||
+            snprintf(ppath, sizeof(ppath), "%s/idProduct", path) >= (int)sizeof(ppath))
+            return USB_BRIDGE_UNKNOWN;
+        unsigned int vid = 0, pid = 0;
+        int has_vid = read_hex_id(vpath, &vid) == 0;
+        int has_pid = read_hex_id(ppath, &pid) == 0;
+        if (has_vid || has_pid) {
+            saw_usb = 1;
+            if (has_vid && has_pid) {
+                *vendor = vid;
+                *product = pid;
+                return (vid == 0x0bda && pid == 0x9210) ? USB_BRIDGE_RTL9210 : USB_BRIDGE_UNKNOWN;
+            }
+        }
+        char *slash = strrchr(path, '/');
+        if (!slash || slash == path) break;
+        *slash = '\0';
+    }
+    return saw_usb ? USB_BRIDGE_UNKNOWN : USB_BRIDGE_NONE;
+}
+
+static int resolve_block_topology(const char *dev_path, const struct stat *st,
+                                  char *actual_dev, size_t actual_dev_max,
+                                  int *bridge, unsigned int *vendor, unsigned int *product) {
+    if (!dev_path || !st || !actual_dev || actual_dev_max == 0 || !bridge) return -1;
+    snprintf(actual_dev, actual_dev_max, "%s", dev_path);
+    *bridge = USB_BRIDGE_UNKNOWN;
+    if (!S_ISBLK(st->st_mode)) return -1;
+    unsigned int maj = major(st->st_rdev), min = minor(st->st_rdev);
+    char syslink[PATH_MAX], sysreal[PATH_MAX], part_path[PATH_MAX];
+    snprintf(syslink, sizeof(syslink), "/sys/dev/block/%u:%u", maj, min);
+    if (!realpath(syslink, sysreal)) return -1;
+    snprintf(part_path, sizeof(part_path), "%s/partition", sysreal);
+    if (access(part_path, F_OK) == 0) {
+        char *slash = strrchr(sysreal, '/');
+        if (!slash || slash == sysreal) return -1;
+        *slash = '\0';
+    }
+    char *bname = strrchr(sysreal, '/');
+    if (!bname || !bname[1]) return -1;
+    if (snprintf(actual_dev, actual_dev_max, "/dev/block/%s", bname + 1) >= (int)actual_dev_max) return -1;
+    unsigned int vid = 0, pid = 0;
+    *bridge = detect_usb_ids_from_sysfs(sysreal, &vid, &pid);
+    if (vendor) *vendor = vid;
+    if (product) *product = pid;
+    return 0;
+}
+
+static void build_rtl_e4_cdb(unsigned char cdb[16], unsigned int length,
+                             unsigned char opcode, unsigned int cdw10) {
+    memset(cdb, 0, 16);
+    cdb[0] = 0xe4;
+    cdb[1] = (unsigned char)(length & 0xff);
+    cdb[2] = (unsigned char)((length >> 8) & 0xff);
+    cdb[3] = opcode;
+    cdb[4] = (unsigned char)(cdw10 & 0xff);
+}
+
+static int parse_nvme_identity(const unsigned char *id, size_t len,
+                               char *model, size_t model_max,
+                               char *serial, size_t serial_max,
+                               char *firmware, size_t firmware_max) {
+    if (!id || len < 72 || !model || !serial || !firmware || model_max == 0 || serial_max == 0 || firmware_max == 0)
+        return -1;
+    uint16_t vid = (uint16_t)id[0] | ((uint16_t)id[1] << 8);
+    if (vid == 0 || vid == 0xffff) return -1;
+    memcpy(serial, id + 4, serial_max - 1 < 20 ? serial_max - 1 : 20);
+    serial[(serial_max - 1 < 20 ? serial_max - 1 : 20)] = '\0';
+    memcpy(model, id + 24, model_max - 1 < 40 ? model_max - 1 : 40);
+    model[(model_max - 1 < 40 ? model_max - 1 : 40)] = '\0';
+    memcpy(firmware, id + 64, firmware_max - 1 < 8 ? firmware_max - 1 : 8);
+    firmware[(firmware_max - 1 < 8 ? firmware_max - 1 : 8)] = '\0';
+    trim_trailing(serial);
+    trim_trailing(model);
+    trim_trailing(firmware);
+    for (char *p = serial; *p; p++) if ((unsigned char)*p < 32 || (unsigned char)*p > 126) *p = ' ';
+    for (char *p = model; *p; p++) if ((unsigned char)*p < 32 || (unsigned char)*p > 126) *p = ' ';
+    for (char *p = firmware; *p; p++) if ((unsigned char)*p < 32 || (unsigned char)*p > 126) *p = ' ';
+    trim_trailing(serial); trim_trailing(model); trim_trailing(firmware);
+    return model[0] && serial[0] ? 0 : -1;
+}
+
+static int validate_nvme_smart_log(const unsigned char *page, size_t len) {
+    if (!page || len != 512) return -1;
+    int all_zero = 1, all_ff = 1;
+    for (size_t i = 0; i < len; i++) {
+        if (page[i] != 0) all_zero = 0;
+        if (page[i] != 0xff) all_ff = 0;
+    }
+    if (all_zero || all_ff) return -1;
+    /* NVMe SMART/Health Information: bits 6..7 are reserved. */
+    if ((page[0] & 0xc0) != 0) return -1;
+    if (page[3] > 100 || page[4] > 100) return -1;
+    /* Zero means temperature unavailable. Otherwise require a plausible
+     * Kelvin value; 200..500 K covers normal device operating conditions. */
+    unsigned int kelvin = (unsigned int)page[1] | ((unsigned int)page[2] << 8);
+    if (kelvin != 0 && (kelvin < 200 || kelvin > 500)) return -1;
+    /* Percent Used is intentionally not capped: NVMe allows it to exceed 100. */
+    return 0;
+}
+
+#ifdef SMART_READER_TEST
+int smart_test_detect_usb_ids(const char *sysfs_path, unsigned int *vendor, unsigned int *product) {
+    return detect_usb_ids_from_sysfs(sysfs_path, vendor, product);
+}
+void smart_test_build_rtl_e4_cdb(unsigned char cdb[16], unsigned int length,
+                                 unsigned char opcode, unsigned int cdw10) {
+    build_rtl_e4_cdb(cdb, length, opcode, cdw10);
+}
+int smart_test_parse_nvme_identity(const unsigned char *id, size_t len,
+                                   char *model, size_t model_max,
+                                   char *serial, size_t serial_max,
+                                   char *firmware, size_t firmware_max) {
+    return parse_nvme_identity(id, len, model, model_max, serial, serial_max, firmware, firmware_max);
+}
+int smart_test_validate_nvme_smart_log(const unsigned char *page, size_t len) {
+    return validate_nvme_smart_log(page, len);
+}
+int smart_test_sg_response_ok(int status, int host_status, int driver_status,
+                              int resid, int data_len) {
+    return sg_response_ok(status, host_status, driver_status, resid, data_len);
+}
+#endif
 
 static void trim_trailing(char *s) {
     if (!s) return;
@@ -85,34 +239,12 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
     }
 
     char actual_dev[256];
-    strncpy(actual_dev, dev_path, sizeof(actual_dev) - 1);
-    actual_dev[sizeof(actual_dev) - 1] = '\0';
-
-    if (S_ISBLK(st.st_mode)) {
-        unsigned int maj = major(st.st_rdev);
-        unsigned int min = minor(st.st_rdev);
-        char part_path[256];
-        snprintf(part_path, sizeof(part_path), "/sys/dev/block/%u:%u/partition", maj, min);
-        if (access(part_path, F_OK) == 0) {
-            char parent_dev_path[256];
-            snprintf(parent_dev_path, sizeof(parent_dev_path), "/sys/dev/block/%u:%u/../dev", maj, min);
-            FILE *f = fopen(parent_dev_path, "r");
-            if (f) {
-                unsigned int pmaj = 0, pmin = 0;
-                if (fscanf(f, "%u:%u", &pmaj, &pmin) == 2) {
-                    char link_buf[256];
-                    snprintf(link_buf, sizeof(link_buf), "/sys/dev/block/%u:%u", pmaj, pmin);
-                    char real_path[PATH_MAX];
-                    if (realpath(link_buf, real_path)) {
-                        char *bname = strrchr(real_path, '/');
-                        if (bname) {
-                            snprintf(actual_dev, sizeof(actual_dev), "/dev/block/%s", bname + 1);
-                        }
-                    }
-                }
-                fclose(f);
-            }
-        }
+    int bridge = USB_BRIDGE_UNKNOWN;
+    unsigned int usb_vendor = 0, usb_product = 0;
+    if (resolve_block_topology(dev_path, &st, actual_dev, sizeof(actual_dev),
+                               &bridge, &usb_vendor, &usb_product) != 0) {
+        snprintf(json, json_max, "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"reason\":\"Cannot resolve physical block-device USB ancestry safely.\"}");
+        return 0;
     }
 
     int fd = open(actual_dev, O_RDWR | O_LARGEFILE | O_CLOEXEC);
@@ -144,7 +276,51 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         trim_trailing(rev);
     }
 
-    // 2. SAT ATA IDENTIFY (0xEC)
+    unsigned char nvme_smart[512];
+    memset(nvme_smart, 0, sizeof(nvme_smart));
+    /* USB command policy is based on the resolved physical USB ancestor.
+     * Unknown bridges receive no SAT or vendor-specific commands. */
+    if (bridge == USB_BRIDGE_UNKNOWN) {
+        close(fd);
+        snprintf(json, json_max,
+            "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"disk_type\":\"USB Storage\",\"reason\":\"SMART passthrough is disabled for unrecognized USB bridges.\"}");
+        return 0;
+    }
+
+    if (bridge == USB_BRIDGE_RTL9210) {
+        unsigned char id_cdb[16], identify[4096];
+        memset(identify, 0, sizeof(identify));
+        build_rtl_e4_cdb(id_cdb, sizeof(identify), 0x06, 0x01);
+        memset(sense, 0, sizeof(sense));
+        if (do_sg_io(fd, id_cdb, sizeof(id_cdb), identify, sizeof(identify),
+                     SG_DXFER_FROM_DEV, sense, sizeof(sense)) != 0 ||
+            parse_nvme_identity(identify, sizeof(identify), model, sizeof(model),
+                                serial, sizeof(serial), firmware, sizeof(firmware)) != 0) {
+            close(fd);
+            snprintf(json, json_max,
+                "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"reason\":\"RTL9210 NVMe Identify failed validation; no fallback bridge commands were sent.\"}");
+            return 0;
+        }
+        unsigned char log_cdb[16];
+        build_rtl_e4_cdb(log_cdb, sizeof(nvme_smart), 0x02, 0x02);
+        memset(sense, 0, sizeof(sense));
+        if (do_sg_io(fd, log_cdb, sizeof(log_cdb), nvme_smart, sizeof(nvme_smart),
+                     SG_DXFER_FROM_DEV, sense, sizeof(sense)) != 0) {
+            close(fd);
+            snprintf(json, json_max,
+                "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"reason\":\"RTL9210 NVMe SMART log transfer failed; no fallback bridge commands were sent.\"}");
+            return 0;
+        }
+        if (validate_nvme_smart_log(nvme_smart, sizeof(nvme_smart)) != 0) {
+            close(fd);
+            snprintf(json, json_max,
+                "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"reason\":\"RTL9210 returned an invalid NVMe SMART log; telemetry was not accepted.\"}");
+            return 0;
+        }
+        is_nvme = 1;
+        disk_type = "NVMe SSD";
+    } else {
+    // 2. SAT ATA IDENTIFY (0xEC), retained only for confirmed non-USB paths.
     unsigned char ata_id_cdb[16];
     memset(ata_id_cdb, 0, sizeof(ata_id_cdb));
     ata_id_cdb[0] = 0x85;
@@ -181,52 +357,6 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         }
     }
 
-    unsigned char nvme_smart[512];
-    memset(nvme_smart, 0, sizeof(nvme_smart));
-
-    // 3. Try Realtek RTL9210 NVMe Tunnel (0xE4)
-    unsigned char rtk_cdb[16];
-    memset(rtk_cdb, 0, sizeof(rtk_cdb));
-    rtk_cdb[0] = 0xE4;
-    rtk_cdb[1] = 0x00;
-    rtk_cdb[2] = 0x02; // 512 bytes
-    rtk_cdb[3] = 0x02; // NVMe Admin Get Log Page
-    rtk_cdb[4] = 0x02; // LID 0x02: SMART / Health Info
-    memset(sense, 0, sizeof(sense));
-    if (do_sg_io(fd, rtk_cdb, 16, nvme_smart, 512, SG_DXFER_FROM_DEV, sense, sizeof(sense)) == 0) {
-        is_nvme = 1;
-        disk_type = "NVMe SSD";
-    }
-
-    // 4. Try ASMedia ASM2362/ASM2464 NVMe Tunnel (0xE6) if not already found
-    if (!is_nvme) {
-        unsigned char asm_cdb[16];
-        memset(asm_cdb, 0, sizeof(asm_cdb));
-        asm_cdb[0] = 0xE6;
-        asm_cdb[1] = 0x02; // Get Log Page
-        asm_cdb[3] = 0x02; // LID 0x02
-        memset(sense, 0, sizeof(sense));
-        if (do_sg_io(fd, asm_cdb, 16, nvme_smart, 512, SG_DXFER_FROM_DEV, sense, sizeof(sense)) == 0) {
-            is_nvme = 1;
-            disk_type = "NVMe SSD";
-        }
-    }
-
-    // 5. Try JMicron JMS583 NVMe Tunnel (0xDF) if not already found
-    if (!is_nvme) {
-        unsigned char jms_cdb[16];
-        memset(jms_cdb, 0, sizeof(jms_cdb));
-        jms_cdb[0] = 0xDF;
-        jms_cdb[1] = 0x10;
-        jms_cdb[2] = 0x02;
-        jms_cdb[6] = 0x02;
-        jms_cdb[8] = 0x02;
-        jms_cdb[10] = 0x7F;
-        memset(sense, 0, sizeof(sense));
-        if (do_sg_io(fd, jms_cdb, 16, nvme_smart, 512, SG_DXFER_FROM_DEV, sense, sizeof(sense)) == 0) {
-            is_nvme = 1;
-            disk_type = "NVMe SSD";
-        }
     }
 
     if (is_nvme) {

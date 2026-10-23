@@ -527,4 +527,9 @@
     <string name="saved_credential_unlock_button">Use Saved Credential</string>
     <string name="saved_credential_quick_unlock_banner">A saved credential is available for this volume.</string>
     <string name="unlock_target_changed">The connected volume changed. Open the unlock dialog again.</string>
+    <string name="smart_usb_unavailable">USB connection is unavailable. Reconnect and authorize the device, then try again.</string>
+    <string name="smart_usb_unverified">This USB bridge has no verified SMART query route. No probe commands were sent.</string>
+    <string name="smart_usb_close_volumes">Safely close this device’s unlocked volumes before querying its health, then try again.</string>
+    <string name="smart_query_retry">The health query failed, but the USB connection recovered. SMART support is unconfirmed; you can retry.</string>
+    <string name="smart_status_unconfirmed">SMART support unconfirmed</string>
 </resources>

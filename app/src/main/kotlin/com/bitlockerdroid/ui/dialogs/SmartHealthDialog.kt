@@ -163,6 +163,11 @@ fun SmartHealthDialog(
                                 MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            SmartOverallStatus.UNCONFIRMED -> Triple(
+                                stringResource(R.string.smart_status_unconfirmed),
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
 
                         Box(

@@ -4,7 +4,8 @@ enum class SmartOverallStatus {
     HEALTHY,    // Normal/Good health
     WARNING,    // Caution/Threshold near warning
     CRITICAL,   // Failing/Threshold exceeded
-    UNSUPPORTED // Controller lacks ATA/NVMe telemetry
+    UNSUPPORTED, // Controller lacks ATA/NVMe telemetry
+    UNCONFIRMED // No valid telemetry result yet, including busy/unverified connections
 }
 
 data class SmartHealthInfo(
@@ -264,6 +265,10 @@ data class SmartHealthInfo(
     }
 
     companion object {
+        fun unconfirmed(vendor: String? = null, product: String? = null, node: String? = null, reason: String? = null) =
+            SmartHealthInfo(isSupported = false, status = SmartOverallStatus.UNCONFIRMED,
+                diskType = "Unknown", vendor = vendor, product = product, deviceNode = node, reason = reason)
+
         fun unsupported(vendor: String? = null, product: String? = null, node: String? = null, reason: String? = null): SmartHealthInfo {
             return SmartHealthInfo(
                 isSupported = false,

@@ -16,6 +16,7 @@ object SmartDataParser {
                 "HEALTHY" -> SmartOverallStatus.HEALTHY
                 "WARNING" -> SmartOverallStatus.WARNING
                 "CRITICAL" -> SmartOverallStatus.CRITICAL
+                "UNCONFIRMED" -> SmartOverallStatus.UNCONFIRMED
                 else -> SmartOverallStatus.UNSUPPORTED
             }
 

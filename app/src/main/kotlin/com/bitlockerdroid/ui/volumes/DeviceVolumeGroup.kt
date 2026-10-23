@@ -120,6 +120,8 @@ object DeviceGroupBuilder {
                     totalCapacityBytes = totalCapacity,
                     vendor = devInfo.vendor,
                     model = devInfo.model,
+                    usbDeviceId = diskNode.takeIf { it.startsWith("usb://") }
+                        ?.removePrefix("usb://")?.substringBefore('/')?.toIntOrNull(),
                     unlockedVolumes = holder.unlocked.toList(),
                     detectedVolumes = holder.detected.toList(),
                     unencryptedVolumes = holder.unencrypted.toList()

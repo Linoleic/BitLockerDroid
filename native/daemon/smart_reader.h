@@ -8,8 +8,9 @@ extern "C" {
 #endif
 
 /**
- * Queries SCSI, ATA SAT, and NVMe-over-SCSI SMART telemetry for a block device.
- * Automatically resolves partition device nodes to parent physical disk nodes.
+ * Queries SMART telemetry using a conservative transport policy. Only the
+ * allowlisted Realtek RTL9210 USB bridge receives vendor-specific E4 commands;
+ * unknown USB bridges are reported unsupported. Non-USB devices retain SAT.
  *
  * @param dev_path Device node path (e.g., "/dev/block/sdg", "/dev/block/sdg1", "/dev/block/vold/public:8,101")
  * @param json Destination buffer for JSON output
@@ -31,6 +32,20 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max);
  * @return 0 on success, negative errno on failure
  */
 int scsi_spindown_device(const char *dev_path);
+
+#ifdef SMART_READER_TEST
+/* Pure helper hooks used by native/tests/smart_reader_test.c. */
+int smart_test_detect_usb_ids(const char *sysfs_path, unsigned int *vendor, unsigned int *product);
+void smart_test_build_rtl_e4_cdb(unsigned char cdb[16], unsigned int length,
+                                 unsigned char opcode, unsigned int cdw10);
+int smart_test_parse_nvme_identity(const unsigned char *id, size_t len,
+                                   char *model, size_t model_max,
+                                   char *serial, size_t serial_max,
+                                   char *firmware, size_t firmware_max);
+int smart_test_validate_nvme_smart_log(const unsigned char *page, size_t len);
+int smart_test_sg_response_ok(int status, int host_status, int driver_status,
+                              int resid, int data_len);
+#endif
 
 #ifdef __cplusplus
 }
