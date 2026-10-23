@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### 新增
 
-- 主页和设置统一连接与授权入口，支持模式选择、授权检测和 USB 授权。
+- 主页统一连接与授权入口，支持模式选择、授权检测和 USB 授权。
 
 #### 变更
 
@@ -21,7 +21,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - SMART 查询按已验证桥接芯片选择协议；RTL9210 需通过控制器标识和日志校验，未知 USB 不发送专用探测命令。
 - 免 Root 主页仅识别可查询设备；安全关闭卷后，才可手动查询 SMART，避免干扰解锁和读写。
 - SMART 区分“尚未确认支持”和“不支持”，避免将设备占用或查询失败误报为硬件不支持。
-- Root 环境详情与通知屏蔽保留在高级设置；模式切换仍沿用安全关闭后再重启流程。
 
 #### 安全
 
@@ -31,6 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### 修复
 
+- 免 Root 写入实际完成后才返回成功，写盘失败后不再复用异常通道。
+- 修复 Root 扫描时因分区路径别名变化而误关已解锁卷的问题。
 - 修复已验证 RTL9210 PSSD 从免 Root 切到 Root 时识别超时的问题；安全同步并关闭卷后再交回内核驱动。
 - 切换模式时暂停扫描和新解锁，等待正在进行的操作结束后再安全关闭卷。
 - 调试解锁接口未指定保存选项时不再删除已有凭据；自动和快捷解锁保留原保存项，快捷解锁成功后正常提示。
@@ -46,11 +47,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - 重复解锁已打开的卷时复用现有会话，避免误关 USB 通道、导致读取或安全关闭失败。
 - 写入未完成、刷盘失败或虚拟挂载未退出时，停止弹出和模式切换并提示原因；等待写入超时时保留卷会话。
 
+#### 移除
+
+- 移除免 Root USB 异步写入开关。
+
 ### English
 
 #### Added
 
-- Unify connection and authorization entry points on the home screen and in settings, with mode selection, authorization checks, and USB access requests.
+- Unify connection and authorization on the home screen, with mode selection, authorization checks, and USB access requests.
 
 #### Changed
 
@@ -59,7 +64,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Select SMART protocols by verified bridge identity. Validate RTL9210 controller identity and logs; do not send vendor probes to unknown USB devices.
 - Offer non-root SMART queries only after volumes are safely closed. Home discovery only identifies candidate devices without issuing probe commands.
 - Distinguish unconfirmed SMART support from unsupported hardware when a device is busy or a query fails.
-- Keep root environment details and notification suppression in advanced settings; mode switching still follows the safe-close-and-restart flow.
 
 #### Security
 
@@ -69,6 +73,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### Fixed
 
+- Acknowledge non-root writes only after completion and stop reusing a failed I/O channel.
+- Keep unlocked Root volumes open when vold publishes an alias for the same USB partition.
 - Fix detection timeouts when handing a verified RTL9210 PSSD from non-root mode back to the kernel, after safely flushing and closing its volumes.
 - Pause scans and new unlocks during mode switching, and wait for ongoing operations before safely closing volumes.
 - Preserve saved credentials when debug unlock calls omit the save option. Automatic and quick unlocks keep existing entries, and quick unlocks show success feedback.
@@ -83,6 +89,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Explicitly select the USB BOT interface in non-root mode instead of retaining UAS after switching from root mode.
 - Reuse live sessions for duplicate unlock requests instead of closing their USB workers and breaking reads or safe closure.
 - Stop ejects and mode switches if writes are unfinished, flushing fails, or a virtual mount has not exited. Show the cause and keep the volume session open on write timeout.
+
+#### Removed
+
+- Remove the non-root USB async write toggle.
 
 ## [v1.1.1] - 2026-10-22
 
