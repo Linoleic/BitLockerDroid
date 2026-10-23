@@ -144,6 +144,8 @@ adb shell content call --uri content://com.bitlockerdroid.provider \
   - 成功：`{success=true, guid=<GUID>}`
   - 失败：`{success=false, error=<错误详情>}`
 
+- **凭据保存**：不传 `remember` 时保持该卷已有凭据和设置；显式传 `true` 才保存，显式传 `false` 则在解锁成功后忘记该卷凭据。失败的解锁不会修改保存项。
+
 ### 3.3 锁定与卸载卷 (`lock_volume`)
 安全刷盘并关闭加密驱动会话，注销 SAF 根目录。
 

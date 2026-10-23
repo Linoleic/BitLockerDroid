@@ -387,13 +387,13 @@ object UnlockManager {
         sessions[devicePath]?.volumeGuid ?: detected[devicePath]?.guid
     }
 
-    /** Called by the unlock dialog with the user credential. */
+    /** Null [remember] preserves saved credentials; explicit false forgets them after a successful unlock. */
     fun unlockWithPassword(
         context: Context,
         devicePath: String,
         offset: Long,
         password: String,
-        remember: Boolean,
+        remember: Boolean?,
         expectedGuid: String? = null
     ): Result<DislockerCore> {
         return unlockWithCredential(
@@ -413,7 +413,7 @@ object UnlockManager {
         devicePath: String,
         offset: Long,
         recoveryKey: String,
-        remember: Boolean,
+        remember: Boolean?,
         expectedGuid: String? = null
     ): Result<DislockerCore> {
         return unlockWithCredential(
@@ -434,7 +434,7 @@ object UnlockManager {
         offset: Long,
         credential: String,
         isRecovery: Boolean,
-        remember: Boolean,
+        remember: Boolean?,
         expectedGuid: String? = null
     ): Result<DislockerCore> {
         return synchronized(getParentDiskLock(com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(devicePath))) {
@@ -444,7 +444,7 @@ object UnlockManager {
 
     private fun unlockWithCredentialLocked(
         context: Context, devicePath: String, offset: Long, credential: String,
-        isRecovery: Boolean, remember: Boolean, expectedGuid: String?
+        isRecovery: Boolean, remember: Boolean?, expectedGuid: String?
     ): Result<DislockerCore> {
         return try {
             if (devicePath.startsWith("/dev/block/") && !expectedGuid.isNullOrBlank() &&
@@ -503,19 +503,20 @@ object UnlockManager {
             // Save session credentials in memory for the duration of this session
             sessionCredentials[devicePath] = Pair(credential, isRecovery)
 
-            // Persist only according to the user's existing remember choice.
+            // Only an explicit persistence choice may save or forget a credential.
+            // Saved-credential unlocks and provider calls without a choice preserve it.
             if (!effectiveGuid.isNullOrBlank()) {
-                if (remember) {
+                SavedCredentialPersistence.update(remember, save = {
                     val rawStored = if (isRecovery) "$RECOVERY_PREFIX$credential" else credential
                     KeyGuardService.encrypt(rawStored)?.let { blob ->
                         val friendly = core.volumeLabel.ifBlank {
                             com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath, forceRefresh = true).friendlyName
                         }
-                        PreferenceHelper.saveRememberedPassword(context, effectiveGuid, blob, friendlyName = friendly)
+                        PreferenceHelper.saveRememberedPassword(context, effectiveGuid, blob, friendlyName = friendly, isRecoveryKey = isRecovery)
                     }
-                } else {
+                }, forget = {
                     PreferenceHelper.clearRememberedPassword(context, effectiveGuid)
-                }
+                })
             } else {
                 LogFile.write("app", "unlockWithCredential: no volume GUID found for $devicePath, skipping credential persistence")
             }
@@ -592,7 +593,7 @@ object UnlockManager {
                 )) return@synchronized null
             val isRecovery = raw.startsWith(RECOVERY_PREFIX)
             val cleanKey = if (isRecovery) raw.removePrefix(RECOVERY_PREFIX) else raw
-            unlockWithCredentialLocked(context, devicePath, offset, cleanKey, isRecovery, true, volId).getOrNull()
+            unlockWithCredentialLocked(context, devicePath, offset, cleanKey, isRecovery, null, volId).getOrNull()
         }
     }
 

@@ -281,7 +281,8 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             val dev = arg ?: extras?.getString("device_path") ?: return null
             val password = extras?.getString("password")
             val recoveryKey = extras?.getString("recovery_key")
-            val remember = extras?.getBoolean("remember", false) ?: false
+            // Omitting this option must not erase an already saved credential.
+            val remember = extras?.takeIf { it.containsKey("remember") }?.getBoolean("remember")
             val offset = extras?.getLong("offset", 0L) ?: 0L
             val out = Bundle()
             val res = if (!recoveryKey.isNullOrBlank()) {

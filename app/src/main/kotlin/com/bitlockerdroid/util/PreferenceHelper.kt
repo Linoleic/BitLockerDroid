@@ -37,13 +37,15 @@ object PreferenceHelper {
         context: Context,
         volumeGuid: String?,
         encryptedBlob: String,
-        friendlyName: String? = null
+        friendlyName: String? = null,
+        isRecoveryKey: Boolean = false
     ) {
         if (isInvalidGuid(volumeGuid)) {
             return
         }
         val editor = prefs(context).edit()
         editor.putString("remembered_vol_$volumeGuid", encryptedBlob)
+        editor.putBoolean("credential_recovery_vol_$volumeGuid", isRecoveryKey)
         if (!friendlyName.isNullOrBlank()) {
             editor.putString("name_vol_$volumeGuid", friendlyName)
         }
@@ -84,6 +86,7 @@ object PreferenceHelper {
         val editor = prefs(context).edit()
         editor.remove("remembered_vol_$volumeGuid")
         editor.remove("remembered_$volumeGuid")
+        editor.remove("credential_recovery_vol_$volumeGuid")
         editor.remove("name_vol_$volumeGuid")
         editor.remove("name_$volumeGuid")
         editor.remove("autounlock_vol_$volumeGuid")
@@ -146,7 +149,14 @@ object PreferenceHelper {
                 }
 
                 // Listing credentials must never decrypt a protected secret just to label its type.
-                val credType = context.getString(R.string.creds_type_saved)
+                val typeKey = "credential_recovery_vol_$id"
+                val knownType = p.contains(typeKey)
+                val isRecovery = p.getBoolean(typeKey, false)
+                val credType = when {
+                    !knownType -> context.getString(R.string.creds_type_saved)
+                    isRecovery -> context.getString(R.string.creds_type_recovery)
+                    else -> context.getString(R.string.creds_type_password)
+                }
                 val subtitle = if (isGuid) {
                     context.getString(R.string.creds_subtitle_guid, shortGuid, credType)
                 } else {
@@ -159,7 +169,7 @@ object PreferenceHelper {
                     displayLabel = displayLabel,
                     subtitle = subtitle,
                     autoUnlock = autoUnlock,
-                    isRecoveryKey = false
+                    isRecoveryKey = isRecovery
                 )
             }
     }
@@ -173,7 +183,7 @@ object PreferenceHelper {
     fun clearAllRememberedPasswords(context: Context) {
         val editor = prefs(context).edit()
         for (key in prefs(context).all.keys) {
-            if (key.startsWith("remembered_") || key.startsWith("name_") || key.startsWith("autounlock_")) {
+            if (key.startsWith("remembered_") || key.startsWith("name_") || key.startsWith("autounlock_") || key.startsWith("credential_recovery_vol_")) {
                 editor.remove(key)
             }
         }

@@ -526,7 +526,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
                         0L,
                         cleanKey,
                         isRecovery,
-                        remember = true,
+                        remember = null,
                         expectedGuid = targetGuid
                     )
                     withContext(Dispatchers.Main) {
