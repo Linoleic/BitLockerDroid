@@ -119,18 +119,14 @@ object BitLockerDetector {
     /** Lists partition nodes under /dev/block/vold and USB SCSI nodes as root. */
     fun enumerateVoldNodes(): List<String> {
         val out = LinkedHashSet<String>()
-        val publicMinors = HashSet<String>()
+        val usbNodes = mutableListOf<Pair<String, String?>>()
 
-        // 1. Prefer public:* partition nodes (BitLocker headers live there).
+        // 1. Retain public partition nodes for devices without a USB kernel path.
         val public = RootAccess.exec("ls -d /dev/block/vold/public:* 2>/dev/null")
         public?.second?.lines()?.forEach { line ->
             val l = line.trim()
             if (l.isNotEmpty()) {
                 out.add(l)
-                val minorPart = l.substringAfter("public:", "").replace(',', ':')
-                if (minorPart.isNotEmpty()) {
-                    publicMinors.add(minorPart)
-                }
             }
         }
 
@@ -155,14 +151,16 @@ object BitLockerDetector {
                 if (parts.isNotEmpty() && parts[0].isNotEmpty()) {
                     val nodePath = parts[0]
                     val majMin = parts.getOrNull(1)
-                    if (majMin != null && publicMinors.contains(majMin)) {
-                        // Node is already represented by /dev/block/vold/public:... -> skip alias
-                        return@forEach
-                    }
-                    out.add(nodePath)
+                    usbNodes.add(nodePath to majMin)
                 }
             }
         } catch (_: Throwable) {}
+
+        // vold aliases can appear after auto-unlock starts. Always keep the kernel
+        // path for USB partitions so a later scan does not close healthy sessions.
+        val stableNodes = RootBlockNodes.merge(out.toList(), usbNodes)
+        out.clear()
+        out.addAll(stableNodes)
 
         // Only fall back to disk:* nodes if NO partition nodes exist
         // (rare whole-disk encryption without partition table).
