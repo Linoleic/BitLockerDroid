@@ -42,6 +42,11 @@ object StorageNotificationSuppressor {
     }
 
     private fun suppressActive(listener: BitLockerNotificationListener, onlyTag: String? = null) {
+        // Metadata reads must drain before a mode switch releases the kernel driver.
+        ProcessSessionTransition.gate.admit { suppressActiveAdmitted(listener, onlyTag) }
+    }
+
+    private fun suppressActiveAdmitted(listener: BitLockerNotificationListener, onlyTag: String?) {
         try {
             if (!enabled(listener) || !RootAccess.hasSu()) return
             val states = RootAccess.exec("sm list-volumes public 2>/dev/null")

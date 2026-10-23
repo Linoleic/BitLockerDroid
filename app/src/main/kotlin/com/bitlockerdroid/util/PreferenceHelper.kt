@@ -336,16 +336,8 @@ object PreferenceHelper {
         get() = try { prefs(ContextProvider.app).getBoolean("notifications_enabled", true) } catch (_: Exception) { true }
         set(v) = try { prefs(ContextProvider.app).edit().putBoolean("notifications_enabled", v).apply() } catch (_: Exception) {}
 
-    fun isSuppressCorruptNotification(context: Context): Boolean =
-        prefs(context).getBoolean("suppress_corrupt_notification", false)
-
-    fun setSuppressCorruptNotification(context: Context, enabled: Boolean) {
-        prefs(context).edit().putBoolean("suppress_corrupt_notification", enabled).apply()
-    }
-
-    var suppressCorruptNotification: Boolean
-        get() = try { prefs(ContextProvider.app).getBoolean("suppress_corrupt_notification", false) } catch (_: Exception) { false }
-        set(v) = try { prefs(ContextProvider.app).edit().putBoolean("suppress_corrupt_notification", v).apply() } catch (_: Exception) {}
+    /** The narrowly scoped repair-prompt filter is automatic only in Root mode. */
+    fun isSuppressCorruptNotification(context: Context): Boolean = isUseRootAccess(context)
 
     fun isHideSviFolder(context: Context): Boolean =
         prefs(context).getBoolean("hide_svi_folder", true)

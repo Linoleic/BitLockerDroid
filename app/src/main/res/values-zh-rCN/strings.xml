@@ -87,8 +87,6 @@
     <string name="settings_about_desc">Android 原生 BitLocker 卷管理工具，支持 NTFS、FAT32 与 exFAT 分区解锁与文件透明读写访问。</string>
     <string name="about_title">关于</string>
     <string name="notification_listener_label">BitUnlocker 驱动器通知过滤服务</string>
-    <string name="settings_suppress_corrupt_notification">屏蔽系统格式化提示</string>
-    <string name="settings_suppress_corrupt_notification_desc">自动忽略系统对 BitLocker 盘误报的格式化或修复提示</string>
     <string name="settings_hide_svi">隐藏系统元数据文件夹 (SVI)</string>
     <string name="settings_hide_svi_desc">在文件管理器中隐藏 Windows 自动生成的 SVI 目录</string>
     <string name="safe_eject">安全弹出</string>
@@ -552,6 +550,5 @@
     <string name="connection_mode_root_desc">使用 su 权限访问磁盘。</string>
     <string name="connection_mode_usb_desc">使用 USB Host 授权访问磁盘，无需 Root。</string>
     <string name="connection_permission_label">授权状态</string>
-    <string name="connection_root_advanced">Root 高级选项</string>
-    <string name="connection_root_advanced_desc">查看 Root 环境详情并管理专用选项。</string>
+    <string name="connection_root_warning_filter">自动隐藏已确认 BitLocker 卷的系统修复提示，其他通知保持正常。</string>
 </resources>

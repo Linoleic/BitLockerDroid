@@ -87,8 +87,6 @@
     <string name="settings_about_desc">Native BitLocker volume manager for Android, supporting NTFS, FAT32, and exFAT partitions with transparent file read and write access</string>
     <string name="about_title">About</string>
     <string name="notification_listener_label">BitUnlocker Drive Notification Filter</string>
-    <string name="settings_suppress_corrupt_notification">Suppress System Format Prompts</string>
-    <string name="settings_suppress_corrupt_notification_desc">Automatically dismiss Android system format warnings for BitLocker disks</string>
     <string name="settings_hide_svi">Hide System Metadata Folder (SVI)</string>
     <string name="settings_hide_svi_desc">Hide Windows-generated SVI folders in the file manager</string>
     <string name="safe_eject">Safe Eject</string>
@@ -554,6 +552,5 @@
     <string name="connection_mode_root_desc">Access disks using su privileges.</string>
     <string name="connection_mode_usb_desc">Access disks through USB Host authorization, without root.</string>
     <string name="connection_permission_label">Authorization status</string>
-    <string name="connection_root_advanced">Root advanced options</string>
-    <string name="connection_root_advanced_desc">View root environment details and manage dedicated options.</string>
+    <string name="connection_root_warning_filter">Automatically hide repair prompts for verified BitLocker volumes. Other notifications remain available.</string>
 </resources>

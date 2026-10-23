@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### 变更
 
+- Root 环境合入主页“连接与授权”，移除设置中的重复入口；精确过滤系统修复提示在 Root 模式自动启用，不再提供开关。
 - 免 Root USB 读写改为每次最多 16 KB 的同步传输，停用多请求并行传输。
 - SMART 查询按已验证桥接芯片选择协议；RTL9210 需通过控制器标识和日志校验，未知 USB 不发送专用探测命令。
 - 免 Root 主页仅识别可查询设备；安全关闭卷后，才可手动查询 SMART，避免干扰解锁和读写。
@@ -53,6 +54,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### Changed
 
+- Move Root environment details into the home connection panel, remove duplicate settings entries, and automatically filter verified repair prompts in Root mode without a toggle.
 - Use synchronous USB transfers of up to 16 KB in non-root mode, replacing multiple queued requests.
 - Select SMART protocols by verified bridge identity. Validate RTL9210 controller identity and logs; do not send vendor probes to unknown USB devices.
 - Offer non-root SMART queries only after volumes are safely closed. Home discovery only identifies candidate devices without issuing probe commands.

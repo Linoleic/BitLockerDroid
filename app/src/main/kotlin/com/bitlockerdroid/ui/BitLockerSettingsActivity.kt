@@ -32,8 +32,6 @@ import com.bitlockerdroid.service.UnencryptedVolume
 import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.service.UnlockedVolume
 import com.bitlockerdroid.service.VirtualStorageMountManager
-import com.bitlockerdroid.service.StorageNotificationSuppressor
-import com.bitlockerdroid.ui.dialogs.RootControlDialog
 import com.bitlockerdroid.ui.dialogs.ConnectionAuthorizationDialog
 import com.bitlockerdroid.ui.dialogs.HardwareAccelerationDialog
 import com.bitlockerdroid.ui.dialogs.PerformanceOptimizationDialog
@@ -80,9 +78,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
     private var useSafDoubleBufferState = mutableStateOf(PreferenceHelper.useSafDoubleBuffer)
     private var showHardwareAccelerationDialogState = mutableStateOf(false)
     private var virtualMountState = mutableStateOf(false)
-    private var suppressCorruptNotificationState = mutableStateOf(false)
     private var rootSolutionState = mutableStateOf(RootAccess.RootSolutionInfo(hasRoot = false, isDeviceRooted = false, solutionName = "", version = null, summary = ""))
-    private var showRootControlDialogState = mutableStateOf(false)
     private var showSystemDiagnosticsDialogState = mutableStateOf(false)
     private var pendingRootSwitchTargetState = mutableStateOf<Boolean?>(null)
     private var isSwitchingModeProcessingState = mutableStateOf(false)
@@ -166,17 +162,6 @@ class BitLockerSettingsActivity : FragmentActivity() {
             pendingRootSwitchTargetState.value = null
         }
     }
-    private val onSuppressCorruptNotificationChangeAction: (Boolean) -> Unit = { enabled ->
-        suppressCorruptNotificationState.value = enabled
-        PreferenceHelper.setSuppressCorruptNotification(this, enabled)
-        if (enabled) {
-            Thread {
-                StorageNotificationSuppressor.ensureListenerEnabled()
-            }.start()
-        }
-    }
-    private val onOpenRootControlAction: () -> Unit = { showRootControlDialogState.value = true }
-    private val onCloseRootControlAction: () -> Unit = { showRootControlDialogState.value = false }
     private val onOpenSystemDiagnosticsAction: () -> Unit = { showSystemDiagnosticsDialogState.value = true }
     private val onCloseSystemDiagnosticsAction: () -> Unit = { showSystemDiagnosticsDialogState.value = false }
     private val onRefreshAndScanAction: () -> Unit = { refreshAndScan(showToast = true) }
@@ -259,9 +244,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
             val useSafDoubleBuffer by useSafDoubleBufferState
             val showHardwareAccelerationDialog by showHardwareAccelerationDialogState
             val rootSolution by rootSolutionState
-            val showRootControlDialog by showRootControlDialogState
             val showSystemDiagnosticsDialog by showSystemDiagnosticsDialogState
-            val suppressCorruptNotification by suppressCorruptNotificationState
             val pendingRootSwitchTarget by pendingRootSwitchTargetState
             val isSwitchingModeProcessing by isSwitchingModeProcessingState
 
@@ -286,9 +269,8 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     useSafDoubleBuffer = useSafDoubleBuffer,
                     showHardwareAccelerationDialog = showHardwareAccelerationDialog,
                     rootSolution = rootSolution,
-                    showRootControlDialog = showRootControlDialog,
+                    onRefreshRootEnvironment = { refreshRootSolution(force = true) },
                     showSystemDiagnosticsDialog = showSystemDiagnosticsDialog,
-                    suppressCorruptNotification = suppressCorruptNotification,
                     onThemeModeChange = onThemeModeChangeAction,
                     onLanguageChange = onLanguageChangeAction,
                     onToggleAutoUnlock = onToggleAutoUnlockAction,
@@ -300,15 +282,12 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     onUseHardwareSha2Change = onUseHardwareSha2ChangeAction,
                     onUsePipelinedWriteChange = onUsePipelinedWriteChangeAction,
                     onUseSafDoubleBufferChange = onUseSafDoubleBufferChangeAction,
-                    onOpenRootControl = onOpenRootControlAction,
-                    onCloseRootControl = onCloseRootControlAction,
                     onOpenHardwareAcceleration = onOpenHardwareAccelerationAction,
                     onCloseHardwareAcceleration = onCloseHardwareAccelerationAction,
                     onOpenSystemDiagnostics = onOpenSystemDiagnosticsAction,
                     onCloseSystemDiagnostics = onCloseSystemDiagnosticsAction,
                     onConfirmSwitchMode = onConfirmSwitchModeAction,
                     onDismissSwitchMode = onDismissSwitchModeAction,
-                    onSuppressCorruptNotificationChange = onSuppressCorruptNotificationChangeAction,
                     onRefreshAndScan = onRefreshAndScanAction,
                     onOpenLog = onOpenLogAction,
                     onCloseLog = onCloseLogAction,
@@ -365,7 +344,6 @@ class BitLockerSettingsActivity : FragmentActivity() {
         usePipelinedWriteState.value = PreferenceHelper.isUsePipelinedWrite(this)
         useSafDoubleBufferState.value = PreferenceHelper.isUseSafDoubleBuffer(this)
         virtualMountState.value = PreferenceHelper.virtualMountEnabled
-        suppressCorruptNotificationState.value = PreferenceHelper.suppressCorruptNotification
         refreshRememberedCredentials()
         refreshRootSolution()
     }
@@ -780,10 +758,9 @@ fun MainAppScreen(
     usePipelinedWrite: Boolean = true,
     useSafDoubleBuffer: Boolean = true,
     showHardwareAccelerationDialog: Boolean = false,
-    showRootControlDialog: Boolean = false,
     showSystemDiagnosticsDialog: Boolean = false,
     rootSolution: RootAccess.RootSolutionInfo,
-    suppressCorruptNotification: Boolean = true,
+    onRefreshRootEnvironment: () -> Unit = {},
     onThemeModeChange: (ThemeMode) -> Unit = {},
     onLanguageChange: (String) -> Unit = {},
     onToggleAutoUnlock: (String, Boolean) -> Unit,
@@ -795,15 +772,12 @@ fun MainAppScreen(
     onUseHardwareSha2Change: (Boolean) -> Unit = {},
     onUsePipelinedWriteChange: (Boolean) -> Unit = {},
     onUseSafDoubleBufferChange: (Boolean) -> Unit = {},
-    onOpenRootControl: () -> Unit = {},
-    onCloseRootControl: () -> Unit = {},
     onOpenHardwareAcceleration: () -> Unit = {},
     onCloseHardwareAcceleration: () -> Unit = {},
     onOpenSystemDiagnostics: () -> Unit = {},
     onCloseSystemDiagnostics: () -> Unit = {},
     onConfirmSwitchMode: () -> Unit = {},
     onDismissSwitchMode: () -> Unit = {},
-    onSuppressCorruptNotificationChange: (Boolean) -> Unit = {},
     onRefreshAndScan: () -> Unit,
     onOpenLog: () -> Unit,
     onCloseLog: () -> Unit,
@@ -824,10 +798,9 @@ fun MainAppScreen(
     var credentialForPasswordDialog by remember { mutableStateOf<PreferenceHelper.SavedCredential?>(null) }
     var showConnectionAuthorizationDialog by rememberSaveable { mutableStateOf(false) }
     val authorization = rememberAuthorizationStatus(useRootAccess)
-    val connectionSummary = stringResource(R.string.connection_status_summary,
-        connectionModeLabel(useRootAccess), authorizationLabel(useRootAccess, authorization.state))
     val openConnectionAuthorization = {
         authorization.recheck()
+        if (useRootAccess) onRefreshRootEnvironment()
         showConnectionAuthorizationDialog = true
     }
 
@@ -957,16 +930,11 @@ fun MainAppScreen(
                     rememberedCredentials = rememberedCredentials,
                     themeMode = themeMode,
                     currentLanguage = currentLanguage,
-                    useRootAccess = useRootAccess,
-                    rootSolution = rootSolution,
                     useHardwareAes = useHardwareAes,
                     useHardwareSha2 = useHardwareSha2,
                     usePipelinedWrite = usePipelinedWrite,
                     useSafDoubleBuffer = useSafDoubleBuffer,
                     onOpenCredentialsManager = remember { { showCredentialsDialog = true } },
-                    onOpenRootControl = onOpenRootControl,
-                    connectionSummary = connectionSummary,
-                    onOpenConnectionAuthorization = openConnectionAuthorization,
                     onOpenPerformanceOptimization = onOpenHardwareAcceleration,
                     onOpenHardwareAcceleration = onOpenHardwareAcceleration,
                     onOpenSystemDiagnostics = onOpenSystemDiagnostics,
@@ -983,19 +951,13 @@ fun MainAppScreen(
             ConnectionAuthorizationDialog(
                 useRootAccess = useRootAccess,
                 status = authorization,
+                rootSolution = rootSolution,
+                onRecheck = {
+                    authorization.recheck()
+                    if (useRootAccess) onRefreshRootEnvironment()
+                },
                 onUseRootAccessChange = onUseRootAccessChange,
                 onDismiss = { showConnectionAuthorizationDialog = false }
-            )
-        }
-
-        // Root environment details and Root-only settings remain in settings.
-        if (showRootControlDialog) {
-            RootControlDialog(
-                rootSolution = rootSolution,
-                useRootAccess = useRootAccess,
-                suppressCorruptNotification = suppressCorruptNotification,
-                onSuppressCorruptNotificationChange = onSuppressCorruptNotificationChange,
-                onDismiss = onCloseRootControl
             )
         }
 

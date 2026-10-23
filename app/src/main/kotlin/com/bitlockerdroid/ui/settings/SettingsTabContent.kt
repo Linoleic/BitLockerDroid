@@ -26,7 +26,6 @@ import com.bitlockerdroid.ui.theme.SuccessGreen
 import com.bitlockerdroid.ui.theme.ThemeMode
 import com.bitlockerdroid.util.BiometricAuthHelper
 import com.bitlockerdroid.util.PreferenceHelper
-import com.bitlockerdroid.util.RootAccess
 import com.bitlockerdroid.util.findFragmentActivity
 
 /** Content for Tab 1: Comprehensive standardized settings */
@@ -35,16 +34,11 @@ fun SettingsTabContent(
     rememberedCredentials: List<PreferenceHelper.SavedCredential>,
     themeMode: ThemeMode,
     currentLanguage: String,
-    useRootAccess: Boolean,
-    rootSolution: RootAccess.RootSolutionInfo,
     useHardwareAes: Boolean = PreferenceHelper.useHardwareAes,
     useHardwareSha2: Boolean = PreferenceHelper.useHardwareSha2,
     usePipelinedWrite: Boolean = PreferenceHelper.usePipelinedWrite,
     useSafDoubleBuffer: Boolean = PreferenceHelper.useSafDoubleBuffer,
     onOpenCredentialsManager: () -> Unit,
-    onOpenRootControl: () -> Unit = {},
-    connectionSummary: String = "",
-    onOpenConnectionAuthorization: () -> Unit = {},
     onOpenPerformanceOptimization: () -> Unit = {},
     onOpenHardwareAcceleration: () -> Unit = onOpenPerformanceOptimization,
     onOpenSystemDiagnostics: () -> Unit = {},
@@ -262,47 +256,8 @@ fun SettingsTabContent(
                 }
             }
 
-            // Group 4: Advanced Options (拆分为三大高级入口)
+            // Group 4: Advanced Options
             SettingsGroup(title = stringResource(R.string.settings_header_advanced)) {
-                SettingsClickableItem(
-                    title = stringResource(R.string.connection_authorization_title),
-                    description = connectionSummary,
-                    onClick = onOpenConnectionAuthorization
-                )
-                HorizontalDivider(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                )
-                // 1. Root 权限控制
-                val rootBadge = if (!useRootAccess) {
-                    stringResource(R.string.settings_non_root_mode)
-                } else if (rootSolution.hasRoot) {
-                    rootSolution.solutionName
-                } else {
-                    stringResource(R.string.settings_root_not_granted)
-                }
-
-                val rootBadgeColor = if (!useRootAccess) {
-                    MaterialTheme.colorScheme.outline
-                } else if (rootSolution.hasRoot) {
-                    SuccessGreen
-                } else {
-                    MaterialTheme.colorScheme.error
-                }
-
-                SettingsClickableItem(
-                    title = stringResource(R.string.connection_root_advanced),
-                    description = stringResource(R.string.connection_root_advanced_desc),
-                    badgeText = rootBadge,
-                    badgeColor = rootBadgeColor,
-                    onClick = onOpenRootControl
-                )
-
-                HorizontalDivider(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                )
-
                 // 2. 性能优化 (整合硬件加密加速、SAF 双缓冲、USB 写入流水线与底层调优)
                 val isHwCryptoSupported = remember {
                     try {

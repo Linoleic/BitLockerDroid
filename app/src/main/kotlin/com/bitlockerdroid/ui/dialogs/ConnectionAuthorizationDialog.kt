@@ -12,12 +12,15 @@ import com.bitlockerdroid.R
 import com.bitlockerdroid.ui.AuthorizationState
 import com.bitlockerdroid.ui.AuthorizationStatus
 import com.bitlockerdroid.ui.authorizationLabel
+import com.bitlockerdroid.util.RootAccess
 
 /** The same panel is opened from the home indicator and the settings shortcut. */
 @Composable
 internal fun ConnectionAuthorizationDialog(
     useRootAccess: Boolean,
     status: AuthorizationStatus,
+    rootSolution: RootAccess.RootSolutionInfo,
+    onRecheck: () -> Unit,
     onUseRootAccessChange: (Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -46,6 +49,15 @@ internal fun ConnectionAuthorizationDialog(
                     stringResource(if (useRootAccess) R.string.connection_mode_root_desc else R.string.connection_mode_usb_desc),
                     style = MaterialTheme.typography.bodyMedium
                 )
+                HorizontalDivider()
+                Text(stringResource(R.string.settings_root_status), style = MaterialTheme.typography.titleSmall)
+                Text(rootSolution.summary.ifBlank { stringResource(R.string.authorization_checking) },
+                    style = MaterialTheme.typography.bodyMedium)
+                if (useRootAccess) {
+                    Text(stringResource(R.string.connection_root_warning_filter),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 HorizontalDivider()
                 Text(
                     if (status.deviceCount != null) stringResource(R.string.connection_usb_connected, status.deviceCount)
@@ -80,7 +92,7 @@ internal fun ConnectionAuthorizationDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = status.recheck, enabled = status.state != AuthorizationState.CHECKING) {
+            TextButton(onClick = onRecheck, enabled = status.state != AuthorizationState.CHECKING) {
                 Text(stringResource(R.string.authorization_recheck))
             }
         },
