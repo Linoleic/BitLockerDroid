@@ -603,15 +603,6 @@ object UnlockManager {
                     }
                 }
 
-                // Ensure USB session cleanup in UsbStorageManager
-                if (devicePath.startsWith("usb://")) {
-                    try {
-                        com.bitlockerdroid.usb.UsbStorageManager.closeSession(devicePath)
-                    } catch (e: Throwable) {
-                        Log.w(TAG, "UsbStorageManager closeSession warning for $devicePath", e)
-                    }
-                }
-
                 // 4. Multi-Partition Safe Physical Spindown & Offline:
                 // Check if any other active or closing sessions remain on the same physical parent disk
                 val hasOtherBitLockerSessions = synchronized(lock) {

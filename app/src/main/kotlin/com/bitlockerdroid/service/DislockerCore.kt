@@ -461,13 +461,6 @@ class DislockerCore private constructor(
             } catch (e: Throwable) {
                 Log.w(TAG, "close failed", e)
             }
-            if (devicePath.startsWith("usb://")) {
-                try {
-                    com.bitlockerdroid.usb.UsbStorageManager.closeSession(devicePath)
-                } catch (e: Throwable) {
-                    Log.w(TAG, "UsbStorageManager closeSession failed", e)
-                }
-            }
             try {
                 usbSession?.close()
             } catch (e: Throwable) {

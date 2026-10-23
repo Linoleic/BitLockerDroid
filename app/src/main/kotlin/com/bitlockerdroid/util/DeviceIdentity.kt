@@ -357,12 +357,15 @@ object DeviceIdentity {
 
         // 1. USB BOT URL: usb://deviceId/interface/lun/part or usb://deviceId/part
         if (devicePath.startsWith("usb://")) {
-            val trimmed = devicePath.removePrefix("usb://")
-            val parts = trimmed.split('/')
-            val partIdx = parts.lastOrNull()?.toIntOrNull() ?: 1
+            val discovered = com.bitlockerdroid.usb.UsbStorageManager.getPartitionInfo(devicePath)
+            val parsed = com.bitlockerdroid.usb.UsbPartitionPathSupport.parse(
+                devicePath,
+                discoveredStartLba = discovered?.startLba
+            ) ?: return PartitionPhysicalInfo()
+            val partIdx = discovered?.partitionIndex ?: parsed.partitionIndex
             val info = PartitionPhysicalInfo(
                 partitionIndex = partIdx,
-                startSector = partIdx.toLong() * 2048L,
+                startSector = parsed.startSector,
                 partitionNodeName = "p$partIdx"
             )
             partitionInfoCache[devicePath] = info

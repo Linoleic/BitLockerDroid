@@ -20,7 +20,6 @@ import com.bitlockerdroid.util.DeviceIdentity
 import com.bitlockerdroid.util.LogFile
 import me.jahnen.libaums.core.driver.scsi.ScsiBlockDevice
 import me.jahnen.libaums.core.usb.UsbCommunication
-import me.jahnen.libaums.core.usb.UsbCommunicationFactory
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -72,7 +71,14 @@ object UsbStorageManager {
         val communication: UsbCommunication,
         val scsiDevice: ScsiBlockDevice,
         val partitions: MutableList<UsbPartitionInfo> = mutableListOf()
-    )
+    ) {
+        /** Once BitLocker paths are discovered, keep them stable until physical detach. */
+        @Volatile
+        var hasCachedBitLockerPartitions: Boolean = false
+
+        @Volatile
+        var transportHealthy: Boolean = true
+    }
 
     class UsbSession(
         val nativeFd: Int,
@@ -100,11 +106,24 @@ object UsbStorageManager {
     fun findHolderForDevice(usbDevice: UsbDevice): UsbDeviceConnectionHolder? = activeDevices[usbDevice.deviceId]
     fun getAnyActiveHolder(): UsbDeviceConnectionHolder? = activeDevices.values.firstOrNull()
 
+    /** A health query must never interrupt a filesystem session or race a new one opening. */
+    fun <T> withIdleDeviceProbe(deviceId: Int, probe: (UsbDeviceConnectionHolder) -> T): T? =
+        synchronized(activeSessionLock) {
+            val holder = activeDevices[deviceId] ?: return@synchronized null
+            if (!holder.transportHealthy || activeSessions.keys.any { it.startsWith("usb://$deviceId/") }) {
+                return@synchronized null
+            }
+            synchronized(holder.scsiDevice) { probe(holder) }
+        }
+
     /** Cache of discovered BitLocker USB partitions by devicePath */
     private val discoveredPartitions = ConcurrentHashMap<String, UsbPartitionInfo>()
 
     /** Active worker sessions by devicePath */
     private val activeSessions = ConcurrentHashMap<String, UsbSession>()
+    private val activeSessionLock = Any()
+
+    fun getPartitionInfo(devicePath: String): UsbPartitionInfo? = discoveredPartitions[devicePath]
 
     /** Devices probed or system-mounted and confirmed to contain NO BitLocker partitions. Keyed by "vid:pid" */
     private val nonBitLockerDeviceKeys = ConcurrentHashMap.newKeySet<String>()
@@ -113,6 +132,11 @@ object UsbStorageManager {
     private val deniedDeviceKeys = ConcurrentHashMap.newKeySet<String>()
 
     private val scanLock = Any()
+
+    private data class PartitionDiscoveryResult(
+        val partitions: List<UsbPartitionInfo>,
+        val completed: Boolean,
+    )
 
     /**
      * Checks whether this UsbDevice is currently mounted by Android system (vold)
@@ -279,6 +303,8 @@ object UsbStorageManager {
      */
     fun requestPermission(context: Context, device: UsbDevice) {
         val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager ?: return
+        // An explicit retry must also lift scan suppression from an earlier denial.
+        deniedDeviceKeys.remove("${device.vendorId}:${device.productId}")
         if (usbManager.hasPermission(device)) return
 
         LogFile.write("app", "Requesting USB permission for ${device.deviceName} (vid=${device.vendorId}, pid=${device.productId})")
@@ -324,6 +350,21 @@ object UsbStorageManager {
 
             val devKey = "${device.vendorId}:${device.productId}"
 
+            // A successfully identified holder remains authoritative until detach. In particular,
+            // do this before VID:PID and Android-mount filters so a later system mount of a sibling
+            // partition cannot hide already discovered BitLocker paths.
+            val cachedHolder = activeDevices[device.deviceId]
+            if (cachedHolder?.hasCachedBitLockerPartitions == true) {
+                val cached = synchronized(scanLock) {
+                    cachedHolder.partitions.toList().ifEmpty {
+                        discoveredPartitions.values.filter { it.deviceId == device.deviceId }
+                    }
+                }
+                results.addAll(cached)
+                LogFile.write("app", "UsbStorageManager: reusing ${cached.size} cached BitLocker partitions for USB device ${device.deviceId} until detach")
+                continue
+            }
+
             // If already verified to be an unencrypted/non-BitLocker drive, leave it to the Android OS
             if (nonBitLockerDeviceKeys.contains(devKey)) {
                 continue
@@ -355,21 +396,72 @@ object UsbStorageManager {
                         return@synchronized
                     }
 
-                    // Discover partitions on this USB drive
-                    val partitions = discoverPartitions(holder)
-
-                    if (partitions.isEmpty()) {
-                        LogFile.write("app", "UsbStorageManager: device ${device.deviceName} ($devKey) has NO BitLocker partitions. Releasing interface so Android OS can mount it.")
-                        nonBitLockerDeviceKeys.add(devKey)
-                        closeDevice(device.deviceId)
+                    // Do not issue fresh BOT transactions while a native session is using this device.
+                    // Return the cached scan so detection keeps these paths present.
+                    if (holder.hasCachedBitLockerPartitions || hasActiveSessionForDevice(device.deviceId)) {
+                        val cached = holder.partitions.toList().ifEmpty {
+                            discoveredPartitions.values.filter { it.deviceId == device.deviceId }
+                        }
+                        results.addAll(cached)
+                        LogFile.write("app", "UsbStorageManager: skipping partition rescan for USB device ${device.deviceId}; reusing ${cached.size} cached BitLocker partitions")
                         return@synchronized
                     }
 
+                    // Discovery shares the SCSI lock with partition workers; partial I/O errors are
+                    // tracked separately so they cannot be mistaken for a confirmed empty disk.
+                    val discovery = discoverPartitions(holder)
+
+                    if (UsbPartitionScanPolicy.isConfirmedEmpty(discovery.completed, discovery.partitions.size)) {
+                        val closedAsEmpty = synchronized(activeSessionLock) {
+                            val sessionStartedDuringScan = activeSessions.keys.any {
+                                it.startsWith("usb://${device.deviceId}/")
+                            }
+                            if (sessionStartedDuringScan) {
+                                false
+                            } else {
+                                LogFile.write("app", "UsbStorageManager: device ${device.deviceName} ($devKey) has NO BitLocker partitions. Releasing interface so Android OS can mount it.")
+                                nonBitLockerDeviceKeys.add(devKey)
+                                closeDevice(device.deviceId)
+                                true
+                            }
+                        }
+                        if (!closedAsEmpty) {
+                            val cached = holder.partitions.toList().ifEmpty {
+                                discoveredPartitions.values.filter { it.deviceId == device.deviceId }
+                            }
+                            results.addAll(cached)
+                            LogFile.write("app", "UsbStorageManager: a USB session started during an empty scan; preserving the active holder and cached partitions for ${device.deviceId}")
+                        }
+                        return@synchronized
+                    }
+
+                    if (!discovery.completed) {
+                        LogFile.write("app", "UsbStorageManager: incomplete partition scan for ${device.deviceName} ($devKey); keeping cached partitions and retrying on a later scan")
+                    } else {
+                        val currentPaths = discovery.partitions.mapTo(HashSet()) { it.devicePath }
+                        holder.partitions.filter { it.devicePath !in currentPaths }.forEach { stale ->
+                            discoveredPartitions.remove(stale.devicePath)
+                            DeviceIdentity.invalidate(stale.devicePath)
+                        }
+                    }
+
+                    val partitions = if (discovery.completed) {
+                        discovery.partitions
+                    } else {
+                        (discovery.partitions + holder.partitions).distinctBy { it.devicePath }
+                    }
                     holder.partitions.clear()
                     holder.partitions.addAll(partitions)
+                    if (partitions.isNotEmpty()) {
+                        // Discovery itself happens before openSession can see a published path.
+                        // Set this before publishing paths to prevent later scans from racing the
+                        // native auto-unlock/openSession setup window.
+                        holder.hasCachedBitLockerPartitions = true
+                    }
 
                     for (p in partitions) {
                         discoveredPartitions[p.devicePath] = p
+                        DeviceIdentity.invalidate(p.devicePath)
                         results.add(p)
                         LogFile.write("app", "UsbStorageManager: BitLocker partition found -> ${p.devicePath} guid=${p.guid} rkId=${p.recoveryKeyId}")
                     }
@@ -380,6 +472,10 @@ object UsbStorageManager {
         }
 
         return results
+    }
+
+    private fun hasActiveSessionForDevice(deviceId: Int): Boolean = synchronized(activeSessionLock) {
+        activeSessions.keys.any { it.startsWith("usb://$deviceId/") }
     }
 
     private fun getOrCreateDeviceHolder(usbManager: UsbManager, device: UsbDevice): UsbDeviceConnectionHolder? {
@@ -393,34 +489,69 @@ object UsbStorageManager {
             return null
         }
 
+        var comm: UsbCommunication? = null
         try {
-            val comm = try {
-                Log.i(TAG, "Initializing PipelinedUsbCommunication for ${device.deviceName}")
-                PipelinedUsbCommunication(conn, iface, inEp, outEp)
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to initialize PipelinedUsbCommunication, falling back to standard communication", e)
-                UsbCommunicationFactory.createUsbCommunication(
-                    usbManager, device, iface, outEp, inEp
-                )
-            }
+            Log.i(TAG, "Initializing PipelinedUsbCommunication for ${device.deviceName}")
+            // A failed claim/alternate selection must not be bypassed by opening a
+            // second connection. The outer failure handler owns cleanup of conn.
+            val communication = PipelinedUsbCommunication(conn, iface, inEp, outEp)
+            comm = communication
 
             // MAX LUN inquiry (Control transfer 161, 254)
             val maxLunBuf = ByteArray(1)
             try {
-                comm.controlTransfer(161, 254, 0, iface.id, maxLunBuf, 1)
+                communication.controlTransfer(161, 254, 0, iface.id, maxLunBuf, 1)
             } catch (_: Exception) {}
 
-            val scsi = ScsiBlockDevice(comm, 0)
-            scsi.init()
+            val scsi = ScsiBlockDevice(communication, 0)
+            try {
+                scsi.init()
+            } catch (initializationError: Exception) {
+                // Recovery is only safe before this holder is published and while this device has
+                // no worker session. Use the BOT class reset, never UsbCommunication.resetDevice(),
+                // which issues a device-wide USB reset in libaums.
+                if (hasActiveSessionForDevice(device.deviceId)) {
+                    throw initializationError
+                }
 
-            val holder = UsbDeviceConnectionHolder(device, conn, comm, scsi)
+                Log.w(TAG, "SCSI initialization failed for ${device.deviceName}; attempting one BOT reset and retry", initializationError)
+                try {
+                    resetBotTransport(communication)
+                    scsi.init()
+                } catch (recoveryError: Exception) {
+                    initializationError.addSuppressed(recoveryError)
+                    throw initializationError
+                }
+            }
+
+            val holder = UsbDeviceConnectionHolder(device, conn, communication, scsi)
             activeDevices[device.deviceId] = holder
             return holder
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            try { comm?.close() } catch (_: Throwable) {}
+            try { conn.close() } catch (_: Throwable) {}
+            if (e !is Exception) throw e
             Log.e(TAG, "Failed to initialize UsbCommunication / ScsiBlockDevice", e)
-            try { conn.close() } catch (_: Exception) {}
             return null
         }
+    }
+
+    /** Runs libaums' standard BOT reset recovery without resetting the whole USB device. */
+    private fun resetBotTransport(communication: UsbCommunication) {
+        val result = communication.controlTransfer(
+            0x21, // Host-to-device, class, interface
+            0xFF, // Bulk-Only Mass Storage Reset
+            0,
+            communication.usbInterface.id,
+            ByteArray(2),
+            0,
+        )
+        if (result < 0) {
+            throw java.io.IOException("Bulk-Only Mass Storage Reset failed (result=$result)")
+        }
+
+        communication.clearFeatureHalt(communication.inEndpoint)
+        communication.clearFeatureHalt(communication.outEndpoint)
     }
 
     private data class RawPartition(
@@ -433,12 +564,18 @@ object UsbStorageManager {
     /**
      * Parses MBR, EBR (logical chain), and GPT partition tables to discover all partitions.
      */
-    private fun discoverPartitions(holder: UsbDeviceConnectionHolder): List<UsbPartitionInfo> {
+    private fun discoverPartitions(holder: UsbDeviceConnectionHolder): PartitionDiscoveryResult =
+        synchronized(holder.scsiDevice) {
+            discoverPartitionsLocked(holder)
+        }
+
+    private fun discoverPartitionsLocked(holder: UsbDeviceConnectionHolder): PartitionDiscoveryResult {
         val scsi = holder.scsiDevice
         val dev = holder.usbDevice
         val sectorSize = if (scsi.blockSize > 0) scsi.blockSize else 512
 
         val rawPartitions = mutableListOf<RawPartition>()
+        var scanCompleted = true
 
         // 1. Read LBA 0 (MBR)
         val mbrBuffer = ByteBuffer.allocate(sectorSize).order(ByteOrder.LITTLE_ENDIAN)
@@ -446,7 +583,7 @@ object UsbStorageManager {
             scsi.read(0L, mbrBuffer)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to read LBA 0", e)
-            return emptyList()
+            return PartitionDiscoveryResult(emptyList(), completed = false)
         }
         mbrBuffer.flip()
 
@@ -487,6 +624,7 @@ object UsbStorageManager {
                         scsi.read(curEbrLba, ebrBuf)
                         ebrBuf.flip()
                         if ((ebrBuf.get(510).toInt() and 0xFF) != 0x55 || (ebrBuf.get(511).toInt() and 0xFF) != 0xAA) {
+                            scanCompleted = false
                             break
                         }
 
@@ -509,6 +647,7 @@ object UsbStorageManager {
                         ebrIdx++
                     } catch (e: Exception) {
                         Log.e(TAG, "Error reading EBR at LBA $curEbrLba", e)
+                        scanCompleted = false
                         break
                     }
                 }
@@ -528,6 +667,9 @@ object UsbStorageManager {
                     val partEntriesLba = gptBuf.getLong(72)
                     val numParts = gptBuf.getInt(80)
                     val partEntrySize = gptBuf.getInt(84)
+                    if (numParts <= 0 || numParts > 16384 || partEntrySize < 128 || partEntrySize > 4096) {
+                        throw java.io.IOException("Invalid GPT partition entry geometry")
+                    }
 
                     val entriesBuf = ByteBuffer.allocate(numParts * partEntrySize).order(ByteOrder.LITTLE_ENDIAN)
                     val sectorsToRead = (numParts * partEntrySize + sectorSize - 1) / sectorSize
@@ -553,14 +695,17 @@ object UsbStorageManager {
                             rawPartitions.add(RawPartition(p + 1, startLba, count, sectorSize))
                         }
                     }
+                } else {
+                    scanCompleted = false
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error parsing GPT", e)
+                scanCompleted = false
             }
         }
 
         // 3. Fallback: Super Floppy (whole-disk filesystem)
-        if (rawPartitions.isEmpty()) {
+        if (rawPartitions.isEmpty() && !hasGpt) {
             rawPartitions.add(RawPartition(1, 0L, scsi.blocks, sectorSize))
         }
 
@@ -596,7 +741,7 @@ object UsbStorageManager {
                         readBuf.array()
                     }
 
-                    val devPath = "usb://${dev.deviceId}/p${part.index}"
+                    val devPath = UsbPartitionPathSupport.format(dev.deviceId, part.index)
                     bitlockerPartitions.add(
                         UsbPartitionInfo(
                             deviceId = dev.deviceId,
@@ -614,10 +759,11 @@ object UsbStorageManager {
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Error checking partition ${part.index} at LBA ${part.startLba}", e)
+                scanCompleted = false
             }
         }
 
-        return bitlockerPartitions
+        return PartitionDiscoveryResult(bitlockerPartitions, completed = scanCompleted)
     }
 
     /**
@@ -673,7 +819,11 @@ object UsbStorageManager {
      * Opens a native dislocker worker session for the specified USB partition.
      * Creates a Unix socketpair and background SCSI I/O worker thread.
      */
-    fun openSession(devicePath: String): UsbSession? {
+    fun openSession(devicePath: String): UsbSession? = synchronized(activeSessionLock) {
+        openSessionLocked(devicePath)
+    }
+
+    private fun openSessionLocked(devicePath: String): UsbSession? {
         val part = discoveredPartitions[devicePath] ?: run {
             Log.e(TAG, "openSession: unknown partition $devicePath")
             return null
@@ -683,9 +833,16 @@ object UsbStorageManager {
             Log.e(TAG, "openSession: USB device ${part.deviceId} is not active")
             return null
         }
+        if (!holder.transportHealthy) {
+            Log.w(TAG, "openSession: USB transport needs reconnection for ${part.deviceId}")
+            return null
+        }
 
-        // Close any prior active session on this path
-        activeSessions.remove(devicePath)?.close()
+        // A second native owner must never replace a worker serving a live core.
+        if (activeSessions.containsKey(devicePath)) {
+            Log.w(TAG, "openSession: partition already has an active session: $devicePath")
+            return null
+        }
 
         val fds = ParcelFileDescriptor.createSocketPair()
         val nativePfd = fds[0]
@@ -703,18 +860,15 @@ object UsbStorageManager {
         val worker = UsbBlockDeviceWorker(driver, workerPfd)
         worker.start()
 
+        val sessionRef = java.util.concurrent.atomic.AtomicReference<UsbSession?>()
         val session = UsbSession(rawNativeFd, workerPfd, worker) {
-            activeSessions.remove(devicePath)
+            synchronized(activeSessionLock) {
+                sessionRef.get()?.let { activeSessions.remove(devicePath, it) }
+            }
         }
+        sessionRef.set(session)
         activeSessions[devicePath] = session
         return session
-    }
-
-    /**
-     * Closes the active session on a partition.
-     */
-    fun closeSession(devicePath: String) {
-        activeSessions.remove(devicePath)?.close()
     }
 
     /**
@@ -783,19 +937,20 @@ object UsbStorageManager {
         Log.i(TAG, "spindownDevice: issuing SCSI cache sync and START STOP UNIT to USB device $devId")
         try {
             val comm = holder.communication
-            // 1. SCSI SYNCHRONIZE CACHE (10)
-            val syncCdb = byteArrayOf(0x35.toByte(), 0, 0, 0, 0, 0, 0, 0, 0, 0)
-            val syncSuccess = sendScsiCommandNoData(comm, syncCdb, 0x1001)
-            if (!syncSuccess) {
-                Log.w(TAG, "spindownDevice: SCSI SYNCHRONIZE CACHE returned failure on USB device $devId. Aborting spindown.")
-                return false
-            }
+            synchronized(holder.scsiDevice) {
+                // Keep each complete CBW/CSW exchange atomic with partition worker I/O.
+                val syncCdb = byteArrayOf(0x35.toByte(), 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                val syncSuccess = sendScsiCommandNoData(comm, syncCdb, 0x1001)
+                if (!syncSuccess) {
+                    Log.w(TAG, "spindownDevice: SCSI SYNCHRONIZE CACHE returned failure on USB device $devId. Aborting spindown.")
+                    return false
+                }
 
-            // 2. SCSI START STOP UNIT (START=0)
-            val stopCdb = byteArrayOf(0x1B.toByte(), 0, 0, 0, 0x00.toByte(), 0)
-            val stopSuccess = sendScsiCommandNoData(comm, stopCdb, 0x1002)
-            if (!stopSuccess) {
-                Log.w(TAG, "spindownDevice: SCSI START STOP UNIT returned error or unsupported on USB device $devId")
+                val stopCdb = byteArrayOf(0x1B.toByte(), 0, 0, 0, 0x00.toByte(), 0)
+                val stopSuccess = sendScsiCommandNoData(comm, stopCdb, 0x1002)
+                if (!stopSuccess) {
+                    Log.w(TAG, "spindownDevice: SCSI START STOP UNIT returned error or unsupported on USB device $devId")
+                }
             }
         } catch (e: Throwable) {
             Log.w(TAG, "spindownDevice error during SCSI commands", e)
@@ -822,8 +977,10 @@ object UsbStorageManager {
         // Close sessions for this device
         val toRemoveSessions = activeSessions.filter { it.key.startsWith("usb://$deviceId/") }
         for ((path, session) in toRemoveSessions) {
-            session.close()
-            activeSessions.remove(path)
+            synchronized(activeSessionLock) {
+                activeSessions.remove(path, session)
+                session.close()
+            }
             app?.let {
                 com.bitlockerdroid.share.LanShareManager.stopSharingForDevice(it, path, null)
             }
@@ -834,6 +991,7 @@ object UsbStorageManager {
         val toRemoveParts = discoveredPartitions.filter { it.value.deviceId == deviceId }
         for ((path, _) in toRemoveParts) {
             discoveredPartitions.remove(path)
+            DeviceIdentity.invalidate(path)
             UnlockManager.forgetDetected(path)
         }
 
