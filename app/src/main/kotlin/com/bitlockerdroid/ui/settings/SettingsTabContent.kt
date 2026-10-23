@@ -43,6 +43,8 @@ fun SettingsTabContent(
     useSafDoubleBuffer: Boolean = PreferenceHelper.useSafDoubleBuffer,
     onOpenCredentialsManager: () -> Unit,
     onOpenRootControl: () -> Unit = {},
+    connectionSummary: String = "",
+    onOpenConnectionAuthorization: () -> Unit = {},
     onOpenPerformanceOptimization: () -> Unit = {},
     onOpenHardwareAcceleration: () -> Unit = onOpenPerformanceOptimization,
     onOpenSystemDiagnostics: () -> Unit = {},
@@ -262,6 +264,15 @@ fun SettingsTabContent(
 
             // Group 4: Advanced Options (拆分为三大高级入口)
             SettingsGroup(title = stringResource(R.string.settings_header_advanced)) {
+                SettingsClickableItem(
+                    title = stringResource(R.string.connection_authorization_title),
+                    description = connectionSummary,
+                    onClick = onOpenConnectionAuthorization
+                )
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                )
                 // 1. Root 权限控制
                 val rootBadge = if (!useRootAccess) {
                     stringResource(R.string.settings_non_root_mode)
@@ -279,17 +290,9 @@ fun SettingsTabContent(
                     MaterialTheme.colorScheme.error
                 }
 
-                val rootSummary = if (!useRootAccess) {
-                    stringResource(R.string.settings_non_root_mode)
-                } else if (rootSolution.hasRoot) {
-                    "${rootSolution.solutionName} · ${stringResource(R.string.root_status_authorized)}"
-                } else {
-                    stringResource(R.string.settings_root_not_granted)
-                }
-
                 SettingsClickableItem(
-                    title = stringResource(R.string.settings_header_root_mode),
-                    description = rootSummary,
+                    title = stringResource(R.string.connection_root_advanced),
+                    description = stringResource(R.string.connection_root_advanced_desc),
                     badgeText = rootBadge,
                     badgeColor = rootBadgeColor,
                     onClick = onOpenRootControl

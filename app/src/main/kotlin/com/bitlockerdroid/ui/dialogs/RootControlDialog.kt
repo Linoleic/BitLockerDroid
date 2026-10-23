@@ -22,8 +22,7 @@ import com.bitlockerdroid.ui.theme.SuccessGreen
 import com.bitlockerdroid.util.RootAccess
 
 /**
- * Dedicated Root Permission Control Dialog:
- * - Master switch for Root privilege usage (with fallback to non-root USB Host mode)
+ * Root advanced settings:
  * - Detailed Root environment and solution status detection
  * - Root-exclusive feature switches (system corrupt notification suppression)
  */
@@ -31,7 +30,6 @@ import com.bitlockerdroid.util.RootAccess
 fun RootControlDialog(
     rootSolution: RootAccess.RootSolutionInfo,
     useRootAccess: Boolean,
-    onUseRootAccessChange: (Boolean) -> Unit,
     suppressCorruptNotification: Boolean,
     onSuppressCorruptNotificationChange: (Boolean) -> Unit,
     onDismiss: () -> Unit
@@ -89,7 +87,7 @@ fun RootControlDialog(
         title = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = stringResource(R.string.settings_header_root_mode),
+                    text = stringResource(R.string.connection_root_advanced),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -118,18 +116,6 @@ fun RootControlDialog(
                         description = rootSummary,
                         badgeText = rootBadge,
                         badgeColor = rootBadgeColor
-                    )
-                }
-
-                // Section 2: Root Master Switch
-                SettingsGroup(
-                    title = stringResource(R.string.settings_header_root_mode)
-                ) {
-                    SettingsSwitchItem(
-                        title = stringResource(R.string.settings_use_root),
-                        description = stringResource(R.string.settings_use_root_desc),
-                        checked = useRootAccess,
-                        onCheckedChange = onUseRootAccessChange
                     )
                 }
 

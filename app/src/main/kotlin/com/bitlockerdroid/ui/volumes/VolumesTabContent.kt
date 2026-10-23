@@ -18,7 +18,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import com.bitlockerdroid.R
 import com.bitlockerdroid.service.DetectedVolume
@@ -69,7 +68,6 @@ fun VolumesTabContent(
             .fillMaxWidth()
             .widthIn(max = 720.dp)
             .graphicsLayer { }
-            .clearAndSetSemantics { }
     }
 
     val painters = rememberVolumeCardPainters()

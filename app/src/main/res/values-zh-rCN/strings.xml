@@ -296,14 +296,14 @@
     <string name="creds_view_password">查看密码</string>
     <string name="creds_type_recovery">恢复密钥</string>
     <string name="creds_type_password">密码</string>
+    <string name="creds_type_saved">已保存的凭据</string>
+    <string name="unlock_authentication_required">请先在应用内解锁此卷，再进行挂载</string>
+    <string name="unlock_target_changed">连接的卷已更换，请重新打开解锁窗口。</string>
     <string name="creds_subtitle_guid">卷 GUID: %1$s · %2$s</string>
     <string name="creds_subtitle_id">设备标识: %1$s · %2$s</string>
     <string name="auth_failed">身份验证未通过</string>
     <string name="auth_title">验证身份</string>
-    <string name="auth_subtitle">请验证设备锁屏凭据以查看 BitLocker 凭据</string>
     <string name="auth_start_failed">无法启动身份验证</string>
-    <string name="copied_to_clipboard">已复制到剪贴板</string>
-    <string name="copy_password">复制密码</string>
     <string name="credential_details">凭据详情</string>
     <string name="volume_full_guid">卷完整 GUID</string>
     <string name="device_unique_id">设备唯一标识</string>
@@ -349,8 +349,6 @@
     <string name="mount_err_cannot_get_guid">无法获取卷 GUID</string>
     <string name="mount_err_no_block_device">未找到对应的内核块设备 (/dev/block/…)</string>
     <string name="mount_err_manually_locked">卷已被手动锁定或安全弹出，取消自动挂载</string>
-    <string name="mount_err_no_saved_password">未找到已记住的密码，请重新解锁并保存密码</string>
-    <string name="mount_err_decrypt_password_failed">解密已保存密码失败</string>
 
     <!-- 模式切换相关文本 -->
     <string name="cancel">取消</string>
@@ -368,6 +366,10 @@
     <string name="biometric_protection_switch">启用生物识别防护</string>
     <string name="biometric_protection_switch_desc">在查看、复制或使用已存凭据解锁时需通过指纹或面容身份验证</string>
     <string name="biometric_unlock_button">生物识别解锁</string>
+    <string name="saved_credential_unlock_button">使用已保存凭据解锁</string>
+    <string name="saved_credential_quick_unlock_banner">此卷有可用的已保存凭据。</string>
+    <string name="saved_credential_quick_unlock_action">快捷解锁</string>
+    <string name="saved_credential_unlock_subtitle">使用已保存凭据解锁卷「%1$s」</string>
     <string name="biometric_unlock_prompt_title">解锁 BitLocker 卷</string>
     <string name="biometric_unlock_prompt_subtitle">请验证身份以解密卷「%1$s」</string>
     <string name="biometric_auth_for_view">请验证身份以查看或复制 BitLocker 凭据</string>
@@ -518,16 +520,38 @@
     <string name="device_smart_telemetry_btn">硬件健康与 S.M.A.R.T. 监测</string>
     <string name="partition_number_format">分区 %1$d</string>
     <string name="partition_number_with_node">分区 %1$d · %2$s</string>
-    <string name="creds_type_saved">已保存的凭据</string>
-    <string name="saved_credential_unlock_subtitle">使用已保存凭据解锁卷「%1$s」</string>
-    <string name="saved_credential_quick_unlock_action">快捷解锁</string>
-    <string name="unlock_authentication_required">请先在应用内解锁此卷，再进行挂载</string>
-    <string name="saved_credential_unlock_button">使用已保存凭据解锁</string>
-    <string name="saved_credential_quick_unlock_banner">此卷有可用的已保存凭据。</string>
-    <string name="unlock_target_changed">连接的卷已更换，请重新打开解锁窗口。</string>
+    <string name="authorization_checking">检测中…</string>
+    <string name="authorization_su_granted">su 已授权</string>
+    <string name="authorization_su_required">su 未授权</string>
+    <string name="authorization_usb_granted">USB 已授权</string>
+    <string name="authorization_usb_required">USB 待授权</string>
+    <string name="authorization_usb_disconnected">USB 未连接</string>
+    <string name="authorization_check_failed">检测失败</string>
+    <string name="authorization_recheck">重新检测</string>
+    <string name="authorization_request_usb">授权 USB</string>
+    <string name="authorization_su_help">检测本应用能否以 root 身份执行命令。若未授权，请在 Root 管理器中允许本应用获取 su 权限，再重新检测。</string>
+    <string name="authorization_usb_connect_help">请连接 USB 存储设备，以检测其 USB Host 授权。</string>
+    <string name="authorization_usb_help">已授权存储设备：%1$d / %2$d。每个设备均需 USB Host 授权，重新插入后可能需要再次授权。</string>
+    <string name="authorization_error_help">无法读取 USB 授权状态，请重新检测。</string>
+    <string name="authorization_request_failed">无法发起 USB 授权，请重新连接设备后重试。</string>
     <string name="smart_usb_unavailable">USB 连接不可用，请重新插入并授权后重试。</string>
     <string name="smart_usb_unverified">尚未验证此 USB 桥接芯片的 SMART 查询方式，未发送探测命令。</string>
     <string name="smart_usb_close_volumes">请先安全关闭此设备上已解锁的卷，再查询磁盘健康。</string>
     <string name="smart_query_retry">健康查询失败，USB 连接已恢复。尚未确认 SMART 支持，可重新查询。</string>
     <string name="smart_status_unconfirmed">尚未确认 SMART 支持</string>
+
+    <string name="connection_authorization_title">连接与授权</string>
+    <string name="connection_mode_label">访问模式</string>
+    <string name="connection_mode_root">Root</string>
+    <string name="connection_mode_usb">免 Root</string>
+    <string name="connection_status_summary">%1$s · %2$s</string>
+    <string name="connection_indicator_description">连接与授权：%1$s · %2$s</string>
+    <string name="connection_usb_connected">已连接 %1$d 个 USB 存储设备</string>
+    <string name="connection_usb_unknown">无法检测 USB 连接</string>
+    <string name="connection_access_note">磁盘是否可用、分区是否已解锁，请查看驱动器列表。</string>
+    <string name="connection_mode_root_desc">使用 su 权限访问磁盘。</string>
+    <string name="connection_mode_usb_desc">使用 USB Host 授权访问磁盘，无需 Root。</string>
+    <string name="connection_permission_label">授权状态</string>
+    <string name="connection_root_advanced">Root 高级选项</string>
+    <string name="connection_root_advanced_desc">查看 Root 环境详情并管理专用选项。</string>
 </resources>

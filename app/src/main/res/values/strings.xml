@@ -296,14 +296,14 @@
     <string name="creds_view_password">View Credential</string>
     <string name="creds_type_recovery">Recovery Key</string>
     <string name="creds_type_password">Password</string>
+    <string name="creds_type_saved">Saved credential</string>
+    <string name="unlock_authentication_required">Unlock this volume in the app before mounting it</string>
+    <string name="unlock_target_changed">The connected volume changed. Open the unlock dialog again.</string>
     <string name="creds_subtitle_guid">Volume GUID: %1$s · %2$s</string>
     <string name="creds_subtitle_id">Device ID: %1$s · %2$s</string>
     <string name="auth_failed">Authentication failed</string>
     <string name="auth_title">Verify Identity</string>
-    <string name="auth_subtitle">Please confirm device lock screen credential to view BitLocker credentials</string>
     <string name="auth_start_failed">Unable to start authentication</string>
-    <string name="copied_to_clipboard">Copied to clipboard</string>
-    <string name="copy_password">Copy Password</string>
     <string name="credential_details">Credential Details</string>
     <string name="volume_full_guid">Full Volume GUID</string>
     <string name="device_unique_id">Device Unique ID</string>
@@ -349,8 +349,6 @@
     <string name="mount_err_cannot_get_guid">Cannot obtain volume GUID</string>
     <string name="mount_err_no_block_device">No matching kernel block device found (/dev/block/…)</string>
     <string name="mount_err_manually_locked">Volume was manually locked or safely ejected; auto-mount cancelled</string>
-    <string name="mount_err_no_saved_password">No remembered password found. Please unlock and save password again</string>
-    <string name="mount_err_decrypt_password_failed">Failed to decrypt remembered password</string>
 
     <!-- Mode Switching Strings -->
     <string name="cancel">Cancel</string>
@@ -368,6 +366,10 @@
     <string name="biometric_protection_switch">Require Biometrics</string>
     <string name="biometric_protection_switch_desc">Require fingerprint/face authentication before accessing, viewing, or unlocking with saved credentials</string>
     <string name="biometric_unlock_button">Biometric Unlock</string>
+    <string name="saved_credential_unlock_button">Use Saved Credential</string>
+    <string name="saved_credential_quick_unlock_banner">A saved credential is available for this volume.</string>
+    <string name="saved_credential_quick_unlock_action">Quick Unlock</string>
+    <string name="saved_credential_unlock_subtitle">Use the saved credential for volume "%1$s"</string>
     <string name="biometric_unlock_prompt_title">Unlock BitLocker Drive</string>
     <string name="biometric_unlock_prompt_subtitle">Verify identity to decrypt volume \"%1$s\"</string>
     <string name="biometric_auth_for_view">Verify identity to view or copy BitLocker credentials</string>
@@ -520,16 +522,38 @@
     <string name="device_smart_telemetry_btn">Hardware Health &amp; S.M.A.R.T.</string>
     <string name="partition_number_format">Partition %1$d</string>
     <string name="partition_number_with_node">Partition %1$d · %2$s</string>
-    <string name="creds_type_saved">Saved credential</string>
-    <string name="saved_credential_unlock_subtitle">Use the saved credential for volume "%1$s"</string>
-    <string name="saved_credential_quick_unlock_action">Quick Unlock</string>
-    <string name="unlock_authentication_required">Unlock this volume in the app before mounting it</string>
-    <string name="saved_credential_unlock_button">Use Saved Credential</string>
-    <string name="saved_credential_quick_unlock_banner">A saved credential is available for this volume.</string>
-    <string name="unlock_target_changed">The connected volume changed. Open the unlock dialog again.</string>
+    <string name="authorization_checking">Checking…</string>
+    <string name="authorization_su_granted">su granted</string>
+    <string name="authorization_su_required">su not granted</string>
+    <string name="authorization_usb_granted">USB authorized</string>
+    <string name="authorization_usb_required">USB needs access</string>
+    <string name="authorization_usb_disconnected">No USB device</string>
+    <string name="authorization_check_failed">Check failed</string>
+    <string name="authorization_recheck">Check again</string>
+    <string name="authorization_request_usb">Authorize USB</string>
+    <string name="authorization_su_help">Checks whether this app can run commands as root. If access is missing, grant it in your root manager, then check again.</string>
+    <string name="authorization_usb_connect_help">Connect a USB storage device to check its USB Host authorization.</string>
+    <string name="authorization_usb_help">Authorized storage devices: %1$d of %2$d. Each device needs USB Host access. Reconnecting a device may require authorization again.</string>
+    <string name="authorization_error_help">Unable to read USB authorization status. Try checking again.</string>
+    <string name="authorization_request_failed">Unable to request USB access. Reconnect the device and try again.</string>
     <string name="smart_usb_unavailable">USB connection is unavailable. Reconnect and authorize the device, then try again.</string>
     <string name="smart_usb_unverified">This USB bridge has no verified SMART query route. No probe commands were sent.</string>
     <string name="smart_usb_close_volumes">Safely close this device’s unlocked volumes before querying its health, then try again.</string>
     <string name="smart_query_retry">The health query failed, but the USB connection recovered. SMART support is unconfirmed; you can retry.</string>
     <string name="smart_status_unconfirmed">SMART support unconfirmed</string>
+
+    <string name="connection_authorization_title">Connection &amp; Authorization</string>
+    <string name="connection_mode_label">Access mode</string>
+    <string name="connection_mode_root">Root</string>
+    <string name="connection_mode_usb">Non-root</string>
+    <string name="connection_status_summary">%1$s · %2$s</string>
+    <string name="connection_indicator_description">Connection and authorization: %1$s · %2$s</string>
+    <string name="connection_usb_connected">%1$d USB storage devices connected</string>
+    <string name="connection_usb_unknown">Unable to detect USB connection</string>
+    <string name="connection_access_note">Check the drive list to see whether a disk is available and its partitions are unlocked.</string>
+    <string name="connection_mode_root_desc">Access disks using su privileges.</string>
+    <string name="connection_mode_usb_desc">Access disks through USB Host authorization, without root.</string>
+    <string name="connection_permission_label">Authorization status</string>
+    <string name="connection_root_advanced">Root advanced options</string>
+    <string name="connection_root_advanced_desc">View root environment details and manage dedicated options.</string>
 </resources>

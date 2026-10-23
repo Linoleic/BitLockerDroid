@@ -26,7 +26,6 @@ import com.bitlockerdroid.R
 import com.bitlockerdroid.provider.BitLockerDocumentsProvider
 import com.bitlockerdroid.service.BitLockerDetector
 import com.bitlockerdroid.service.DetectedVolume
-import com.bitlockerdroid.service.KeyGuardService
 import com.bitlockerdroid.service.SavedCredentialAccess
 import com.bitlockerdroid.service.EjectStatus
 import com.bitlockerdroid.service.UnencryptedVolume
@@ -35,6 +34,7 @@ import com.bitlockerdroid.service.UnlockedVolume
 import com.bitlockerdroid.service.VirtualStorageMountManager
 import com.bitlockerdroid.service.StorageNotificationSuppressor
 import com.bitlockerdroid.ui.dialogs.RootControlDialog
+import com.bitlockerdroid.ui.dialogs.ConnectionAuthorizationDialog
 import com.bitlockerdroid.ui.dialogs.HardwareAccelerationDialog
 import com.bitlockerdroid.ui.dialogs.PerformanceOptimizationDialog
 import com.bitlockerdroid.ui.dialogs.SystemDiagnosticsDialog
@@ -46,7 +46,6 @@ import com.bitlockerdroid.ui.settings.SettingsTabContent
 import com.bitlockerdroid.ui.theme.BitLockerTheme
 import com.bitlockerdroid.ui.theme.ThemeMode
 import com.bitlockerdroid.ui.volumes.VolumesTabContent
-import com.bitlockerdroid.util.BiometricAuthHelper
 import com.bitlockerdroid.util.LogFile
 import com.bitlockerdroid.util.PreferenceHelper
 import com.bitlockerdroid.util.RootAccess
@@ -71,7 +70,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
     private var showLogDialogState = mutableStateOf(false)
     private var logContentState = mutableStateOf("")
     private var rememberedCredentialsState = mutableStateOf<List<PreferenceHelper.SavedCredential>>(emptyList())
-    private var canBiometricState = mutableStateOf(false)
+    private var vaultProtectedState = mutableStateOf(false)
 
     private var mountReadOnlyState = mutableStateOf(false)
     private var useRootAccessState = mutableStateOf(true)
@@ -254,7 +253,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
             val showLogDialog by showLogDialogState
             val logContent by logContentState
             val rememberedCredentials by rememberedCredentialsState
-            val canBiometric by canBiometricState
+            val vaultProtected by vaultProtectedState
             val ejectingPaths by ejectingPathsState
             val useRootAccess by useRootAccessState
             val useHardwareAes by useHardwareAesState
@@ -279,7 +278,8 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     showLogDialog = showLogDialog,
                     logContent = logContent,
                     rememberedCredentials = rememberedCredentials,
-                    canBiometric = canBiometric,
+                    vaultProtected = vaultProtected,
+                    onHomeTabSelected = { vaultProtectedState.value = PreferenceHelper.isBiometricVaultEnabled(this@BitLockerSettingsActivity) },
                     themeMode = currentTheme,
                     currentLanguage = currentLang,
                     useRootAccess = useRootAccess,
@@ -360,6 +360,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
     }
 
     private fun syncPreferences() {
+        vaultProtectedState.value = PreferenceHelper.isBiometricVaultEnabled(this)
         mountReadOnlyState.value = PreferenceHelper.mountReadOnly
         useRootAccessState.value = PreferenceHelper.useRootAccess
         useHardwareAesState.value = PreferenceHelper.isUseHardwareAes(this)
@@ -370,18 +371,6 @@ class BitLockerSettingsActivity : FragmentActivity() {
         suppressCorruptNotificationState.value = PreferenceHelper.suppressCorruptNotification
         refreshRememberedCredentials()
         refreshRootSolution()
-        refreshBiometricStatus()
-    }
-
-    private fun refreshBiometricStatus() {
-        lifecycleScope.launch(Dispatchers.Default) {
-            val canBio = BiometricAuthHelper.canAuthenticate(this@BitLockerSettingsActivity)
-            withContext(Dispatchers.Main) {
-                if (canBiometricState.value != canBio) {
-                    canBiometricState.value = canBio
-                }
-            }
-        }
     }
 
     private fun refreshRootSolution(force: Boolean = false) {
@@ -784,7 +773,8 @@ fun MainAppScreen(
     showLogDialog: Boolean,
     logContent: String,
     rememberedCredentials: List<PreferenceHelper.SavedCredential>,
-    canBiometric: Boolean = false,
+    vaultProtected: Boolean = false,
+    onHomeTabSelected: () -> Unit = {},
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     currentLanguage: String = PreferenceHelper.LANG_SYSTEM,
     useRootAccess: Boolean = true,
@@ -835,6 +825,14 @@ fun MainAppScreen(
     var selectedTab by rememberSaveable { mutableStateOf(initialTab) }
     var showCredentialsDialog by rememberSaveable { mutableStateOf(false) }
     var credentialForPasswordDialog by remember { mutableStateOf<PreferenceHelper.SavedCredential?>(null) }
+    var showConnectionAuthorizationDialog by rememberSaveable { mutableStateOf(false) }
+    val authorization = rememberAuthorizationStatus(useRootAccess)
+    val connectionSummary = stringResource(R.string.connection_status_summary,
+        connectionModeLabel(useRootAccess), authorizationLabel(useRootAccess, authorization.state))
+    val openConnectionAuthorization = {
+        authorization.recheck()
+        showConnectionAuthorizationDialog = true
+    }
 
     Scaffold(
         topBar = {
@@ -874,6 +872,8 @@ fun MainAppScreen(
                 },
                 actions = {
                     if (selectedTab == 0) {
+                        AuthorizationIndicator(useRootAccess = useRootAccess, status = authorization,
+                            onClick = openConnectionAuthorization)
                         // Unified Refresh & Scan Button
                         IconButton(onClick = onRefreshAndScan, enabled = !isRefreshing) {
                             if (isRefreshing) {
@@ -902,7 +902,10 @@ fun MainAppScreen(
             ) {
                 NavigationBarItem(
                     selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
+                    onClick = {
+                        selectedTab = 0
+                        onHomeTabSelected()
+                    },
                     icon = {
                         Icon(
                             imageVector = Icons.Default.Home,
@@ -941,7 +944,7 @@ fun MainAppScreen(
                     isRefreshing = isRefreshing,
                     ejectingPaths = ejectingPaths,
                     isVirtualMountSupported = useRootAccess && (rootSolution.isDeviceRooted || RootAccess.cachedHasSu == true),
-                    canBiometric = canBiometric,
+                    canBiometric = vaultProtected,
                     savedCredentialGuids = savedCredentialGuids,
                     onMountReadOnlyChange = onMountReadOnlyChange,
                     onRefreshAndScan = onRefreshAndScan,
@@ -965,6 +968,8 @@ fun MainAppScreen(
                     useSafDoubleBuffer = useSafDoubleBuffer,
                     onOpenCredentialsManager = remember { { showCredentialsDialog = true } },
                     onOpenRootControl = onOpenRootControl,
+                    connectionSummary = connectionSummary,
+                    onOpenConnectionAuthorization = openConnectionAuthorization,
                     onOpenPerformanceOptimization = onOpenHardwareAcceleration,
                     onOpenHardwareAcceleration = onOpenHardwareAcceleration,
                     onOpenSystemDiagnostics = onOpenSystemDiagnostics,
@@ -976,12 +981,21 @@ fun MainAppScreen(
             }
         }
 
-        // Root Control Dialog
+        // Canceling the safe-switch confirmation returns to the same panel.
+        if (showConnectionAuthorizationDialog && pendingRootSwitchTarget == null) {
+            ConnectionAuthorizationDialog(
+                useRootAccess = useRootAccess,
+                status = authorization,
+                onUseRootAccessChange = onUseRootAccessChange,
+                onDismiss = { showConnectionAuthorizationDialog = false }
+            )
+        }
+
+        // Root environment details and Root-only settings remain in settings.
         if (showRootControlDialog) {
             RootControlDialog(
                 rootSolution = rootSolution,
                 useRootAccess = useRootAccess,
-                onUseRootAccessChange = onUseRootAccessChange,
                 suppressCorruptNotification = suppressCorruptNotification,
                 onSuppressCorruptNotificationChange = onSuppressCorruptNotificationChange,
                 onDismiss = onCloseRootControl
