@@ -346,7 +346,6 @@ object UnlockManager {
     /** Clears a volume from the detected (locked) list, e.g. after it is
      *  unlocked or physically removed. */
     fun forgetDetected(devicePath: String) {
-        StorageNotificationSuppressor.forgetNode(devicePath)
         com.bitlockerdroid.util.ContextProvider.app?.let { app ->
             dismissAllNotificationsForDevice(app, devicePath)
         }
@@ -874,7 +873,6 @@ object UnlockManager {
         var removedAny = false
         val toClose = mutableListOf<Pair<String, DislockerCore>>()
         com.bitlockerdroid.util.DeviceIdentity.retainOnly(presentNodes)
-        StorageNotificationSuppressor.forgetMissing(presentNodes)
         val missingDetectedList = mutableListOf<String>()
         val missingSessionsList = mutableListOf<String>()
         synchronized(lock) {
@@ -958,7 +956,6 @@ object UnlockManager {
                     Log.w(TAG, "VirtualStorageMountManager.unmountAll failed", e)
                 }
                 com.bitlockerdroid.util.DeviceIdentity.clearCache()
-                StorageNotificationSuppressor.forgetMissing(emptyList())
                 app?.let { ctx ->
                     com.bitlockerdroid.share.LanShareManager.stopAll(ctx)
                     val nm = ctx.getSystemService(NotificationManager::class.java)

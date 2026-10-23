@@ -5,14 +5,7 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import com.bitlockerdroid.util.LogFile
 
-/**
- * Intercepts and suppresses system notifications warning about unmountable
- * BitLocker encrypted volumes (e.g. "USB 驱动器出现问题。点按即可修复").
- *
- * Strictly verified: Only cancels notifications whose tag or volume ID matches
- * a verified BitLocker partition node (e.g. "public:8,97"). Non-BitLocker corrupt drives
- * are NEVER suppressed, preserving Android's warnings for genuinely defective media.
- */
+/** Receives notifications; only verified BitLocker public-volume repair warnings are filtered. */
 class BitLockerNotificationListener : NotificationListenerService() {
 
     companion object {

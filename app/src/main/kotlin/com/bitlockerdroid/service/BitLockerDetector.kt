@@ -23,12 +23,14 @@ object BitLockerDetector {
     data class BitLockerHeaderInfo(
         val signature: String,
         val guid: String?,
-        val recoveryKeyId: String? = null
+        val recoveryKeyId: String? = null,
+        val verifiedMetadata: Boolean = false
     )
 
     data class MetadataGuids(
         val volumeGuid: String?,
-        val recoveryKeyId: String?
+        val recoveryKeyId: String?,
+        val verifiedMetadata: Boolean = false
     )
 
     /**
@@ -74,7 +76,6 @@ object BitLockerDetector {
                     StorageNotificationSuppressor.suppressForVolume(context, node)
                     UnlockManager.onDeviceDetected(context, node, 0, guid, recoveryKeyId)
                 } else {
-                    StorageNotificationSuppressor.forgetNode(node)
                     UnlockManager.forgetDetected(node)
                     UnlockManager.closeSessionIfPresent(node)
                 }
@@ -194,7 +195,7 @@ object BitLockerDetector {
         if (sig != "-FVE-FS-" && sig != "MSWIN4.1") return null
 
         val guids = extractMetadataGuids(path, sig, sector0)
-        return BitLockerHeaderInfo(sig, guids.volumeGuid, guids.recoveryKeyId)
+        return BitLockerHeaderInfo(sig, guids.volumeGuid, guids.recoveryKeyId, guids.verifiedMetadata)
     }
 
     /**
@@ -223,6 +224,7 @@ object BitLockerDetector {
     ): MetadataGuids {
         var volumeGuid: String? = null
         var recoveryKeyId: String? = null
+        var verifiedMetadata = false
         try {
             var metaOffset = 0L
             if (sig == "-FVE-FS-") {
@@ -253,6 +255,7 @@ object BitLockerDetector {
                             guid != STATIC_BDE_GUID_FIXED
                         ) {
                             volumeGuid = guid
+                            verifiedMetadata = guid != "00000000-0000-0000-0000-000000000000"
                         }
 
                         // Walk top-level datums to extract the 48-digit Recovery Key Identifier
@@ -296,7 +299,7 @@ object BitLockerDetector {
             }
         }
 
-        return MetadataGuids(volumeGuid, recoveryKeyId)
+        return MetadataGuids(volumeGuid, recoveryKeyId, verifiedMetadata)
     }
 
     /** Extracts the real unique persistent Volume GUID from the BitLocker metadata block. */

@@ -24,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### 安全
 
+- 系统通知过滤仅匹配已验证 BitLocker 卷的无法挂载提示，不再卸载卷或长期延后同盘通知。
 - 修复开启生物识别保护后，文件访问和虚拟挂载仍可能绕过验证、自动解锁的问题。
 - 快捷解锁、查看和复制保存的凭据遵守生物识别保护开关；切换解锁目标后，旧验证结果失效。
 
@@ -60,6 +61,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### Security
 
+- Limit system notification filtering to unmountable warnings for verified BitLocker volumes; remove volume unmounting and long-lived notification snoozing.
 - Fix file access and virtual mounting bypassing authentication when biometric protection is enabled.
 - Respect the biometric protection switch for quick unlock and when revealing or copying saved credentials. Discard old authentication results when the unlock target changes.
 
