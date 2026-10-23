@@ -208,19 +208,21 @@ typedef struct {
 static ntfs_write_cache_t g_ntfs_write_cache = {0};
 static pthread_mutex_t g_ntfs_write_lock = PTHREAD_MUTEX_INITIALIZER;
 
-static void dis_ntfs_flush_write_cache_locked(void)
+static int dis_ntfs_flush_write_cache_locked(void)
 {
+	int result = 0;
 	if (g_ntfs_write_cache.na) {
 		ntfs_attr_close(g_ntfs_write_cache.na);
 		g_ntfs_write_cache.na = NULL;
 	}
 	if (g_ntfs_write_cache.ni) {
-		ntfs_inode_sync(g_ntfs_write_cache.ni);
-		ntfs_inode_close(g_ntfs_write_cache.ni);
+		if (ntfs_inode_sync(g_ntfs_write_cache.ni) != 0) result = -EIO;
+		if (ntfs_inode_close(g_ntfs_write_cache.ni) != 0) result = -EIO;
 		g_ntfs_write_cache.ni = NULL;
 	}
 	g_ntfs_write_cache.vol = NULL;
 	g_ntfs_write_cache.path[0] = '\0';
+	return result;
 }
 
 int dis_ntfs_umount(dis_ntfs_handle_t vol_handle)
@@ -228,7 +230,7 @@ int dis_ntfs_umount(dis_ntfs_handle_t vol_handle)
 	if (!vol_handle)
 		return 0;
 	pthread_mutex_lock(&g_ntfs_write_lock);
-	dis_ntfs_flush_write_cache_locked();
+	int flush_result = g_ntfs_write_cache.vol == vol_handle ? dis_ntfs_flush_write_cache_locked() : 0;
 	pthread_mutex_unlock(&g_ntfs_write_lock);
 
 	ntfs_volume *vol = (ntfs_volume *)vol_handle;
@@ -238,20 +240,23 @@ int dis_ntfs_umount(dis_ntfs_handle_t vol_handle)
 			ctx->ntfs_vol = NULL;
 		}
 	}
-	return ntfs_umount(vol, FALSE);
+	int result = ntfs_umount(vol, FALSE);
+	return flush_result != 0 ? flush_result : result;
 }
 
-static void sync_volume_metadata(ntfs_volume *vol)
+static int sync_volume_metadata(ntfs_volume *vol)
 {
-	if (!vol) return;
+	if (!vol) return -EINVAL;
+	int result = 0;
 	if (vol->lcnbmp_ni && NInoDirty(vol->lcnbmp_ni))
-		ntfs_inode_sync(vol->lcnbmp_ni);
+		if (ntfs_inode_sync(vol->lcnbmp_ni) != 0) result = -EIO;
 	if (vol->mft_ni && NInoDirty(vol->mft_ni))
-		ntfs_inode_sync(vol->mft_ni);
+		if (ntfs_inode_sync(vol->mft_ni) != 0) result = -EIO;
 	if (vol->mftmirr_ni && NInoDirty(vol->mftmirr_ni))
-		ntfs_inode_sync(vol->mftmirr_ni);
+		if (ntfs_inode_sync(vol->mftmirr_ni) != 0) result = -EIO;
 	if (vol->dev)
-		ntfs_device_sync(vol->dev);
+		if (ntfs_device_sync(vol->dev) != 0) result = -EIO;
+	return result;
 }
 
 int64_t dis_ntfs_create(dis_ntfs_handle_t vol_handle, const char *parent_path, const char *name, int is_dir)
@@ -259,7 +264,10 @@ int64_t dis_ntfs_create(dis_ntfs_handle_t vol_handle, const char *parent_path, c
 	if (!vol_handle || !name || strlen(name) == 0)
 		return -EINVAL;
 	pthread_mutex_lock(&g_ntfs_write_lock);
-	dis_ntfs_flush_write_cache_locked();
+	if (dis_ntfs_flush_write_cache_locked() != 0) {
+		pthread_mutex_unlock(&g_ntfs_write_lock);
+		return -EIO;
+	}
 	pthread_mutex_unlock(&g_ntfs_write_lock);
 
 	ntfs_volume *vol = (ntfs_volume *)vol_handle;
@@ -302,7 +310,7 @@ int64_t dis_ntfs_create(dis_ntfs_handle_t vol_handle, const char *parent_path, c
 	ntfs_inode_close(dir_ni);
 
 	/* Flush volume metadata */
-	sync_volume_metadata(vol);
+	if (sync_volume_metadata(vol) != 0) return -EIO;
 
 	DLOG("ntfs_create succeeded for '%s' in '%s' -> mft=%llu", name, parent_path ? parent_path : "/", (unsigned long long)mft_no);
 	return (int64_t)mft_no;
@@ -313,7 +321,10 @@ int dis_ntfs_delete(dis_ntfs_handle_t vol_handle, const char *path)
 	if (!vol_handle || !path)
 		return -EINVAL;
 	pthread_mutex_lock(&g_ntfs_write_lock);
-	dis_ntfs_flush_write_cache_locked();
+	if (dis_ntfs_flush_write_cache_locked() != 0) {
+		pthread_mutex_unlock(&g_ntfs_write_lock);
+		return -EIO;
+	}
 	pthread_mutex_unlock(&g_ntfs_write_lock);
 
 	ntfs_volume *vol = (ntfs_volume *)vol_handle;
@@ -380,7 +391,7 @@ int dis_ntfs_delete(dis_ntfs_handle_t vol_handle, const char *path)
 		return -err;
 	}
 
-	sync_volume_metadata(vol);
+	if (sync_volume_metadata(vol) != 0) return -EIO;
 	DLOG("dis_ntfs_delete succeeded for '%s'", path);
 	return 0;
 }
@@ -390,7 +401,10 @@ int dis_ntfs_rename(dis_ntfs_handle_t vol_handle, const char *old_path, const ch
 	if (!vol_handle || !old_path || !new_path)
 		return -EINVAL;
 	pthread_mutex_lock(&g_ntfs_write_lock);
-	dis_ntfs_flush_write_cache_locked();
+	if (dis_ntfs_flush_write_cache_locked() != 0) {
+		pthread_mutex_unlock(&g_ntfs_write_lock);
+		return -EIO;
+	}
 	pthread_mutex_unlock(&g_ntfs_write_lock);
 
 	ntfs_volume *vol = (ntfs_volume *)vol_handle;
@@ -448,7 +462,7 @@ int dis_ntfs_rename(dis_ntfs_handle_t vol_handle, const char *old_path, const ch
 
 	/* Unlink old name */
 	ret = dis_ntfs_delete(vol_handle, old_path);
-	sync_volume_metadata(vol);
+	if (sync_volume_metadata(vol) != 0) return -EIO;
 	return ret;
 }
 
@@ -461,7 +475,10 @@ int64_t dis_ntfs_write(dis_ntfs_handle_t vol_handle, const char *path, int64_t o
 	pthread_mutex_lock(&g_ntfs_write_lock);
 
 	if (g_ntfs_write_cache.vol != vol || strcmp(g_ntfs_write_cache.path, path) != 0 || !g_ntfs_write_cache.na) {
-		dis_ntfs_flush_write_cache_locked();
+		if (dis_ntfs_flush_write_cache_locked() != 0) {
+			pthread_mutex_unlock(&g_ntfs_write_lock);
+			return -EIO;
+		}
 
 		ntfs_inode *ni = ntfs_pathname_to_inode(vol, NULL, path);
 		if (!ni) {
@@ -496,7 +513,10 @@ int64_t dis_ntfs_truncate(dis_ntfs_handle_t vol_handle, const char *path, int64_
 	ntfs_volume *vol = (ntfs_volume *)vol_handle;
 
 	pthread_mutex_lock(&g_ntfs_write_lock);
-	dis_ntfs_flush_write_cache_locked();
+	if (dis_ntfs_flush_write_cache_locked() != 0) {
+		pthread_mutex_unlock(&g_ntfs_write_lock);
+		return -EIO;
+	}
 	pthread_mutex_unlock(&g_ntfs_write_lock);
 
 	ntfs_inode *ni = ntfs_pathname_to_inode(vol, NULL, path);
@@ -511,11 +531,11 @@ int64_t dis_ntfs_truncate(dis_ntfs_handle_t vol_handle, const char *path, int64_
 
 	int ret = ntfs_attr_truncate(na, (s64)new_size);
 	ntfs_attr_close(na);
-	ntfs_inode_sync(ni);
-	ntfs_inode_close(ni);
-	sync_volume_metadata(vol);
+	if (ntfs_inode_sync(ni) != 0) ret = -1;
+	if (ntfs_inode_close(ni) != 0) ret = -1;
+	if (sync_volume_metadata(vol) != 0) return -EIO;
 
-	return ret < 0 ? -errno : 0;
+	return ret < 0 ? -EIO : 0;
 }
 
 int dis_ntfs_get_space(dis_ntfs_handle_t vol_handle, int64_t *total_bytes, int64_t *free_bytes)
@@ -563,7 +583,7 @@ int dis_ntfs_repair_dirty(dis_ntfs_handle_t vol_handle)
 	if (ret < 0) {
 		DLOG("ntfs_volume_write_flags failed: errno=%d", errno);
 	}
-	sync_volume_metadata(vol);
+	if (sync_volume_metadata(vol) != 0) return -EIO;
 
 	if (was_ro) {
 		vol->state |= NV_ReadOnly;
@@ -580,9 +600,9 @@ int dis_ntfs_sync(dis_ntfs_handle_t vol_handle)
 	ntfs_volume *vol = (ntfs_volume *)vol_handle;
 
 	pthread_mutex_lock(&g_ntfs_write_lock);
-	dis_ntfs_flush_write_cache_locked();
+	int result = g_ntfs_write_cache.vol == vol ? dis_ntfs_flush_write_cache_locked() : 0;
 	pthread_mutex_unlock(&g_ntfs_write_lock);
 
-	sync_volume_metadata(vol);
-	return 0;
+	int metadata_result = sync_volume_metadata(vol);
+	return result != 0 ? result : metadata_result;
 }

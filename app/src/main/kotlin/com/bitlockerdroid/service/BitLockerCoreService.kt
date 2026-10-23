@@ -170,7 +170,9 @@ class BitLockerCoreService : Service() {
                         val res = UnlockManager.safeEject(devPath)
                         val ejectRes = res.getOrNull()
                         val label = ejectRes?.label ?: getString(com.bitlockerdroid.R.string.notification_drive_title)
-                        val msg = when (ejectRes?.status) {
+                        val msg = if (res.isFailure) {
+                            getString(com.bitlockerdroid.R.string.safe_eject_failed, res.exceptionOrNull()?.message ?: "")
+                        } else when (ejectRes?.status) {
                             EjectStatus.DISK_SPUN_DOWN ->
                                 getString(com.bitlockerdroid.R.string.safe_eject_success, label)
                             EjectStatus.VOLUME_CLOSED_DISK_BUSY ->
@@ -186,14 +188,12 @@ class BitLockerCoreService : Service() {
                             ).show()
                         }
                     } else {
-                        val all = UnlockManager.unlockedVolumes
-                        for (v in all) {
-                            UnlockManager.safeEject(v.devicePath)
-                        }
+                        val failure = UnlockManager.safeEjectAll().firstOrNull { it.isFailure }
                         Handler(Looper.getMainLooper()).post {
                             android.widget.Toast.makeText(
                                 applicationContext,
-                                getString(com.bitlockerdroid.R.string.notification_all_ejected),
+                                if (failure == null) getString(com.bitlockerdroid.R.string.notification_eject_finished)
+                                else getString(com.bitlockerdroid.R.string.safe_eject_failed, failure.exceptionOrNull()?.message ?: ""),
                                 android.widget.Toast.LENGTH_LONG
                             ).show()
                         }

@@ -36,6 +36,16 @@ import java.io.InputStream
  */
 class BitLockerDocumentsProvider : DocumentsProvider() {
 
+    /** Listing documents must not mount a writable filesystem just to advertise capability. */
+    private fun canAdvertiseWrites(core: DislockerCore?): Boolean {
+        val reader = core?.reader ?: return false
+        return core.canWriteWithoutInitializingWriter(
+            reader is com.bitlockerdroid.ntfs.NtfsReader ||
+                reader is com.bitlockerdroid.ntfs.ExFatReader ||
+                reader is com.bitlockerdroid.ntfs.Fat32Reader
+        )
+    }
+
     companion object {
         private const val TAG = "BitLockerProvider"
 
@@ -53,18 +63,8 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
          * Safe-eject step: call before closing/locking a session so a write
          * pipeline is never cut off mid-transaction.
          */
-        fun drainActiveWrites(timeoutMs: Long = 8000) {
-            val inst = activeInstance ?: return
-            val deadline = System.currentTimeMillis() + timeoutMs
-            for ((_, thread) in inst.activeWrites) {
-                val remaining = deadline - System.currentTimeMillis()
-                if (remaining <= 0) break
-                try {
-                    thread.join(remaining)
-                } catch (_: InterruptedException) {
-                    break
-                }
-            }
+        fun drainActiveWrites(core: DislockerCore, timeoutMs: Long = 8000) {
+            core.pendingWrites.pauseAndDrain(timeoutMs)
         }
 
         /**
@@ -236,7 +236,6 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
 
     data class PendingSync(val file: java.io.File, val path: String, val record: Long)
     private val pendingWrites = java.util.concurrent.ConcurrentHashMap<Long, PendingSync>()
-    private val activeWrites = java.util.concurrent.ConcurrentHashMap<String, Thread>()
 
     private val syncThread = android.os.HandlerThread("SafSyncThread").apply { start() }
     private val syncHandler = android.os.Handler(syncThread.looper)
@@ -328,9 +327,11 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         }
         if (method == "lock_volume") {
             val dev = arg ?: extras?.getString("device_path") ?: return null
-            UnlockManager.lock(dev)
+            val result = UnlockManager.lock(dev)
             val out = Bundle()
-            out.putBoolean("success", true)
+            out.putBoolean("success", result.isSuccess)
+            result.exceptionOrNull()?.let { out.putString("error", it.message) }
+            result.getOrNull()?.let { out.putString("status", it.status.name) }
             return out
         }
         if (method == "refresh_scan") {
@@ -480,7 +481,11 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         }
         if (method == "switch_mode_and_restart") {
             val target = if (extras != null && extras.containsKey("target_root")) extras.getBoolean("target_root") else (arg == "true")
-            UnlockManager.safeEjectAll()
+            val failed = UnlockManager.safeEjectAll().firstOrNull { it.isFailure }
+            if (failed != null) return Bundle().apply {
+                putBoolean("success", false)
+                putString("error", failed.exceptionOrNull()?.message)
+            }
             try {
                 com.bitlockerdroid.service.VirtualStorageMountManager.unmountAll()
             } catch (_: Throwable) {}
@@ -607,7 +612,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                 row.add(Root.COLUMN_CAPACITY_BYTES, v.size)
             }
             val isRo = PreferenceHelper.isVolumeReadOnly(appContext, core?.volumeGuid, v.devicePath)
-            val canWrite = (core?.writer?.isMounted == true) && !isRo
+            val canWrite = canAdvertiseWrites(core) && !isRo
             var rootFlags = Root.FLAG_LOCAL_ONLY or Root.FLAG_SUPPORTS_IS_CHILD or Root.FLAG_SUPPORTS_SEARCH
             if (canWrite) {
                 rootFlags = rootFlags or Root.FLAG_SUPPORTS_CREATE
@@ -967,11 +972,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         }
 
         // Wait for any active write on this path before deleting
-        activeWrites[path]?.let { thread ->
-            try {
-                thread.join(3000)
-            } catch (_: Exception) {}
-        }
+        core.pendingWrites.awaitPath(path)
 
         if (path == "/" || record == core.reader.rootRef) {
             throw SecurityException("Cannot delete volume root directory")
@@ -1019,11 +1020,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             ?: throw IllegalStateException("Cannot resolve path for rename")
 
         // Wait for any active write on oldPath before renaming
-        activeWrites[oldPath]?.let { thread ->
-            try {
-                thread.join(3000)
-            } catch (_: Exception) {}
-        }
+        core.pendingWrites.awaitPath(oldPath)
 
         val parentPath = oldPath.substringBeforeLast('/', "")
         val newPath = if (parentPath.isEmpty()) "/$displayName" else "$parentPath/$displayName"
@@ -1100,16 +1097,24 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             val size = sourceEntry.fileSize
             val buf = ByteArray(64 * 1024)
             var offset = 0L
-            while (offset < size) {
-                val len = minOf(buf.size.toLong(), size - offset).toInt()
-                val n = sourceCore.readFile(sourceRecord, offset, buf, 0, len)
-                if (n <= 0) break
-                val w = writer.write(targetPath, offset, buf, n)
-                if (w < 0) {
-                    Log.e(TAG, "Failed writing copy chunk to $targetPath at offset $offset")
-                    break
+            val ticket = targetCore.pendingWrites.begin(targetPath)
+            var failure: Throwable? = null
+            try {
+                while (offset < size) {
+                    val len = minOf(buf.size.toLong(), size - offset).toInt()
+                    val n = sourceCore.readFile(sourceRecord, offset, buf, 0, len)
+                    if (n <= 0) throw java.io.IOException("Could not read the complete source file")
+                    DocumentWritePipeline.writeFully(writer, targetPath, offset, buf, n)
+                    offset += n
                 }
-                offset += w
+                if (!writer.truncate(targetPath, size) || !writer.sync()) {
+                    throw java.io.IOException("Could not finalize the copied file")
+                }
+            } catch (e: Throwable) {
+                failure = e
+                throw e
+            } finally {
+                targetCore.pendingWrites.finish(ticket, failure)
             }
         }
 
@@ -1242,15 +1247,16 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                     ?: throw SecurityException("Cannot resolve path for document write (record=$record, effRecord=$effRecord)")
 
                 // Wait for any previous write on this path
-                activeWrites[path]?.let { thread ->
-                    try {
-                        thread.join(3000)
-                    } catch (_: Exception) {}
-                }
+                val ticket = core.pendingWrites.begin(path)
 
                 val append = mode.contains("a")
 
-                val pipe = ParcelFileDescriptor.createReliablePipe()
+                val pipe = try {
+                    ParcelFileDescriptor.createReliablePipe()
+                } catch (e: Throwable) {
+                    core.pendingWrites.finish(ticket)
+                    throw e
+                }
                 val readFd = pipe[0]
                 val writeFd = pipe[1]
 
@@ -1262,184 +1268,67 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                 val useDoubleBuffer = PreferenceHelper.isUseSafDoubleBuffer(appContext)
 
                 val writerThread = Thread {
+                    var failure: Throwable? = null
                     var totalWritten = 0L
-                    var writeFailed = false
+                    val truncate = mode == "w" || mode.contains("t")
+                    val input = ParcelFileDescriptor.AutoCloseInputStream(readFd)
                     try {
                         val startOffset = if (append) (core.getEntry(record)?.fileSize ?: 0L) else 0L
-                        if (useDoubleBuffer) {
-                            class BufferSlot(val data: ByteArray, var length: Int = 0, var offset: Long = 0L)
-                            val slotCapacity = 512 * 1024
-                            val emptyQueue = java.util.concurrent.ArrayBlockingQueue<BufferSlot>(2)
-                            val readyQueue = java.util.concurrent.ArrayBlockingQueue<BufferSlot>(2)
-                            val poisonPill = BufferSlot(ByteArray(0), length = -1)
-
-                            emptyQueue.put(BufferSlot(ByteArray(slotCapacity)))
-                            emptyQueue.put(BufferSlot(ByteArray(slotCapacity)))
-
-                            val diskWriterThread = Thread {
-                                try {
-                                    while (true) {
-                                        val slot = readyQueue.take()
-                                        if (slot.length < 0) {
-                                            break
-                                        }
-                                        if (slot.length > 0) {
-                                            val w = writer.write(path, slot.offset, slot.data, slot.length)
-                                            if (w < 0) {
-                                                writeFailed = true
-                                                LogFile.write("provider", "Failed writing pipe chunk at ${slot.offset} to $path: $w")
-                                                break
-                                            }
-                                        }
-                                        emptyQueue.put(slot)
-                                    }
-                                } catch (t: Throwable) {
-                                    writeFailed = true
-                                    LogFile.write("provider", "Disk writer exception for $path: ${t.message}")
-                                }
-                            }.apply { isDaemon = true; name = "saf-disk-writer-$record" }
-
-                            diskWriterThread.start()
-
-                            var curOffset = startOffset
-                            try {
-                                ParcelFileDescriptor.AutoCloseInputStream(readFd).use { input ->
-                                    while (!writeFailed) {
-                                        val slot = emptyQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
-                                        if (slot == null) {
-                                            if (writeFailed) break
-                                            continue
-                                        }
-                                        var accumulated = 0
-                                        while (accumulated < slot.data.size) {
-                                            val n = input.read(slot.data, accumulated, slot.data.size - accumulated)
-                                            if (n <= 0) break
-                                            accumulated += n
-                                        }
-                                        if (accumulated <= 0) {
-                                            emptyQueue.put(slot)
-                                            break
-                                        }
-                                        slot.length = accumulated
-                                        slot.offset = curOffset
-                                        curOffset += accumulated
-                                        totalWritten = curOffset
-                                        readyQueue.put(slot)
-                                    }
-                                }
-                            } finally {
-                                readyQueue.put(poisonPill)
-                                try {
-                                    diskWriterThread.join()
-                                } catch (_: InterruptedException) {}
-                            }
-
-                            if (!writeFailed && totalWritten > 0) {
-                                writer.truncate(path, totalWritten)
-                            }
-                            if (!writeFailed) {
-                                writer.sync()
-                            }
-                            LogFile.write("provider", "Pipe write (double-buffered) complete for $path ($totalWritten bytes, append=$append, failed=$writeFailed)")
-                        } else {
-                            ParcelFileDescriptor.AutoCloseInputStream(readFd).use { input ->
-                                val buf = ByteArray(256 * 1024)
-                                var curOffset = startOffset
-                                while (true) {
-                                    var accumulated = 0
-                                    while (accumulated < buf.size) {
-                                        val n = input.read(buf, accumulated, buf.size - accumulated)
-                                        if (n <= 0) break
-                                        accumulated += n
-                                    }
-                                    if (accumulated <= 0) break
-                                    val w = writer.write(path, curOffset, buf, accumulated)
-                                    if (w < 0) {
-                                        LogFile.write("provider", "Failed writing pipe chunk at $curOffset to $path: $w")
-                                        writeFailed = true
-                                        break
-                                    }
-                                    curOffset += w
-                                    totalWritten = curOffset
-                                }
-                                if (!writeFailed && totalWritten > 0) {
-                                    writer.truncate(path, totalWritten)
-                                }
-                                if (!writeFailed) {
-                                    writer.sync()
-                                }
-                                LogFile.write("provider", "Pipe write complete for $path ($totalWritten bytes, append=$append, failed=$writeFailed)")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        writeFailed = true
-                        LogFile.write("provider", "Pipe write error for $path: ${Log.getStackTraceString(e)}")
+                        totalWritten = DocumentWritePipeline.copy(
+                            input, writer, path, startOffset, truncate, useDoubleBuffer,
+                            abortInput = { error -> readFd.closeWithError(error.message ?: "File write failed") }
+                        )
+                    } catch (e: Throwable) {
+                        failure = e
+                        try { readFd.closeWithError(e.message ?: "File write failed") } catch (_: Exception) {}
+                        LogFile.write("provider", "File write failed for $path: ${e.message}")
                     } finally {
-                        activeWrites.remove(path)
-                        core.invalidateCache()
-                        core.removeCreatedEntry(record)
-                        core.removeCreatedEntry(effRecord)
-                        val parentRecord = core.parentOf(record)
+                        try { input.close() } catch (e: Exception) {
+                            if (failure == null) failure = e
+                        }
                         try {
-                            val dirEntries = core.reader.listDirectory(parentRecord)
+                            core.invalidateCache()
+                            core.removeCreatedEntry(record)
+                            core.removeCreatedEntry(effRecord)
+                            val parentRecord = core.parentOf(record)
                             val fileName = path.substringAfterLast('/')
-                            val found = dirEntries.find {
-                                (it.name.trim().equals(fileName.trim(), ignoreCase = true) ||
-                                it.name.equals(fileName, ignoreCase = true)) && !it.isDirectory
+                            val found = core.reader.listDirectory(parentRecord).find {
+                                it.name.equals(fileName, ignoreCase = true) && !it.isDirectory
                             }
                             if (found != null) {
-                                // On a failed transfer the on-disk size is the
-                                // truth — never cache the partial byte count.
-                                val finalSize = if (writeFailed) found.size else totalWritten
-                                if (found.ref != record) {
-                                    core.setRecordAlias(record, found.ref)
-                                    core.registerPath(found.ref, path, parentRecord)
-                                }
+                                val finalSize = if (failure != null || !truncate) found.size else totalWritten
+                                if (found.ref != record) core.setRecordAlias(record, found.ref)
+                                core.registerPath(found.ref, path, parentRecord)
                                 core.registerPath(record, path, parentRecord)
-                                core.registerCreatedEntry(
-                                    com.bitlockerdroid.ntfs.VolumeEntry(
-                                        ref = record,
-                                        isDirectory = false,
-                                        fileName = fileName,
-                                        fileSize = finalSize,
-                                        lastModified = if (found.lastModified > 0L) found.lastModified else System.currentTimeMillis()
-                                    )
-                                )
-                                core.registerCreatedEntry(
-                                    com.bitlockerdroid.ntfs.VolumeEntry(
-                                        ref = found.ref,
-                                        isDirectory = false,
-                                        fileName = fileName,
-                                        fileSize = finalSize,
-                                        lastModified = if (found.lastModified > 0L) found.lastModified else System.currentTimeMillis()
-                                    )
-                                )
-                                LogFile.write("provider", "Alias registered: old=$record -> new=${found.ref} for $path (size=$finalSize)")
+                                for (ref in setOf(record, found.ref)) {
+                                    core.registerCreatedEntry(com.bitlockerdroid.ntfs.VolumeEntry(
+                                        ref, false, fileName, finalSize, found.lastModified
+                                    ))
+                                }
                             }
+                            notifyChange(documentId)
+                            notifyChange(docIdFor(core.devicePath, core.reader.volumeSerial(), parentRecord))
                         } catch (e: Exception) {
-                            LogFile.write("provider", "Failed updating alias after pipe write: ${e.message}")
+                            LogFile.write("provider", "Could not refresh file metadata after write: ${e.message}")
+                        } finally {
+                            core.pendingWrites.finish(ticket, failure)
                         }
-                        notifyChange(documentId)
-                        val serial = try { core.reader.volumeSerial() } catch (e: Exception) { 0L }
-                        notifyChange(docIdFor(core.devicePath, serial, parentRecord))
                     }
                 }.apply { isDaemon = true; name = "saf-writer-$record" }
 
-                activeWrites[path] = writerThread
-                writerThread.start()
-
+                try {
+                    writerThread.start()
+                } catch (e: Throwable) {
+                    try { readFd.closeWithError("Could not start file write") } catch (_: Exception) {}
+                    writeFd.close()
+                    core.pendingWrites.finish(ticket, e)
+                    throw e
+                }
                 return writeFd
             }
-
             // Mode is READ
             val readPath = if (record != -1L) core.resolvePath(record) else null
-            if (readPath != null) {
-                activeWrites[readPath]?.let { thread ->
-                    try {
-                        thread.join(3000)
-                    } catch (_: Exception) {}
-                }
-            }
+            if (readPath != null) core.pendingWrites.awaitPath(readPath)
             var size = core.getEntry(record)?.fileSize ?: 0L
             if (size == 0L) {
                 val p = core.resolvePath(record)
@@ -1719,7 +1608,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         var flags = 0
         val docDevPath = core.devicePath
         val isRo = PreferenceHelper.isVolumeReadOnly(appContext, core.volumeGuid, docDevPath)
-        val canWrite = (core.writer?.isMounted == true) && !isRo
+        val canWrite = canAdvertiseWrites(core) && !isRo
         if (isDir) {
             flags = flags or Document.FLAG_DIR_PREFERS_LAST_MODIFIED
             if (canWrite) {
@@ -1761,7 +1650,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         val isRoot = (record == core?.reader?.rootRef)
         val rowDevPath = core?.devicePath
         val rowRo = PreferenceHelper.isVolumeReadOnly(appContext, core?.volumeGuid, rowDevPath)
-        val canWrite = (core?.writer?.isMounted == true) && !rowRo
+        val canWrite = canAdvertiseWrites(core) && !rowRo
 
         val mimeType2 = if (entry.isDirectory) {
             Document.MIME_TYPE_DIR

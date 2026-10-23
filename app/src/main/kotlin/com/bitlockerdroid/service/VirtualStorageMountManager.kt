@@ -119,7 +119,11 @@ object VirtualStorageMountManager {
      * If [devicePath] is a usb:// URI, searches kernel block nodes matching [guid].
      */
     fun resolveBlockDevice(devicePath: String, guid: String?): String? {
-        if (devicePath.startsWith("/dev/block/")) return devicePath
+        if (devicePath.startsWith("/dev/block/")) {
+            return devicePath.takeIf {
+                guid.isNullOrBlank() || BitLockerDetector.getVolumeGuid(it).equals(guid, ignoreCase = true)
+            }
+        }
         if (guid.isNullOrBlank()) return null
         val nodes = BitLockerDetector.enumerateVoldNodes()
         for (node in nodes) {
@@ -238,12 +242,14 @@ object VirtualStorageMountManager {
     }
 
     /**
-     * Attempts to mount using a remembered password from KeyGuardService.
+     * Mounts only from a live unlocked session. Any automatic restoration goes
+     * through the same authorization gate as SAF and device detection.
      */
     fun mountRemembered(context: Context, devicePath: String, expectedGuid: String? = null): Result<VirtualMountInfo> {
         val guid = expectedGuid?.takeIf { it.isNotBlank() }
+            ?: UnlockManager.getGuidForPath(devicePath)
             ?: BitLockerDetector.getVolumeGuid(devicePath)
-            ?: return Result.failure(IllegalStateException("Volume GUID is unavailable"))
+            ?: return Result.failure(IllegalStateException(context.getString(R.string.mount_err_cannot_get_guid)))
         if (UnlockManager.isManuallyLocked(guid, devicePath)) {
             return Result.failure(IllegalStateException(context.getString(R.string.mount_err_manually_locked)))
         }
@@ -259,9 +265,15 @@ object VirtualStorageMountManager {
 
         val resolvedPath = resolveBlockDevice(devicePath, guid)
             ?: return Result.failure(IllegalStateException(context.getString(R.string.mount_err_no_block_device)))
+
         return mount(
-            context = context, devicePath = resolvedPath, offset = 0L, key = cleanKey,
-            isRecovery = isRecovery, volumeLabel = devInfo.friendlyName, volumeGuid = guid,
+            context = context,
+            devicePath = resolvedPath,
+            offset = 0L,
+            key = cleanKey,
+            isRecovery = isRecovery,
+            volumeLabel = devInfo.friendlyName,
+            volumeGuid = guid,
             originalPath = devicePath
         )
     }
@@ -442,9 +454,36 @@ object VirtualStorageMountManager {
         }
     }
 
-    /**
-     * Unmounts a virtual storage mount point.
-     */
+    /** Safe-eject variant: keep tracking a daemon that has not confirmed its exit. */
+    @Synchronized
+    fun unmountChecked(devicePath: String) {
+        val info = activeMounts[devicePath]
+            ?: activeMounts.values.firstOrNull { it.devicePath == devicePath }
+            ?: return
+        val detached = RootAccess.exec("su -M -c 'if grep -Fq \" ${info.mountPoint} \" /proc/mounts; then umount -l \"${info.mountPoint}\"; fi'")
+        if (detached == null || detached.first != 0) {
+            throw java.io.IOException("Could not detach the virtual mount")
+        }
+        if (info.pid <= 1) throw java.io.IOException("Could not confirm virtual mount shutdown")
+        if (info.pid > 1) {
+            RootAccess.exec("kill -TERM ${info.pid} 2>/dev/null")
+            var exited = false
+            for (attempt in 1..20) {
+                val status = RootAccess.execTimeout("if kill -0 ${info.pid} 2>/dev/null; then echo alive; else echo gone; fi", 500)
+                if (status?.trim() == "gone") {
+                    exited = true
+                    break
+                }
+                Thread.sleep(100)
+            }
+            if (!exited) throw java.io.IOException("Virtual mount is still closing; eject was cancelled")
+        }
+        activeMounts.entries.removeIf { it.value.mountPoint == info.mountPoint }
+        RootAccess.exec("rmdir '${info.mountPoint}' 2>/dev/null")
+        notifyStateChanged()
+    }
+
+    /** Unmounts a virtual storage mount point during best-effort cleanup. */
     @Synchronized
     fun unmount(devicePath: String) {
         val info = activeMounts.remove(devicePath)

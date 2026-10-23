@@ -277,6 +277,7 @@ dis_fatfs_handle_t dis_fatfs_mount(dis_ctx_t *ctx, int read_only) {
 int dis_fatfs_umount(dis_fatfs_handle_t vol_handle) {
     if (!vol_handle) return 0;
     fatfs_slot_t *slot = (fatfs_slot_t *)vol_handle;
+    int result = 0;
 
     pthread_mutex_lock(&g_slot_lock);
     if (!slot->in_use) {
@@ -284,20 +285,20 @@ int dis_fatfs_umount(dis_fatfs_handle_t vol_handle) {
         return 0;
     }
     if (slot->write_fil_open) {
-        f_close(&slot->write_fil);
+        if (f_close(&slot->write_fil) != FR_OK) result = -EIO;
         slot->write_fil_open = 0;
         slot->write_path[0] = '\0';
     }
     if (slot->ctx && slot->ctx->fatfs_vol == (void *)slot) {
         slot->ctx->fatfs_vol = NULL;
     }
-    f_unmount(slot->drive_str);
+    if (f_unmount(slot->drive_str) != FR_OK) result = -EIO;
     slot->in_use = 0;
     slot->ctx = NULL;
     pthread_mutex_unlock(&g_slot_lock);
 
     DLOG("Unmounted FatFs volume");
-    return 0;
+    return result;
 }
 
 int64_t dis_fatfs_create(dis_fatfs_handle_t vol_handle, const char *parent_path, const char *name, int is_dir) {
@@ -477,7 +478,7 @@ int64_t dis_fatfs_truncate(dis_fatfs_handle_t vol_handle, const char *path, int6
     make_ff_path(slot, path, full_path, sizeof(full_path));
 
     if (slot->write_fil_open) {
-        f_close(&slot->write_fil);
+        if (f_close(&slot->write_fil) != FR_OK) return -EIO;
         slot->write_fil_open = 0;
         slot->write_path[0] = '\0';
     }
@@ -489,7 +490,7 @@ int64_t dis_fatfs_truncate(dis_fatfs_handle_t vol_handle, const char *path, int6
             DLOG("f_open create_always failed for '%s' (res=%d)", full_path, (int)res);
             return -((int64_t)res);
         }
-        f_close(&fil);
+        if (f_close(&fil) != FR_OK) return -EIO;
         DLOG("f_open create_always (truncate to 0) succeeded for '%s'", full_path);
         return 0;
     }
@@ -508,7 +509,7 @@ int64_t dis_fatfs_truncate(dis_fatfs_handle_t vol_handle, const char *path, int6
     }
 
     res = f_truncate(&fil);
-    f_close(&fil);
+    if (f_close(&fil) != FR_OK && res == FR_OK) res = FR_DISK_ERR;
 
     if (res != FR_OK) {
         DLOG("f_truncate failed for '%s' (res=%d)", full_path, (int)res);
@@ -541,12 +542,15 @@ int dis_fatfs_sync(dis_fatfs_handle_t vol_handle) {
     if (!vol_handle) return -EINVAL;
     fatfs_slot_t *slot = (fatfs_slot_t *)vol_handle;
     if (slot->write_fil_open) {
-        f_close(&slot->write_fil);
+        FRESULT result = f_sync(&slot->write_fil);
+        if (result != FR_OK) return -EIO;
+        result = f_close(&slot->write_fil);
+        if (result != FR_OK) return -EIO;
         slot->write_fil_open = 0;
         slot->write_path[0] = '\0';
     }
     if (slot->ctx) {
-        dis_blk_sync(slot->ctx);
+        return dis_blk_sync(slot->ctx);
     }
     return 0;
 }

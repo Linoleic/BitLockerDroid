@@ -13,7 +13,6 @@ import com.bitlockerdroid.R
 import com.bitlockerdroid.ui.BitLockerSettingsActivity
 import com.bitlockerdroid.ui.UnlockDialogActivity
 import com.bitlockerdroid.util.PreferenceHelper
-import com.bitlockerdroid.service.SavedCredentialAccess
 import com.bitlockerdroid.util.LogFile
 
 /**
@@ -76,14 +75,18 @@ object UnlockManager {
     private val sessionCredentials = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Boolean>>()
 
     fun getSessionCredential(devicePath: String, guid: String? = null): Pair<String, Boolean>? {
-        sessionCredentials[devicePath]?.let { return it }
-        if (!guid.isNullOrBlank()) {
-            val entry = sessionCredentials.entries.firstOrNull {
-                getGuidForPath(it.key).equals(guid, ignoreCase = true)
+        return synchronized(lock) {
+            fun isUsable(path: String, core: DislockerCore): Boolean =
+                !core.isClosed && !closingSessions.contains(path) &&
+                    (guid.isNullOrBlank() || core.volumeGuid.equals(guid, ignoreCase = true))
+            sessions[devicePath]?.takeIf { isUsable(devicePath, it) }?.let {
+                sessionCredentials[devicePath]?.let { credential -> return@synchronized credential }
             }
-            if (entry != null) return entry.value
+            if (!guid.isNullOrBlank()) {
+                sessions.entries.firstOrNull { isUsable(it.key, it.value) }
+                    ?.let { sessionCredentials[it.key] }
+            } else null
         }
-        return null
     }
 
     /** devicePath -> detected-but-not-yet-unlocked volume. */
@@ -116,55 +119,77 @@ object UnlockManager {
         get() {
             // Snapshot under the lock; the per-volume queries below do
             // root execs and native IO and must not hold the lock.
-            val snapshot = synchronized(lock) { sessions.toList() }
+            val snapshot = synchronized(lock) {
+                sessions.filterKeys { !closingSessions.contains(it) }.toList()
+            }
             val seenGuids = mutableSetOf<String>()
             val result = mutableListOf<UnlockedVolume>()
             for ((path, core) in snapshot) {
-                val g = core.volumeGuid
-                if (!g.isNullOrBlank() && !seenGuids.add(g.lowercase())) {
-                    continue
-                }
-                val fsName = try {
-                    when (core.reader) {
-                        is com.bitlockerdroid.ntfs.NtfsReader -> "NTFS"
-                        is com.bitlockerdroid.ntfs.ExFatReader -> "exFAT"
-                        is com.bitlockerdroid.ntfs.Fat32Reader -> "FAT32"
-                        else -> "Unknown"
+                var volumeGuid: String? = null
+                val volume = try {
+                    synchronized(core) {
+                        val stillCurrent = synchronized(lock) {
+                            sessions[path] === core && !closingSessions.contains(path)
+                        }
+                        if (!stillCurrent || core.isClosed) return@synchronized null
+                        val currentGuid = core.volumeGuid
+                        volumeGuid = currentGuid
+                        if (!currentGuid.isNullOrBlank() && currentGuid.lowercase() in seenGuids) {
+                            return@synchronized null
+                        }
+
+                        // Reader validation is read-only. Do not initialize a
+                        // writer just to populate this management snapshot.
+                        val reader = core.reader
+                        val fsName = when (reader) {
+                            is com.bitlockerdroid.ntfs.NtfsReader -> "NTFS"
+                            is com.bitlockerdroid.ntfs.ExFatReader -> "exFAT"
+                            is com.bitlockerdroid.ntfs.Fat32Reader -> "FAT32"
+                            else -> "Unknown"
+                        }
+                        val devInfo = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(path)
+                        val partInfo = com.bitlockerdroid.util.DeviceIdentity.resolvePartitionInfo(path)
+                        val space = core.getSpaceInfoIfWriterInitialized()
+                        val totalBytes = if (space != null && space.first > 0L) space.first else core.info.volumeSize
+                        val freeBytes = space?.second ?: -1L
+                        val usedBytes = if (freeBytes >= 0L) (totalBytes - freeBytes).coerceAtLeast(0L) else -1L
+                        val serial = reader.volumeSerial()
+                        val isRo = com.bitlockerdroid.util.ContextProvider.app?.let { app ->
+                            PreferenceHelper.isVolumeReadOnly(app, volumeGuid, path)
+                        } ?: false
+                        val readerSupportsWrite =
+                            reader is com.bitlockerdroid.ntfs.NtfsReader ||
+                                reader is com.bitlockerdroid.ntfs.ExFatReader ||
+                                reader is com.bitlockerdroid.ntfs.Fat32Reader
+                        val canWrite = core.canWriteWithoutInitializingWriter(readerSupportsWrite) && !isRo
+                        UnlockedVolume(
+                            devicePath = path,
+                            size = totalBytes,
+                            label = core.volumeLabel,
+                            fsType = fsName,
+                            cipher = core.info.algorithmName,
+                            canWrite = canWrite,
+                            guid = volumeGuid,
+                            recoveryKeyId = core.recoveryKeyId,
+                            deviceName = devInfo.friendlyName,
+                            freeBytes = freeBytes,
+                            usedBytes = usedBytes,
+                            sectorSize = core.info.sectorSize,
+                            volumeSerial = serial,
+                            isRecovery = core.isRecovery,
+                            isDirty = reader.isDirty,
+                            partitionIndex = partInfo.partitionIndex,
+                            partitionName = partInfo.partitionNodeName
+                        )
                     }
-                } catch (_: Throwable) {
-                    "Unknown"
+                } catch (e: Exception) {
+                    LogFile.write("app", "unlockedVolumes: omitting unreadable session $path: ${e.message}")
+                    null
                 }
-                val devInfo = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(path)
-                val partInfo = com.bitlockerdroid.util.DeviceIdentity.resolvePartitionInfo(path)
-                val space = core.getSpaceInfo()
-                val totalBytes = if (space != null && space.first > 0L) space.first else core.info.volumeSize
-                val freeBytes = space?.second ?: -1L
-                val usedBytes = if (freeBytes >= 0L) (totalBytes - freeBytes).coerceAtLeast(0L) else -1L
-                val serial = try { core.reader.volumeSerial() } catch (_: Exception) { 0L }
-                val isRo = com.bitlockerdroid.util.ContextProvider.app?.let { app ->
-                    PreferenceHelper.isVolumeReadOnly(app, core.volumeGuid, path)
-                } ?: false
-                result.add(
-                    UnlockedVolume(
-                        devicePath = path,
-                        size = totalBytes,
-                        label = core.volumeLabel,
-                        fsType = fsName,
-                        cipher = core.info.algorithmName,
-                        canWrite = (core.writer?.isMounted == true) && !isRo,
-                        guid = core.volumeGuid,
-                        recoveryKeyId = core.recoveryKeyId,
-                        deviceName = devInfo.friendlyName,
-                        freeBytes = freeBytes,
-                        usedBytes = usedBytes,
-                        sectorSize = core.info.sectorSize,
-                        volumeSerial = serial,
-                        isRecovery = core.isRecovery,
-                        isDirty = core.isDirty,
-                        partitionIndex = partInfo.partitionIndex,
-                        partitionName = partInfo.partitionNodeName
-                    )
-                )
+                if (volume != null) {
+                    volumeGuid?.lowercase()?.let { seenGuids.add(it) }
+                    result.add(volume)
+                }
             }
             return result
         }
@@ -262,7 +287,10 @@ object UnlockManager {
         // Remove under the lock, but close outside it: close() flushes and
         // does native IO, and holding `lock` during that stalls every
         // get()/isUnlocked() caller.
-        val removed: DislockerCore? = synchronized(lock) { sessions.remove(devicePath) }
+        val removed: DislockerCore? = synchronized(lock) {
+            sessionCredentials.remove(devicePath)
+            sessions.remove(devicePath)
+        }
         removed?.close()
         if (removed != null) {
             app?.let {
@@ -359,7 +387,7 @@ object UnlockManager {
         sessions[devicePath]?.volumeGuid ?: detected[devicePath]?.guid
     }
 
-    /** Called by the unlock dialog with the user password. */
+    /** Called by the unlock dialog with the user credential. */
     fun unlockWithPassword(
         context: Context,
         devicePath: String,
@@ -409,59 +437,98 @@ object UnlockManager {
         remember: Boolean,
         expectedGuid: String? = null
     ): Result<DislockerCore> {
+        return synchronized(getParentDiskLock(com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(devicePath))) {
+            unlockWithCredentialLocked(context, devicePath, offset, credential, isRecovery, remember, expectedGuid)
+        }
+    }
+
+    private fun unlockWithCredentialLocked(
+        context: Context, devicePath: String, offset: Long, credential: String,
+        isRecovery: Boolean, remember: Boolean, expectedGuid: String?
+    ): Result<DislockerCore> {
         return try {
-            val core = if (isRecovery) {
+            if (devicePath.startsWith("/dev/block/") && !expectedGuid.isNullOrBlank() &&
+                !BitLockerDetector.getVolumeGuid(devicePath).equals(expectedGuid, ignoreCase = true)) {
+                return Result.failure(SecurityException(context.getString(R.string.unlock_target_changed)))
+            }
+            // Duplicate notifications or unlock requests must not replace a live
+            // filesystem/USB worker, which may still be serving file operations.
+            val existing = synchronized(lock) { sessions[devicePath] }
+            if (existing != null && !existing.isClosed) {
+                if (closingSessions.contains(devicePath)) {
+                    return Result.failure(IllegalStateException("Volume is being closed"))
+                }
+                if (existing.offset != offset || (!expectedGuid.isNullOrBlank() &&
+                        !existing.volumeGuid.equals(expectedGuid, ignoreCase = true))) {
+                    return Result.failure(SecurityException(context.getString(R.string.unlock_target_changed)))
+                }
+                // Reusing an unlocked volume does not validate the supplied key.
+                // Keep its current credentials and remember preference intact.
+                return Result.success(existing)
+            }
+            val openedCore = if (isRecovery) {
                 DislockerCore.openWithRecoveryKey(devicePath, offset, credential)
             } else {
                 DislockerCore.open(devicePath, offset, credential)
             }
-            val guid = core.volumeGuid ?: expectedGuid ?: BitLockerDetector.getVolumeGuid(devicePath)
-            if (!guid.isNullOrBlank()) {
-                manuallyLockedGuids.remove(guid)
-            }
-            manuallyLockedGuids.remove(devicePath)
-            // Replace any stale session: take it out under the lock, close it
-            // outside so native teardown never runs while `lock` is held.
-            val stale = synchronized(lock) {
-                val old = sessions.put(devicePath, core)
-                detected.remove(devicePath)
-                if (!guid.isNullOrBlank()) {
-                    val aliases = detected.entries.filter { it.value.guid.equals(guid, ignoreCase = true) }.map { it.key }
-                    aliases.forEach { detected.remove(it) }
+            var guid: String? = null
+            var stale: DislockerCore? = null
+            val core = SessionAdmission.validateBeforePublish(
+                candidate = openedCore,
+                validate = { candidate ->
+                    candidate.validateReadableFilesystem()
+                    // The device node may have been reused while authentication was on screen.
+                    if (!expectedGuid.isNullOrBlank() && !candidate.volumeGuid.equals(expectedGuid, ignoreCase = true)) {
+                        throw SecurityException(context.getString(R.string.unlock_target_changed))
+                    }
+                    guid = candidate.volumeGuid ?: expectedGuid ?: BitLockerDetector.getVolumeGuid(devicePath)
+                },
+                publish = { candidate ->
+                    synchronized(lock) {
+                        if (!guid.isNullOrBlank()) manuallyLockedGuids.remove(guid)
+                        manuallyLockedGuids.remove(devicePath)
+                        // Replace any stale session: take it out under the lock,
+                        // close outside so native teardown never runs under `lock`.
+                        stale = sessions.put(devicePath, candidate)
+                        detected.remove(devicePath)
+                        if (!guid.isNullOrBlank()) {
+                            val aliases = detected.entries.filter { it.value.guid.equals(guid, ignoreCase = true) }.map { it.key }
+                            aliases.forEach { detected.remove(it) }
+                        }
+                    }
                 }
-                old
-            }
+            ).getOrThrow()
             stale?.close()
+            val effectiveGuid = guid
             // Save session credentials in memory for the duration of this session
             sessionCredentials[devicePath] = Pair(credential, isRecovery)
 
-            // Save the encrypted credential only if the user asked to remember it.
-            // Keyed strictly by persistent Volume GUID rather than ephemeral device node.
-            if (!guid.isNullOrBlank()) {
+            // Persist only according to the user's existing remember choice.
+            if (!effectiveGuid.isNullOrBlank()) {
                 if (remember) {
                     val rawStored = if (isRecovery) "$RECOVERY_PREFIX$credential" else credential
                     KeyGuardService.encrypt(rawStored)?.let { blob ->
                         val friendly = core.volumeLabel.ifBlank {
                             com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath, forceRefresh = true).friendlyName
                         }
-                        PreferenceHelper.saveRememberedPassword(context, guid, blob, friendlyName = friendly)
+                        PreferenceHelper.saveRememberedPassword(context, effectiveGuid, blob, friendlyName = friendly)
                     }
                 } else {
-                    PreferenceHelper.clearRememberedPassword(context, guid)
+                    PreferenceHelper.clearRememberedPassword(context, effectiveGuid)
                 }
             } else {
                 LogFile.write("app", "unlockWithCredential: no volume GUID found for $devicePath, skipping credential persistence")
             }
 
             // Trigger userspace FUSE virtual mount to /storage/<ID> if enabled for this volume
-            val effectiveGuid = guid ?: ""
+            val mountGuid = effectiveGuid ?: ""
             val effectiveLabel = core.volumeLabel.ifBlank {
                 com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath).friendlyName
             }
             val shouldVirtualMount = VirtualStorageMountManager.isSupported() &&
-                PreferenceHelper.isVolumeVirtualMountEnabled(context, effectiveGuid, devicePath)
+                PreferenceHelper.isVolumeVirtualMountEnabled(context, mountGuid, devicePath)
             if (shouldVirtualMount) {
-                val resolvedBlock = VirtualStorageMountManager.resolveBlockDevice(devicePath, effectiveGuid)
+                val resolvedBlock = VirtualStorageMountManager.resolveBlockDevice(devicePath, mountGuid)
                 if (resolvedBlock != null) {
                     Thread {
                         VirtualStorageMountManager.mount(
@@ -471,7 +538,7 @@ object UnlockManager {
                             key = credential,
                             isRecovery = isRecovery,
                             volumeLabel = effectiveLabel,
-                            volumeGuid = effectiveGuid,
+                            volumeGuid = mountGuid,
                             originalPath = devicePath
                         )
                     }.start()
@@ -502,28 +569,37 @@ object UnlockManager {
      * Returns the core or null.
      */
     fun ensureUnlocked(context: Context, devicePath: String, offset: Long, guid: String? = null): DislockerCore? {
-        synchronized(lock) {
-            sessions[devicePath]?.let { return it }
-        }
-        val volId = guid ?: BitLockerDetector.getVolumeGuid(devicePath) ?: return null
-        val raw = SavedCredentialAccess.readForAutomaticUnlock(
-            context, volId, isManuallyLocked(volId, devicePath), closingSessions.contains(devicePath)
-        ) ?: return null
-        // Recheck the mutable policy after decrypting the stored credential.
-        if (!SavedCredentialAccess.canAutomaticallyUnlock(
+        if (closingSessions.contains(devicePath)) return null
+        return synchronized(getParentDiskLock(com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(devicePath))) {
+            if (closingSessions.contains(devicePath)) return@synchronized null
+            val existing = synchronized(lock) { sessions[devicePath] }
+            if (existing != null && !existing.isClosed &&
+                (guid.isNullOrBlank() || existing.volumeGuid.equals(guid, ignoreCase = true))) {
+                return@synchronized existing
+            }
+            val actualGuid = if (devicePath.startsWith("/dev/block/")) BitLockerDetector.getVolumeGuid(devicePath) else null
+            if (devicePath.startsWith("/dev/block/") &&
+                (actualGuid.isNullOrBlank() || (!guid.isNullOrBlank() && !actualGuid.equals(guid, ignoreCase = true)))) {
+                return@synchronized null
+            }
+            val volId = actualGuid ?: guid ?: return@synchronized null
+            val raw = SavedCredentialAccess.readForAutomaticUnlock(
                 context, volId, isManuallyLocked(volId, devicePath), closingSessions.contains(devicePath)
-            )
-        ) return null
-        val isRecovery = raw.startsWith(RECOVERY_PREFIX)
-        val cleanKey = if (isRecovery) raw.removePrefix(RECOVERY_PREFIX) else raw
-        val result = unlockWithCredential(context, devicePath, offset, cleanKey, isRecovery, true, expectedGuid = volId)
-        return result.getOrNull()
+            ) ?: return@synchronized null
+            // Settings can change while the Keystore operation is running.
+            if (!SavedCredentialAccess.canAutomaticallyUnlock(
+                    context, volId, isManuallyLocked(volId, devicePath), closingSessions.contains(devicePath)
+                )) return@synchronized null
+            val isRecovery = raw.startsWith(RECOVERY_PREFIX)
+            val cleanKey = if (isRecovery) raw.removePrefix(RECOVERY_PREFIX) else raw
+            unlockWithCredentialLocked(context, devicePath, offset, cleanKey, isRecovery, true, volId).getOrNull()
+        }
     }
 
     /**
      * Safely ejects an unlocked BitLocker volume:
-     * 1. Unmounts FUSE virtual mount and waits for daemon clean exit
-     * 2. Drains in-flight SAF stream writes
+     * 1. Freezes admissions and drains this session's SAF stream writes
+     * 2. Stops sharing and waits for the FUSE daemon to exit without force-killing it
      * 3. Flushes and closes decrypted session and block device
      * 4. Multi-Partition Safe Physical Spindown & Offline:
      *    Checks remaining sessions AND sibling system partition mounts before spindown.
@@ -537,27 +613,30 @@ object UnlockManager {
 
         synchronized(diskLock) {
             closingSessions.add(devicePath)
+            var ejectingCore: DislockerCore? = null
             try {
-                val stale: DislockerCore?
+                val stale: DislockerCore
                 val effectiveLabel: String
+                val closedVolume: DetectedVolume
                 synchronized(lock) {
-                    val core = sessions.remove(devicePath)
+                    val core = sessions[devicePath]
+                        ?: return Result.failure(java.io.IOException("Volume session not found"))
                     stale = core
-                    val guid = core?.volumeGuid ?: BitLockerDetector.getVolumeGuid(devicePath)
-                    val recoveryKeyId = core?.recoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
+                    ejectingCore = core
+                    val guid = core.volumeGuid ?: BitLockerDetector.getVolumeGuid(devicePath)
+                    val recoveryKeyId = core.recoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
                     if (!guid.isNullOrBlank()) {
                         manuallyLockedGuids.add(guid)
                     }
                     manuallyLockedGuids.add(devicePath)
                     val fallbackLabel = app.getString(R.string.notification_drive_title)
-                    effectiveLabel = core?.volumeLabel?.ifBlank { devInfo.friendlyName.ifBlank { fallbackLabel } }
-                        ?: devInfo.friendlyName.ifBlank { fallbackLabel }
+                    effectiveLabel = core.volumeLabel.ifBlank { devInfo.friendlyName.ifBlank { fallbackLabel } }
 
                     LogFile.write("app", "UnlockManager.safeEject: ejecting $devicePath ($effectiveLabel, guid=$guid, rkId=$recoveryKeyId)")
 
                     val isRo = com.bitlockerdroid.util.PreferenceHelper.isVolumeReadOnly(app, guid, devicePath)
                     val partInfo = com.bitlockerdroid.util.DeviceIdentity.resolvePartitionInfo(devicePath)
-                    detected[devicePath] = DetectedVolume(
+                    closedVolume = DetectedVolume(
                         devicePath = devicePath,
                         guid = guid,
                         recoveryKeyId = recoveryKeyId,
@@ -568,40 +647,29 @@ object UnlockManager {
                         partitionName = partInfo.partitionNodeName
                     )
                 }
-                sessionCredentials.remove(devicePath)
+                // Freeze admissions before waiting, without discarding the live session.
+                // A timeout must leave the worker's native handles open.
+                com.bitlockerdroid.provider.BitLockerDocumentsProvider.drainActiveWrites(stale)
 
                 // 0. Stop any active LAN sharing for this volume
                 try {
                     app?.let { appCtx ->
-                        com.bitlockerdroid.share.LanShareManager.stopSharingForDevice(appCtx, devicePath, stale?.volumeGuid)
+                        com.bitlockerdroid.share.LanShareManager.stopSharingForDevice(appCtx, devicePath, stale.volumeGuid)
                     }
                 } catch (e: Throwable) {
                     Log.w(TAG, "LAN share stop warning for $devicePath", e)
                 }
 
                 // 1. Unmount POSIX FUSE mount first so external apps can no longer issue IO
-                try {
-                    VirtualStorageMountManager.unmount(devicePath)
-                } catch (e: Throwable) {
-                    Log.w(TAG, "Virtual mount unmount warning for $devicePath", e)
-                }
+                VirtualStorageMountManager.unmountChecked(devicePath)
 
-                // 2. Drain in-flight SAF pipe writes (bounded wait)
-                com.bitlockerdroid.provider.BitLockerDocumentsProvider.drainActiveWrites()
-
-                // 3. Flush & close decrypted session
-                stale?.let { core ->
-                    try {
-                        core.flush()
-                    } catch (e: Throwable) {
-                        Log.w(TAG, "core flush warning during eject", e)
-                    }
-                    try {
-                        core.close()
-                    } catch (e: Throwable) {
-                        Log.w(TAG, "core close warning during eject", e)
-                    }
+                // Flush & close only after all writes really completed.
+                stale.closeChecked()
+                synchronized(lock) {
+                    sessions.remove(devicePath)
+                    detected[devicePath] = closedVolume
                 }
+                sessionCredentials.remove(devicePath)
 
                 // 4. Multi-Partition Safe Physical Spindown & Offline:
                 // Check if any other active or closing sessions remain on the same physical parent disk
@@ -666,8 +734,22 @@ object UnlockManager {
                 }
                 notifyStateChanged()
                 return Result.success(EjectResult(effectiveLabel, outcome))
+            } catch (e: Exception) {
+                Log.w(TAG, "Safe eject aborted for $devicePath", e)
+                if (ejectingCore?.isClosed == true) {
+                    synchronized(lock) { sessions.remove(devicePath) }
+                    sessionCredentials.remove(devicePath)
+                    registerDetected(devicePath)
+                }
+                // No spindown or safe-to-unplug message after a failed write/flush.
+                dismissEjectedNotification(app, devicePath)
+                BitLockerCoreService.updateForegroundState(app)
+                com.bitlockerdroid.provider.BitLockerDocumentsProvider.notifyRootsChanged(app)
+                notifyStateChanged()
+                return Result.failure(e)
             } finally {
                 closingSessions.remove(devicePath)
+                if (ejectingCore?.isClosed == false) ejectingCore?.pendingWrites?.resume()
             }
         }
     }
@@ -709,13 +791,17 @@ object UnlockManager {
     /** Safely ejects all active unlocked BitLocker volumes. */
     fun safeEjectAll(): List<Result<EjectResult>> {
         val paths = synchronized(lock) { sessions.keys.toList() }
-        val results = paths.map { safeEject(it) }
-        sessionCredentials.clear()
-        try {
-            VirtualStorageMountManager.unmountAll()
-        } catch (_: Throwable) {}
-        com.bitlockerdroid.util.ContextProvider.app?.let { app ->
-            com.bitlockerdroid.share.LanShareManager.stopAll(app)
+        val results = mutableListOf<Result<EjectResult>>()
+        for (path in paths) {
+            val result = safeEject(path)
+            results.add(result)
+            if (result.isFailure) break
+        }
+        if (results.all { it.isSuccess }) {
+            sessionCredentials.clear()
+            com.bitlockerdroid.util.ContextProvider.app?.let { app ->
+                com.bitlockerdroid.share.LanShareManager.stopAll(app)
+            }
         }
         return results
     }
@@ -850,38 +936,46 @@ object UnlockManager {
         key: String? = null,
         isRecovery: Boolean = false
     ) {
-        val stale: DislockerCore?
-        synchronized(lock) {
-            val guid = core.volumeGuid ?: BitLockerDetector.getVolumeGuid(core.devicePath)
-            if (!guid.isNullOrBlank()) {
-                manuallyLockedGuids.remove(guid)
+        var stale: DislockerCore? = null
+        val admission = SessionAdmission.validateBeforePublish(
+            candidate = core,
+            validate = { it.validateReadableFilesystem() },
+            publish = { candidate ->
+                synchronized(lock) {
+                    val guid = candidate.volumeGuid ?: BitLockerDetector.getVolumeGuid(candidate.devicePath)
+                    if (!guid.isNullOrBlank()) manuallyLockedGuids.remove(guid)
+                    manuallyLockedGuids.remove(candidate.devicePath)
+                    stale = sessions.put(candidate.devicePath, candidate)
+                    detected.remove(candidate.devicePath)
+                }
             }
-            manuallyLockedGuids.remove(core.devicePath)
-            stale = sessions.put(core.devicePath, core)
-            detected.remove(core.devicePath)
+        )
+        val admittedCore = admission.getOrElse { e ->
+            LogFile.write("app", "registerDirect: refusing unreadable session ${core.devicePath}: ${e.message}")
+            return
         }
         stale?.close()
 
         if (key != null && context != null &&
             VirtualStorageMountManager.isSupported() &&
-            PreferenceHelper.isVolumeVirtualMountEnabled(context, core.volumeGuid, core.devicePath)
+            PreferenceHelper.isVolumeVirtualMountEnabled(context, admittedCore.volumeGuid, admittedCore.devicePath)
         ) {
-            val guid = core.volumeGuid ?: ""
-            val effectiveLabel = core.volumeLabel.ifBlank {
-                com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(core.devicePath).friendlyName
+            val guid = admittedCore.volumeGuid ?: ""
+            val effectiveLabel = admittedCore.volumeLabel.ifBlank {
+                com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(admittedCore.devicePath).friendlyName
             }
-            val resolvedBlock = VirtualStorageMountManager.resolveBlockDevice(core.devicePath, guid)
+            val resolvedBlock = VirtualStorageMountManager.resolveBlockDevice(admittedCore.devicePath, guid)
             if (resolvedBlock != null) {
                 Thread {
                     VirtualStorageMountManager.mount(
                         context = context,
                         devicePath = resolvedBlock,
-                        offset = core.offset,
+                        offset = admittedCore.offset,
                         key = key,
                         isRecovery = isRecovery,
                         volumeLabel = effectiveLabel,
                         volumeGuid = guid,
-                        originalPath = core.devicePath
+                        originalPath = admittedCore.devicePath
                     )
                 }.start()
             }
@@ -966,57 +1060,41 @@ object UnlockManager {
             return
         }
 
-        // Per-drive auto-unlock and global OTG silent auto-mount check:
-        if (!PreferenceHelper.isAutoUnlockEnabled(context, volumeId) || !PreferenceHelper.isOtgSilentAutoMount(context)) {
-            LogFile.write("app", "onDeviceDetected: auto-unlock is disabled (per-volume or global otgSilentAutoMount=false) for $volumeId")
+        if (!SavedCredentialAccess.canAutomaticallyUnlock(
+                context, volumeId, isManuallyLocked(volumeId, devicePath), closingSessions.contains(devicePath)
+            )) {
+            LogFile.write("app", "onDeviceDetected: automatic credential access denied for $volumeId")
             notifyVolumeLocked(context, devicePath, offset, volumeId, rkId)
             return
         }
 
-        // Biometric Vault check: when vault protection is enabled, require user presence/auth
-        if (PreferenceHelper.isBiometricVaultEnabled(context)) {
-            LogFile.write("app", "onDeviceDetected: biometric vault protection enabled, requiring user authentication for $volumeId")
-            notifyVolumeLocked(context, devicePath, offset, volumeId, rkId)
-            return
-        }
-
-        val rememberBlob = PreferenceHelper.getRememberedPassword(context, volumeId)
-        if (rememberBlob != null) {
-            val raw = KeyGuardService.decrypt(rememberBlob)
-            if (raw != null) {
-                val isRecovery = raw.startsWith(RECOVERY_PREFIX)
-                val cleanKey = if (isRecovery) raw.removePrefix(RECOVERY_PREFIX) else raw
-                val lockKey = volumeId
-                if (!inProgressUnlocks.add(lockKey)) {
-                    LogFile.write("app", "onDeviceDetected: unlock already in progress for $lockKey")
-                    return
-                }
-                unlockingLatch.incrementAndGet()
-                autoUnlockExecutor.execute {
-                    try {
-                        val r = unlockWithCredential(context, devicePath, offset, cleanKey, isRecovery, true, expectedGuid = volumeId)
-                        if (r.isFailure) {
-                            LogFile.write(
-                                "app",
-                                "auto-unlock failed for $devicePath (guid=$volumeId): ${r.exceptionOrNull()?.message}"
-                            )
-                            notifyVolumeLocked(context, devicePath, offset, volumeId, rkId)
-                        } else {
-                            LogFile.write("app", "auto-unlock succeeded for $devicePath (guid=$volumeId)")
-                            r.getOrNull()?.let { unlockedCore ->
-                                notifyVolumeReady(context, devicePath, unlockedCore, isAutoUnlock = true)
-                            }
-                        }
-                    } finally {
-                        inProgressUnlocks.remove(lockKey)
-                        unlockingLatch.decrementAndGet()
-                        synchronized(unlockWaitLock) {
-                            (unlockWaitLock as java.lang.Object).notifyAll()
-                        }
-                    }
-                }
+        if (PreferenceHelper.getRememberedPassword(context, volumeId) != null) {
+            val lockKey = volumeId
+            if (!inProgressUnlocks.add(lockKey)) {
+                LogFile.write("app", "onDeviceDetected: unlock already in progress for $lockKey")
                 return
             }
+            unlockingLatch.incrementAndGet()
+            autoUnlockExecutor.execute {
+                try {
+                    // Check authorization inside the queued task, not just when it was enqueued.
+                    val core = ensureUnlocked(context, devicePath, offset, volumeId)
+                    if (core == null) {
+                        LogFile.write("app", "auto-unlock denied or failed for $devicePath (guid=$volumeId)")
+                        notifyVolumeLocked(context, devicePath, offset, volumeId, rkId)
+                    } else {
+                        LogFile.write("app", "auto-unlock succeeded for $devicePath (guid=$volumeId)")
+                        notifyVolumeReady(context, devicePath, core, isAutoUnlock = true)
+                    }
+                } finally {
+                    inProgressUnlocks.remove(lockKey)
+                    unlockingLatch.decrementAndGet()
+                    synchronized(unlockWaitLock) {
+                        (unlockWaitLock as java.lang.Object).notifyAll()
+                    }
+                }
+            }
+            return
         }
 
         // No saved credential or auto-unlock disabled: post high-priority unlock prompt notification

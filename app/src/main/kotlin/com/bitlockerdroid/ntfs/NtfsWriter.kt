@@ -16,6 +16,7 @@ class NtfsWriter(
         private const val TAG = "NtfsWriter"
     }
 
+    @Volatile
     private var volHandle: Long = 0L
 
     init {
@@ -29,6 +30,7 @@ class NtfsWriter(
 
     override val isMounted: Boolean get() = volHandle != 0L
 
+    @Synchronized
     override fun createFile(parentPath: String?, name: String, isDirectory: Boolean): Long {
         if (!isMounted) return -1L
         val mftNo = NativeBridge.nativeNtfsCreate(volHandle, parentPath, name, isDirectory)
@@ -39,6 +41,7 @@ class NtfsWriter(
         return mftNo
     }
 
+    @Synchronized
     override fun delete(path: String): Boolean {
         if (!isMounted) return false
         val ret = NativeBridge.nativeNtfsDelete(volHandle, path)
@@ -49,6 +52,7 @@ class NtfsWriter(
         return true
     }
 
+    @Synchronized
     override fun rename(oldPath: String, newPath: String): Boolean {
         if (!isMounted) return false
         val ret = NativeBridge.nativeNtfsRename(volHandle, oldPath, newPath)
@@ -59,6 +63,7 @@ class NtfsWriter(
         return true
     }
 
+    @Synchronized
     override fun write(path: String, offset: Long, data: ByteArray, count: Int): Long {
         if (!isMounted) return -1L
         val ret = NativeBridge.nativeNtfsWrite(volHandle, path, offset, data, count)
@@ -68,6 +73,7 @@ class NtfsWriter(
         return ret
     }
 
+    @Synchronized
     override fun truncate(path: String, newSize: Long): Boolean {
         if (!isMounted) return false
         val ret = NativeBridge.nativeNtfsTruncate(volHandle, path, newSize)
@@ -78,12 +84,14 @@ class NtfsWriter(
         return true
     }
 
+    @Synchronized
     override fun sync(): Boolean {
         if (!isMounted) return false
         val ret = NativeBridge.nativeNtfsSync(volHandle)
         return ret == 0
     }
 
+    @Synchronized
     override fun getSpace(): Pair<Long, Long>? {
         if (!isMounted) return null
         val arr = NativeBridge.nativeNtfsGetSpace(volHandle) ?: return null
@@ -91,6 +99,7 @@ class NtfsWriter(
     }
 
     /** Clears VOLUME_IS_DIRTY and VOLUME_CHKDSK_UNDERWAY in the $Volume MFT record. */
+    @Synchronized
     fun repairDirty(): Boolean {
         if (!isMounted) return false
         val ret = NativeBridge.nativeNtfsRepairDirty(volHandle)
@@ -102,10 +111,13 @@ class NtfsWriter(
         return true
     }
 
+    @Synchronized
     override fun close() {
         if (volHandle != 0L) {
-            NativeBridge.nativeNtfsUmount(volHandle)
+            val closingHandle = volHandle
             volHandle = 0L
+            val result = NativeBridge.nativeNtfsUmount(closingHandle)
+            if (result != 0) throw java.io.IOException("Could not unmount filesystem safely")
             Log.i(TAG, "Unmounted NTFS volume")
         }
     }

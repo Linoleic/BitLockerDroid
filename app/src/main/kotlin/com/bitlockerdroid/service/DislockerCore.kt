@@ -28,32 +28,45 @@ class DislockerCore private constructor(
     val usbSession: com.bitlockerdroid.usb.UsbStorageManager.UsbSession? = null
 ) : AutoCloseable {
 
+    val pendingWrites = VolumeWriteState()
     val reader: VolumeReader by lazy { buildReader() }
-    val writer: com.bitlockerdroid.ntfs.VolumeWriter? by lazy {
-        val app = try { com.bitlockerdroid.util.ContextProvider.app } catch (_: Throwable) { null }
-        val isRo = if (app != null) {
-            com.bitlockerdroid.util.PreferenceHelper.isVolumeReadOnly(app, volumeGuid, devicePath)
-        } else false
-        when (reader) {
-            is NtfsReader -> {
-                try {
-                    com.bitlockerdroid.ntfs.NtfsWriter(handle, isRo)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to initialize NtfsWriter", e)
-                    null
+    private val writerDelegate = lazy {
+        try {
+            val app = try { com.bitlockerdroid.util.ContextProvider.app } catch (_: Throwable) { null }
+            val isRo = if (app != null) {
+                com.bitlockerdroid.util.PreferenceHelper.isVolumeReadOnly(app, volumeGuid, devicePath)
+            } else false
+            when (reader) {
+                is NtfsReader -> {
+                    try {
+                        com.bitlockerdroid.ntfs.NtfsWriter(handle, isRo)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to initialize NtfsWriter", e)
+                        null
+                    }
                 }
-            }
-            is ExFatReader, is Fat32Reader -> {
-                try {
-                    com.bitlockerdroid.ntfs.FatFsWriter(handle, isRo)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to initialize FatFsWriter", e)
-                    null
+                is ExFatReader, is Fat32Reader -> {
+                    try {
+                        com.bitlockerdroid.ntfs.FatFsWriter(handle, isRo)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to initialize FatFsWriter", e)
+                        null
+                    }
                 }
+                else -> null
             }
-            else -> null
+        } catch (e: Exception) {
+            // Reader or device I/O may fail after unlock (for example, during
+            // USB disconnect). A failed lazy writer must downgrade to read-only.
+            Log.w(TAG, "Failed to initialize volume writer", e)
+            null
         }
     }
+    val writer: com.bitlockerdroid.ntfs.VolumeWriter?
+        get() = synchronized(this) {
+            if (closed) throw java.io.IOException("Volume session is already closed")
+            writerDelegate.value
+        }
 
     val ntfsWriter: com.bitlockerdroid.ntfs.NtfsWriter?
         get() = writer as? com.bitlockerdroid.ntfs.NtfsWriter
@@ -335,6 +348,14 @@ class DislockerCore private constructor(
     val isDirty: Boolean
         get() = try { reader.isDirty } catch (e: Exception) { false }
 
+    /** Forces only read-side filesystem metadata validation before publishing a session. */
+    @Synchronized
+    fun validateReadableFilesystem() {
+        if (closed) throw java.io.IOException("Volume session is already closed")
+        reader // Validates and parses the decrypted boot sector without opening a writer.
+        if (closed) throw java.io.IOException("Volume session closed during validation")
+    }
+
     /** Performs non-destructive integrity diagnostics on filesystem metadata structures. */
     fun diagnose(): com.bitlockerdroid.ntfs.VolumeDiagnostic = reader.diagnose()
 
@@ -349,6 +370,29 @@ class DislockerCore private constructor(
             Log.w(TAG, "getSpaceInfo failed", e)
         }
         return null
+    }
+
+    /** Reads space data only from an already-created writer; never mounts one for display. */
+    fun getSpaceInfoIfWriterInitialized(): Pair<Long, Long>? = synchronized(this) {
+        if (closed || !writerDelegate.isInitialized()) return@synchronized null
+        try {
+            writerDelegate.value?.getSpace()?.takeIf { it.first > 0L }
+        } catch (e: Exception) {
+            Log.w(TAG, "getSpaceInfoIfWriterInitialized failed", e)
+            null
+        }
+    }
+
+    /** Checks write capability without creating a writer for display. */
+    fun canWriteWithoutInitializingWriter(readerSupportsWrite: Boolean): Boolean = synchronized(this) {
+        if (closed) return@synchronized false
+        if (!writerDelegate.isInitialized()) return@synchronized readerSupportsWrite
+        try {
+            writerDelegate.value?.isMounted == true
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not inspect initialized volume writer", e)
+            false
+        }
     }
 
     @Volatile
@@ -428,12 +472,28 @@ class DislockerCore private constructor(
      * Safe-eject step: call after all write pipelines have drained and before
      * [close] so no decrypted-and-re-encrypted sector is left in flight.
      */
+    @Synchronized
     fun flush() {
-        try {
-            NativeBridge.nativeSync(handle)
-        } catch (e: Throwable) {
-            Log.w(TAG, "flush failed", e)
+        if (closed) throw java.io.IOException("Volume session is already closed")
+        if (writerDelegate.isInitialized()) {
+            val mountedWriter = writer
+            if (mountedWriter?.isMounted == true && !mountedWriter.sync()) {
+                throw java.io.IOException("Could not flush filesystem data")
+            }
         }
+        if (NativeBridge.nativeSync(handle) != 0) {
+            throw java.io.IOException("Could not flush drive data")
+        }
+    }
+
+    val isClosed: Boolean get() = closed
+
+    /** A failed preflight flush leaves the session open so the user can retry. */
+    @Synchronized
+    fun closeChecked() {
+        if (closed) return
+        flush()
+        closeInternal(true)
     }
 
     override fun close() {
@@ -441,32 +501,39 @@ class DislockerCore private constructor(
         // writer twice and call nativeClose on an already-freed handle.
         synchronized(this) {
             if (closed) return
-            closed = true
-            try {
-                writer?.close()
-            } catch (e: Throwable) {
-                Log.w(TAG, "writer close failed", e)
-            }
-            try {
-                flush()
-            } catch (e: Throwable) {
-                Log.w(TAG, "flush during close failed", e)
-            }
-            cachedSource.clear()
-            createdEntries.clear()
-            pathCache.clear()
-            parentCache.clear()
-            try {
-                NativeBridge.nativeClose(handle)
-            } catch (e: Throwable) {
-                Log.w(TAG, "close failed", e)
-            }
-            try {
-                usbSession?.close()
-            } catch (e: Throwable) {
-                Log.w(TAG, "usbSession close failed", e)
+            closeInternal(false)
+        }
+    }
+
+    private fun closeInternal(reportFailure: Boolean) {
+        var failure: Throwable? = null
+        fun cleanup(action: () -> Unit) {
+            try { action() } catch (e: Throwable) {
+                if (failure == null) failure = e else failure?.addSuppressed(e)
+                Log.w(TAG, "Volume cleanup failed", e)
             }
         }
+        if (!reportFailure) cleanup { flush() }
+        closed = true
+        if (writerDelegate.isInitialized()) {
+            cleanup { writerDelegate.value?.close() }
+        }
+        cachedSource.clear()
+        createdEntries.clear()
+        pathCache.clear()
+        parentCache.clear()
+        cleanup {
+            if (NativeBridge.nativeSync(handle) != 0) throw java.io.IOException("Could not flush drive data during close")
+        }
+        cleanup { NativeBridge.nativeClose(handle) }
+        // Close only this core's worker. Its identity-based callback removes
+        // itself from the manager without touching a newer session at this path.
+        try {
+            usbSession?.close()
+        } catch (e: Throwable) {
+            Log.w(TAG, "usbSession close failed", e)
+        }
+        if (reportFailure && failure != null) throw java.io.IOException("Volume could not be closed safely", failure)
     }
 
     /**

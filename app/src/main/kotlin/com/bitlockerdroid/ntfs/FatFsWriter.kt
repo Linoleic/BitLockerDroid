@@ -16,6 +16,7 @@ class FatFsWriter(
         private const val TAG = "FatFsWriter"
     }
 
+    @Volatile
     private var volHandle: Long = 0L
 
     init {
@@ -29,6 +30,7 @@ class FatFsWriter(
 
     override val isMounted: Boolean get() = volHandle != 0L
 
+    @Synchronized
     override fun createFile(parentPath: String?, name: String, isDirectory: Boolean): Long {
         if (!isMounted) return -1L
         val clst = NativeBridge.nativeFatfsCreate(volHandle, parentPath, name, isDirectory)
@@ -39,6 +41,7 @@ class FatFsWriter(
         return clst
     }
 
+    @Synchronized
     override fun delete(path: String): Boolean {
         if (!isMounted) return false
         val ret = NativeBridge.nativeFatfsDelete(volHandle, path)
@@ -49,6 +52,7 @@ class FatFsWriter(
         return true
     }
 
+    @Synchronized
     override fun rename(oldPath: String, newPath: String): Boolean {
         if (!isMounted) return false
         val ret = NativeBridge.nativeFatfsRename(volHandle, oldPath, newPath)
@@ -59,6 +63,7 @@ class FatFsWriter(
         return true
     }
 
+    @Synchronized
     override fun write(path: String, offset: Long, data: ByteArray, count: Int): Long {
         if (!isMounted) return -1L
         val ret = NativeBridge.nativeFatfsWrite(volHandle, path, offset, data, count)
@@ -68,6 +73,7 @@ class FatFsWriter(
         return ret
     }
 
+    @Synchronized
     override fun truncate(path: String, newSize: Long): Boolean {
         if (!isMounted) return false
         val ret = NativeBridge.nativeFatfsTruncate(volHandle, path, newSize)
@@ -78,22 +84,27 @@ class FatFsWriter(
         return true
     }
 
+    @Synchronized
     override fun sync(): Boolean {
         if (!isMounted) return false
         val ret = NativeBridge.nativeFatfsSync(volHandle)
         return ret == 0
     }
 
+    @Synchronized
     override fun getSpace(): Pair<Long, Long>? {
         if (!isMounted) return null
         val arr = NativeBridge.nativeFatfsGetSpace(volHandle) ?: return null
         return Pair(arr[0], arr[1])
     }
 
+    @Synchronized
     override fun close() {
         if (volHandle != 0L) {
-            NativeBridge.nativeFatfsUmount(volHandle)
+            val closingHandle = volHandle
             volHandle = 0L
+            val result = NativeBridge.nativeFatfsUmount(closingHandle)
+            if (result != 0) throw java.io.IOException("Could not unmount filesystem safely")
             Log.i(TAG, "Unmounted FatFs volume")
         }
     }

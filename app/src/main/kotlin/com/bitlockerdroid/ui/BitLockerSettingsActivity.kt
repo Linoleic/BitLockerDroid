@@ -146,10 +146,17 @@ class BitLockerSettingsActivity : FragmentActivity() {
             lifecycleScope.launch(Dispatchers.IO) {
                 try {
                     if (unlockedVolumesState.value.isNotEmpty()) {
-                        UnlockManager.safeEjectAll()
+                        UnlockManager.safeEjectAll().firstOrNull { it.isFailure }?.getOrThrow()
                     }
                     VirtualStorageMountManager.unmountAll()
-                } catch (_: Throwable) {}
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        isSwitchingModeProcessingState.value = false
+                        Toast.makeText(this@BitLockerSettingsActivity,
+                            getString(R.string.safe_eject_failed, e.message ?: ""), Toast.LENGTH_LONG).show()
+                    }
+                    return@launch
+                }
                 PreferenceHelper.useRootAccess = target
                 RootAccess.invalidateCache()
                 withContext(Dispatchers.Main) {
@@ -401,21 +408,32 @@ class BitLockerSettingsActivity : FragmentActivity() {
     private fun refreshData() {
         refreshJob?.cancel()
         refreshJob = lifecycleScope.launch(Dispatchers.IO) {
-            if (!UnlockManager.isEmpty) {
-                kotlinx.coroutines.delay(60)
-            }
-            val currentUnlocked = UnlockManager.unlockedVolumes
-            val currentDetected = UnlockManager.detectedVolumes
-            val currentUnencrypted = UnlockManager.unencryptedVolumes
-            withContext(Dispatchers.Main) {
-                if (unlockedVolumesState.value != currentUnlocked) {
-                    unlockedVolumesState.value = currentUnlocked
+            try {
+                if (!UnlockManager.isEmpty) {
+                    kotlinx.coroutines.delay(60)
                 }
-                if (detectedVolumesState.value != currentDetected) {
-                    detectedVolumesState.value = currentDetected
+                val currentUnlocked = UnlockManager.unlockedVolumes
+                val currentDetected = UnlockManager.detectedVolumes
+                val currentUnencrypted = UnlockManager.unencryptedVolumes
+                withContext(Dispatchers.Main) {
+                    if (unlockedVolumesState.value != currentUnlocked) {
+                        unlockedVolumesState.value = currentUnlocked
+                    }
+                    if (detectedVolumesState.value != currentDetected) {
+                        detectedVolumesState.value = currentDetected
+                    }
+                    if (unencryptedVolumesState.value != currentUnencrypted) {
+                        unencryptedVolumesState.value = currentUnencrypted
+                    }
                 }
-                if (unencryptedVolumesState.value != currentUnencrypted) {
-                    unencryptedVolumesState.value = currentUnencrypted
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                LogFile.write("app", "refreshData: could not refresh volume snapshot: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    // Fail closed: do not keep presenting a stale snapshot as
+                    // a currently readable unlocked volume.
+                    unlockedVolumesState.value = emptyList()
                 }
             }
         }
@@ -580,7 +598,12 @@ class BitLockerSettingsActivity : FragmentActivity() {
         ejectingPathsState.value = ejectingPathsState.value + targets
         LogFile.write("app", "safe eject requested for group: $targets")
         lifecycleScope.launch(Dispatchers.IO) {
-            val results = targets.map { path -> path to UnlockManager.safeEject(path) }
+            val results = mutableListOf<Pair<String, Result<com.bitlockerdroid.service.EjectResult>>>()
+            for (path in targets) {
+                val result = UnlockManager.safeEject(path)
+                results.add(path to result)
+                if (result.isFailure) break
+            }
             withContext(Dispatchers.Main) {
                 ejectingPathsState.value = ejectingPathsState.value - targets.toSet()
                 val failures = results.filter { !it.second.isSuccess }
@@ -601,7 +624,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     } else {
                         Toast.makeText(
                             this@BitLockerSettingsActivity,
-                            getString(R.string.notification_all_ejected),
+                            getString(R.string.notification_eject_finished),
                             Toast.LENGTH_LONG
                         ).show()
                     }

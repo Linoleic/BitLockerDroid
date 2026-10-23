@@ -96,7 +96,7 @@
     <string name="safe_eject_success">Drive \"%1$s\" safely ejected and spun down. It is now safe to unplug the device.</string>
     <string name="safe_eject_part_success">Volume \"%1$s\" safely closed. Other partitions on this drive remain active; do not unplug the device yet.</string>
     <string name="safe_eject_spindown_warning">Volume \"%1$s\" closed, but disk spindown or cache sync failed. Please unplug with caution.</string>
-    <string name="safe_eject_failed">Safe eject warning: %1$s</string>
+    <string name="safe_eject_failed">Safe eject failed. Do not unplug yet: %1$s</string>
     <string name="safe_to_unplug_title">【%1$s】Safely Ejected</string>
     <string name="safe_to_unplug_desc">All data synced and drive spun down. It is now safe to unplug the device.</string>
     <string name="volume_closed_title">【%1$s】Volume Closed</string>
@@ -329,7 +329,7 @@
 
     <!-- Notifications & Service Strings -->
     <string name="notification_drive_title">BitLocker Encrypted Drive</string>
-    <string name="notification_all_ejected">All drives safely ejected. It is now safe to unplug the device.</string>
+    <string name="notification_eject_finished">Eject operations finished. Check each drive’s status before unplugging.</string>
     <string name="notification_service_channel">BitLocker Storage Service</string>
     <string name="notification_drives_title">BitLocker Drives</string>
     <string name="notification_drive_ready_single">Ready, tap to browse files</string>
