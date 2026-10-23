@@ -13,6 +13,8 @@
 #include "dislocker/dislocker_priv.h"
 
 #include <errno.h>
+#include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +22,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
+#include <time.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -53,6 +56,39 @@
 #define CMD_SYNC  3
 #define CMD_SIZE  4
 
+/* Keep fd-transport response time bounded while allowing finite USB/SCSI retries. */
+#ifndef IO_RESPONSE_TIMEOUT_MS
+#define IO_RESPONSE_TIMEOUT_MS 60000
+#endif
+
+typedef struct {
+	struct timespec expires;
+} io_deadline_t;
+
+static int io_deadline_init(io_deadline_t *deadline, int timeout_ms)
+{
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline->expires) != 0) return -1;
+	deadline->expires.tv_sec += timeout_ms / 1000;
+	deadline->expires.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
+	if (deadline->expires.tv_nsec >= 1000000000L) {
+		deadline->expires.tv_sec++;
+		deadline->expires.tv_nsec -= 1000000000L;
+	}
+	return 0;
+}
+
+/* poll() accepts milliseconds; round up so a sub-ms remainder is not early timeout. */
+static int io_deadline_remaining_ms(const io_deadline_t *deadline)
+{
+	struct timespec now;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return -1;
+	int64_t ns = (int64_t)(deadline->expires.tv_sec - now.tv_sec) * 1000000000LL +
+		(int64_t)deadline->expires.tv_nsec - now.tv_nsec;
+	if (ns <= 0) return 0;
+	int64_t ms = (ns + 999999LL) / 1000000LL;
+	return ms > INT_MAX ? INT_MAX : (int)ms;
+}
+
 static const char *const SU_PATHS[] = {
 	"/system/bin/su",
 	"/product/bin/su",
@@ -80,8 +116,13 @@ static void maximize_pipe_size(int fd) {
 /* Helper to read exactly `count` bytes from non-blocking `fd` with speculative read and timeout */
 static int pipe_read_exact(int fd, void *buf, size_t count, int timeout_ms)
 {
+	io_deadline_t deadline;
+	if (io_deadline_init(&deadline, timeout_ms) != 0) return -errno;
 	size_t got = 0;
 	while (got < count) {
+		int remaining_ms = io_deadline_remaining_ms(&deadline);
+		if (remaining_ms < 0) return -errno;
+		if (remaining_ms == 0) return -ETIMEDOUT;
 		ssize_t r = read(fd, (char *)buf + got, count - got);
 		if (r > 0) {
 			got += (size_t)r;
@@ -91,7 +132,7 @@ static int pipe_read_exact(int fd, void *buf, size_t count, int timeout_ms)
 			if (errno == EINTR) continue;
 			if (errno == EAGAIN || errno == EWOULDBLOCK) {
 				struct pollfd pfd = { .fd = fd, .events = POLLIN };
-				int pr = poll(&pfd, 1, timeout_ms);
+				int pr = poll(&pfd, 1, remaining_ms);
 				if (pr < 0) {
 					if (errno == EINTR) continue;
 					return -1;
@@ -113,8 +154,13 @@ static int pipe_read_exact(int fd, void *buf, size_t count, int timeout_ms)
 /* Helper to write exactly `count` bytes to non-blocking `fd` with speculative write and timeout */
 static int pipe_write_exact(int fd, const void *buf, size_t count, int timeout_ms)
 {
+	io_deadline_t deadline;
+	if (io_deadline_init(&deadline, timeout_ms) != 0) return -errno;
 	size_t written = 0;
 	while (written < count) {
+		int remaining_ms = io_deadline_remaining_ms(&deadline);
+		if (remaining_ms < 0) return -errno;
+		if (remaining_ms == 0) return -ETIMEDOUT;
 		ssize_t w = write(fd, (const char *)buf + written, count - written);
 		if (w > 0) {
 			written += (size_t)w;
@@ -124,7 +170,7 @@ static int pipe_write_exact(int fd, const void *buf, size_t count, int timeout_m
 			if (errno == EINTR) continue;
 			if (errno == EAGAIN || errno == EWOULDBLOCK) {
 				struct pollfd pfd = { .fd = fd, .events = POLLOUT };
-				int pr = poll(&pfd, 1, timeout_ms);
+				int pr = poll(&pfd, 1, remaining_ms);
 				if (pr < 0) {
 					if (errno == EINTR) continue;
 					return -1;
@@ -143,6 +189,8 @@ static int pipe_write_exact(int fd, const void *buf, size_t count, int timeout_m
 /* Helper to write multiple buffers atomically to non-blocking `fd` */
 static int pipe_writev_exact(int fd, const struct iovec *iov, int iovcnt, int timeout_ms)
 {
+	io_deadline_t deadline;
+	if (io_deadline_init(&deadline, timeout_ms) != 0) return -errno;
 	size_t total = 0;
 	for (int i = 0; i < iovcnt; i++) total += iov[i].iov_len;
 	size_t written = 0;
@@ -150,6 +198,9 @@ static int pipe_writev_exact(int fd, const struct iovec *iov, int iovcnt, int ti
 	size_t cur_off = 0;
 
 	while (written < total) {
+		int remaining_ms = io_deadline_remaining_ms(&deadline);
+		if (remaining_ms < 0) return -errno;
+		if (remaining_ms == 0) return -ETIMEDOUT;
 		struct iovec liov[8];
 		int lcnt = 0;
 		for (int i = cur_idx; i < iovcnt && lcnt < 8; i++) {
@@ -184,7 +235,7 @@ static int pipe_writev_exact(int fd, const struct iovec *iov, int iovcnt, int ti
 			if (errno == EINTR) continue;
 			if (errno == EAGAIN || errno == EWOULDBLOCK) {
 				struct pollfd pfd = { .fd = fd, .events = POLLOUT };
-				int pr = poll(&pfd, 1, timeout_ms);
+				int pr = poll(&pfd, 1, remaining_ms);
 				if (pr < 0) {
 					if (errno == EINTR) continue;
 					return -1;
@@ -595,31 +646,31 @@ static int dis_blk_read_internal(dis_ctx_t *ctx, uint8_t *buf, off_t offset, siz
 		memcpy(req + 1, &disk_off, 8);
 		memcpy(req + 9, &req_len, 4);
 
-		int wr = pipe_write_exact(ctx->io_in_fd, req, sizeof(req), 5000);
+		int wr = pipe_write_exact(ctx->io_in_fd, req, sizeof(req), IO_RESPONSE_TIMEOUT_MS);
 		if (wr != sizeof(req)) {
 			ELOG("dis_blk_read: write req failed wr=%d (expected %zu), errno=%d (%s)", wr, sizeof(req), errno, strerror(errno));
 			poison_fd_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
-			dis_set_error("Daemon read write failed");
+			dis_set_error(wr == -ETIMEDOUT ? "Daemon read request write timed out" : "Daemon read request write failed (%d)", wr);
 			return -1;
 		}
 
 		int32_t status = 0;
-		int rr = pipe_read_exact(ctx->io_out_fd, &status, sizeof(status), 5000);
+		int rr = pipe_read_exact(ctx->io_out_fd, &status, sizeof(status), IO_RESPONSE_TIMEOUT_MS);
 		if (rr != sizeof(status) || status != (int32_t)len) {
 			ELOG("dis_blk_read: read status failed rr=%d, status=%d (expected %zu), errno=%d (%s)", rr, status, len, errno, strerror(errno));
 			poison_fd_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
-			dis_set_error("Daemon read returned error: %d", (int)status);
+			dis_set_error(rr == -ETIMEDOUT ? "Daemon read status timed out" : "Daemon read status failed (result=%d, status=%d, expected=%zu)", rr, (int)status, len);
 			return -1;
 		}
 
-		int pr = pipe_read_exact(ctx->io_out_fd, buf, len, 10000);
+		int pr = pipe_read_exact(ctx->io_out_fd, buf, len, IO_RESPONSE_TIMEOUT_MS);
 		if (pr != (int)len) {
 			ELOG("dis_blk_read: read payload failed pr=%d (expected %zu), errno=%d (%s)", pr, len, errno, strerror(errno));
 			poison_fd_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
-			dis_set_error("Daemon read payload truncated");
+			dis_set_error(pr == -ETIMEDOUT ? "Daemon read payload timed out" : "Daemon read payload truncated (result=%d, expected=%zu)", pr, len);
 			return -1;
 		}
 
@@ -746,18 +797,20 @@ static int dis_blk_write_internal(dis_ctx_t *ctx, const uint8_t *buf, off_t offs
 		iov[1].iov_base = (void *)buf;
 		iov[1].iov_len = len;
 
-		if (pipe_writev_exact(ctx->io_in_fd, iov, 2, 15000) != (int)(sizeof(req) + len)) {
+		int wr = pipe_writev_exact(ctx->io_in_fd, iov, 2, IO_RESPONSE_TIMEOUT_MS);
+		if (wr != (int)(sizeof(req) + len)) {
 			poison_fd_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
-			dis_set_error("Daemon write failed");
+			dis_set_error(wr == -ETIMEDOUT ? "Daemon write request/payload timed out" : "Daemon write request/payload failed (%d)", wr);
 			return -1;
 		}
 
 		int32_t status = 0;
-		if (pipe_read_exact(ctx->io_out_fd, &status, sizeof(status), 5000) != sizeof(status) || status != (int32_t)len) {
+		int rr = pipe_read_exact(ctx->io_out_fd, &status, sizeof(status), IO_RESPONSE_TIMEOUT_MS);
+		if (rr != sizeof(status) || status != (int32_t)len) {
 			poison_fd_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
-			dis_set_error("Daemon write returned error: %d", (int)status);
+			dis_set_error(rr == -ETIMEDOUT ? "Daemon write completion status timed out" : "Daemon write completion failed (result=%d, status=%d, expected=%zu)", rr, (int)status, len);
 			return -1;
 		}
 
@@ -808,15 +861,19 @@ uint64_t dis_blk_get_size(dis_ctx_t *ctx)
 			return 0;
 		}
 		uint8_t cmd = CMD_SIZE;
-		if (pipe_write_exact(ctx->io_in_fd, &cmd, 1, 3000) != 1) {
+		int wr = pipe_write_exact(ctx->io_in_fd, &cmd, 1, IO_RESPONSE_TIMEOUT_MS);
+		if (wr != 1) {
 			poison_fd_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
+			dis_set_error(wr == -ETIMEDOUT ? "Daemon size request timed out" : "Daemon size request failed (%d)", wr);
 			return 0;
 		}
 		uint64_t size = 0;
-		if (pipe_read_exact(ctx->io_out_fd, &size, sizeof(size), 3000) != sizeof(size)) {
+		int rr = pipe_read_exact(ctx->io_out_fd, &size, sizeof(size), IO_RESPONSE_TIMEOUT_MS);
+		if (rr != sizeof(size)) {
 			poison_fd_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
+			dis_set_error(rr == -ETIMEDOUT ? "Daemon size response timed out" : "Daemon size response failed (%d)", rr);
 			return 0;
 		}
 		pthread_mutex_unlock(&ctx->io_lock);
@@ -845,15 +902,19 @@ int dis_blk_sync(dis_ctx_t *ctx)
 			return -1;
 		}
 		uint8_t cmd = CMD_SYNC;
-		if (pipe_write_exact(ctx->io_in_fd, &cmd, 1, 5000) != 1) {
+		int wr = pipe_write_exact(ctx->io_in_fd, &cmd, 1, IO_RESPONSE_TIMEOUT_MS);
+		if (wr != 1) {
 			poison_fd_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
+			dis_set_error(wr == -ETIMEDOUT ? "Daemon sync request timed out" : "Daemon sync request failed (%d)", wr);
 			return -1;
 		}
 		int32_t status = 0;
-		if (pipe_read_exact(ctx->io_out_fd, &status, sizeof(status), 5000) != sizeof(status)) {
+		int rr = pipe_read_exact(ctx->io_out_fd, &status, sizeof(status), IO_RESPONSE_TIMEOUT_MS);
+		if (rr != sizeof(status)) {
 			poison_fd_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
+			dis_set_error(rr == -ETIMEDOUT ? "Daemon sync status timed out" : "Daemon sync status read failed (%d)", rr);
 			return -1;
 		}
 		if (status != 0) {

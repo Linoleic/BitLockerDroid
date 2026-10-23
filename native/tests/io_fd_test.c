@@ -4,6 +4,8 @@
  *   -std=c11 -Wall -Wextra -I native/dislocker/include
  *   -I native/third_party/mbedtls/include native/tests/io_fd_test.c
  *   native/dislocker/src/io.c -pthread -llog -o io-fd-test
+ * For a short deadline regression run, compile both sources with:
+ *   -DIO_RESPONSE_TIMEOUT_MS=1000
  * The binary is intended to run on an Android/Linux host; it uses no block
  * devices and transfers only synthetic bytes.
  */
@@ -29,8 +31,11 @@
 #define CMD_SYNC 3
 #define CMD_SIZE 4
 #define TEST_DATA_LEN 1024
+#ifndef IO_RESPONSE_TIMEOUT_MS
+#define IO_RESPONSE_TIMEOUT_MS 60000
+#endif
 
-enum worker_mode { WORK_SUCCESS, WORK_NEGATIVE, WORK_TRUNCATED, WORK_LATE_PARTIAL };
+enum worker_mode { WORK_SUCCESS, WORK_NEGATIVE, WORK_TRUNCATED, WORK_LATE_PARTIAL, WORK_WRITE_LATE_ACK, WORK_WRITE_DELAYED_SUCCESS };
 
 typedef struct {
 	int fd;
@@ -69,9 +74,9 @@ static int write_exact(int fd, const void *buf, size_t len)
 	return 0;
 }
 
-static void sleep_seconds(unsigned int sec)
+static void sleep_milliseconds(unsigned int ms)
 {
-	struct timespec ts = { (time_t)sec, 0 };
+	struct timespec ts = { (time_t)(ms / 1000), (long)(ms % 1000) * 1000000L };
 	while (nanosleep(&ts, &ts) < 0 && errno == EINTR) {}
 }
 
@@ -117,7 +122,8 @@ static void *fake_worker(void *opaque)
 		return NULL;
 	}
 
-	if (expect_cmd(args->fd, CMD_READ, req, 12) != 0) goto fail;
+	if (args->mode != WORK_WRITE_LATE_ACK && args->mode != WORK_WRITE_DELAYED_SUCCESS &&
+		expect_cmd(args->fd, CMD_READ, req, 12) != 0) goto fail;
 	if (args->mode == WORK_NEGATIVE) {
 		int32_t status = -EIO;
 		if (write_exact(args->fd, &status, sizeof(status)) != 0) goto fail;
@@ -134,13 +140,32 @@ static void *fake_worker(void *opaque)
 	}
 	if (args->mode == WORK_LATE_PARTIAL) {
 		int32_t status = TEST_DATA_LEN;
-		if (write_exact(args->fd, &status, 2) != 0) goto fail;
-		/* Native status read has a 5 second deadline; this response is stale. */
-		sleep_seconds(6);
-		(void)write_exact(args->fd, ((uint8_t *)&status) + 2, 2);
+		/* Three partial arrivals each arrive within the old inactivity timeout,
+		 * but the fourth byte exceeds the single overall deadline. */
+		for (int i = 0; i < 4; i++) {
+			if (i) sleep_milliseconds((unsigned int)IO_RESPONSE_TIMEOUT_MS * 2 / 5);
+			if (write_exact(args->fd, ((uint8_t *)&status) + i, 1) != 0) return NULL;
+		}
 		uint8_t stale[TEST_DATA_LEN];
 		memset(stale, 0x77, sizeof(stale));
 		(void)write_exact(args->fd, stale, sizeof(stale));
+		return NULL;
+	}
+	if (args->mode == WORK_WRITE_LATE_ACK || args->mode == WORK_WRITE_DELAYED_SUCCESS) {
+		int32_t status = -EIO;
+		uint8_t payload[TEST_DATA_LEN];
+		if (expect_cmd(args->fd, CMD_WRITE, req, 12) != 0 ||
+			read_exact(args->fd, payload, sizeof(payload)) != 0) goto fail;
+		if (args->mode == WORK_WRITE_DELAYED_SUCCESS) {
+			sleep_milliseconds((unsigned int)IO_RESPONSE_TIMEOUT_MS * 2 / 3);
+			status = TEST_DATA_LEN;
+			if (write_exact(args->fd, &status, sizeof(status)) != 0) goto fail;
+			return NULL;
+		}
+		if (write_exact(args->fd, &status, 2) != 0) goto fail;
+		/* Delayed error status must not be accepted after the caller timed out. */
+		sleep_milliseconds((unsigned int)IO_RESPONSE_TIMEOUT_MS + 250);
+		(void)write_exact(args->fd, ((uint8_t *)&status) + 2, 2);
 		return NULL;
 	}
 
@@ -223,13 +248,44 @@ static int check_failure(enum worker_mode mode)
 	return args.failed ? -1 : 0;
 }
 
+static int check_write_ack(enum worker_mode mode)
+{
+	dis_ctx_t ctx;
+	int peer;
+	pthread_t thread;
+	worker_args_t args;
+	if (start_context(&ctx, &peer, mode, &thread, &args) != 0) return -1;
+	uint8_t data[TEST_DATA_LEN];
+	memset(data, 0xa5, sizeof(data));
+	struct timespec start, end;
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	int result = dis_blk_write_raw(&ctx, data, 4096, sizeof(data));
+	clock_gettime(CLOCK_MONOTONIC, &end);
+	int64_t elapsed_ms = (int64_t)(end.tv_sec - start.tv_sec) * 1000 +
+		(end.tv_nsec - start.tv_nsec) / 1000000;
+	if (mode == WORK_WRITE_DELAYED_SUCCESS) {
+		if (result != TEST_DATA_LEN || elapsed_ms < IO_RESPONSE_TIMEOUT_MS / 2 ||
+			__atomic_load_n(&ctx.io_poisoned, __ATOMIC_ACQUIRE)) return -1;
+	} else {
+		if (result >= 0 || elapsed_ms < IO_RESPONSE_TIMEOUT_MS - 50 || elapsed_ms > IO_RESPONSE_TIMEOUT_MS + 1000 ||
+			!__atomic_load_n(&ctx.io_poisoned, __ATOMIC_ACQUIRE) || ctx.io_in_fd != -1 || ctx.io_out_fd != -1) return -1;
+		if (dis_blk_read(&ctx, data, 0, sizeof(data)) >= 0 || dis_blk_sync(&ctx) >= 0) return -1;
+	}
+	dis_io_destroy(&ctx);
+	pthread_join(thread, NULL);
+	close(peer);
+	return args.failed ? -1 : 0;
+}
+
 int main(void)
 {
 	signal(SIGPIPE, SIG_IGN);
 	if (check_success() != 0) { fprintf(stderr, "fd success-path test failed\n"); return 1; }
 	if (check_failure(WORK_NEGATIVE) != 0) { fprintf(stderr, "negative-status test failed\n"); return 1; }
 	if (check_failure(WORK_TRUNCATED) != 0) { fprintf(stderr, "truncated-payload test failed\n"); return 1; }
-	if (check_failure(WORK_LATE_PARTIAL) != 0) { fprintf(stderr, "partial/late-status test failed\n"); return 1; }
+	if (check_failure(WORK_LATE_PARTIAL) != 0) { fprintf(stderr, "absolute partial/late-status test failed\n"); return 1; }
+	if (check_write_ack(WORK_WRITE_LATE_ACK) != 0) { fprintf(stderr, "late write ACK test failed\n"); return 1; }
+	if (check_write_ack(WORK_WRITE_DELAYED_SUCCESS) != 0) { fprintf(stderr, "delayed completed write test failed\n"); return 1; }
 	puts("io_fd_test: all tests passed");
 	return 0;
 }
