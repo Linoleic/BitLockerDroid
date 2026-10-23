@@ -915,10 +915,51 @@ object UsbStorageManager {
         }
     }
 
-    /**
-     * Safely flushes SCSI cache, issues SCSI START STOP UNIT spindown,
-     * and releases the USB connection for the device backing [devicePath].
-     */
+    private fun exposesUas(holder: UsbDeviceConnectionHolder): Boolean =
+        (0 until holder.usbDevice.interfaceCount).any {
+            val iface = holder.usbDevice.getInterface(it)
+            iface.interfaceClass == 8 && iface.interfaceProtocol == 0x62
+        }
+
+    internal fun kernelHandoffResetTarget(): Int? {
+        val holder = activeDevices.values.singleOrNull() ?: return null
+        if (!holder.hasCachedBitLockerPartitions) return null
+        return holder.usbDevice.deviceId.takeIf {
+            UsbKernelHandoffPolicy.needsReset(holder.usbDevice.vendorId, holder.usbDevice.productId, exposesUas(holder))
+        }
+    }
+
+    internal fun validateKernelHandoffTarget(deviceId: Int) {
+        val holder = activeDevices[deviceId] ?: throw java.io.IOException("USB device not connected")
+        check(activeDevices.size == 1) { "Kernel handoff requires one USB storage connection" }
+        check(holder.hasCachedBitLockerPartitions && UsbKernelHandoffPolicy.needsReset(
+            holder.usbDevice.vendorId, holder.usbDevice.productId, exposesUas(holder)
+        )) { "USB device is not a verified kernel handoff target" }
+    }
+
+    /** The transition gate must have drained all scans and volume workers before entry. */
+    internal fun resetAndReleaseForKernelHandoff(deviceId: Int) {
+        synchronized(scanLock) {
+            synchronized(activeSessionLock) {
+                validateKernelHandoffTarget(deviceId)
+                check(activeSessions.isEmpty()) { "USB volume workers are still active" }
+                val holder = activeDevices.getValue(deviceId)
+                check(holder.transportHealthy) { "USB transport is not healthy" }
+                synchronized(holder.scsiDevice) {
+                    val syncCdb = byteArrayOf(0x35.toByte(), 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                    check(sendScsiCommandNoData(holder.communication, syncCdb, 0x1101)) {
+                        "SCSI cache flush failed; reset aborted"
+                    }
+                    val communication = holder.communication as? PipelinedUsbCommunication
+                        ?: throw java.io.IOException("Unexpected USB transport")
+                    communication.resetForKernelHandoff()
+                }
+                closeDevice(deviceId)
+            }
+        }
+    }
+
+    /** Flushes and stops the physical disk for an explicit safe eject. */
     fun spindownDevice(devicePath: String): Boolean {
         if (!devicePath.startsWith("usb://")) return false
         val devIdStr = devicePath.removePrefix("usb://").substringBefore('/')

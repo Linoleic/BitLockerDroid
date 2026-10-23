@@ -29,6 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### 修复
 
+- 修复已验证 RTL9210 PSSD 从免 Root 切到 Root 时识别超时的问题；安全同步并关闭卷后再交回内核驱动。
 - 切换模式时暂停扫描和新解锁，等待正在进行的操作结束后再安全关闭卷。
 - 调试解锁接口未指定保存选项时不再删除已有凭据；自动和快捷解锁保留原保存项，快捷解锁成功后正常提示。
 - 修复设置分组和驱动器卡片隐藏子控件的无障碍信息，使入口、开关和解锁按钮可被识别。
@@ -64,6 +65,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### Fixed
 
+- Fix detection timeouts when handing a verified RTL9210 PSSD from non-root mode back to the kernel, after safely flushing and closing its volumes.
 - Pause scans and new unlocks during mode switching, and wait for ongoing operations before safely closing volumes.
 - Preserve saved credentials when debug unlock calls omit the save option. Automatic and quick unlocks keep existing entries, and quick unlocks show success feedback.
 - Restore accessibility information for controls inside settings groups and drive cards, including unlock buttons.

@@ -161,6 +161,27 @@ class PipelinedUsbCommunication(
         }
     }
 
+    /** Reset this verified idle bridge while usbfs still owns its BOT interface. */
+    @Synchronized
+    internal fun resetForKernelHandoff() {
+        if (isClosed) throw IOException("USB connection is already closed")
+        if (!nativeResetDevice(deviceConnection.fileDescriptor)) {
+            throw IOException("USB device reset failed")
+        }
+        Log.i(TAG, "Single-device kernel handoff reset completed")
+        // Do not release before reset: releaseInterface reconnects the kernel driver,
+        // which can immediately start UAS discovery.
+        isClosed = true
+        val released = try {
+            deviceConnection.releaseInterface(usbInterface)
+        } finally {
+            deviceConnection.close()
+        }
+        // A successful device reset can already reconnect the kernel driver and
+        // invalidate the old usbfs claim. Closing the connection is still required.
+        if (!released) Log.i(TAG, "USB claim no longer held after reset; connection closed")
+    }
+
     override fun close() {
         if (isClosed) return
         isClosed = true

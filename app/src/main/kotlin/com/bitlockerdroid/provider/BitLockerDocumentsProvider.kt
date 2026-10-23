@@ -482,7 +482,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         }
         if (method == "switch_mode_and_restart") {
             val target = if (extras != null && extras.containsKey("target_root")) extras.getBoolean("target_root") else (arg == "true")
-            val preparation = UnlockManager.prepareForModeSwitch()
+            val preparation = UnlockManager.prepareForModeSwitch(target)
             if (preparation.isFailure) return Bundle().apply {
                 putBoolean("success", false)
                 putString("error", preparation.exceptionOrNull()?.message)

@@ -144,7 +144,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
             isSwitchingModeProcessingState.value = true
             lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    UnlockManager.prepareForModeSwitch().getOrThrow()
+                    UnlockManager.prepareForModeSwitch(target).getOrThrow()
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
                         isSwitchingModeProcessingState.value = false
