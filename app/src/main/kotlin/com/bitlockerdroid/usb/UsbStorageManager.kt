@@ -26,8 +26,6 @@ import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Executors
-import java.util.concurrent.Future
 
 /**
  * Non-Root USB Mass Storage Manager.
@@ -41,16 +39,6 @@ object UsbStorageManager {
 
     private const val TAG = "UsbStorageManager"
     const val ACTION_USB_PERMISSION = "com.bitlockerdroid.USB_PERMISSION"
-
-    private const val DAEMON_MAGIC = 0x4249544CL // 'BITL'
-    private const val CMD_EXIT = 0
-    private const val CMD_READ = 1
-    private const val CMD_WRITE = 2
-    private const val CMD_SYNC = 3
-    private const val CMD_SIZE = 4
-
-    @Volatile
-    var usePipelinedWrite: Boolean = true
 
     data class UsbPartitionInfo(
         val deviceId: Int,
@@ -1283,278 +1271,39 @@ object UsbStorageManager {
         }
     }
 
-    /**
-     * Dedicated background worker servicing binary pread/pwrite requests over Unix domain socketpair.
-     * Implements a 2-stage Ping-Pong overlapping write pipeline to break the stop-and-wait BOT latency barrier.
-     */
+    /** Dedicated worker; each response confirms completed partition I/O. */
     class UsbBlockDeviceWorker(
         val partitionDriver: PartitionBlockDeviceDriver,
         val workerPfd: ParcelFileDescriptor
     ) : Thread("UsbBlockWorker-${partitionDriver.startLba}") {
-
         @Volatile
         var running = true
-
-        private val writeExecutor = Executors.newSingleThreadExecutor { r ->
-            Thread(r, "UsbAsyncWriter-${partitionDriver.startLba}").apply { isDaemon = true }
-        }
-
-        private class WriteSlot(val id: Int) {
-            var buffer: ByteBuffer = ByteBuffer.allocate(256 * 1024)
-            var offset: Long = 0L
-            var length: Int = 0
-            var future: Future<*>? = null
-
-            fun ensureCapacity(len: Int) {
-                if (buffer.capacity() < len) {
-                    buffer = ByteBuffer.allocate(maxOf(len, buffer.capacity() * 2))
-                }
-                buffer.clear()
-                buffer.limit(len)
-            }
-        }
-
-        private val slotA = WriteSlot(0)
-        private val slotB = WriteSlot(1)
-        private var activeSlot = slotA
-
-        @Volatile
-        private var deferredError: Int = 0
-
-        private var readBuf = ByteBuffer.allocate(256 * 1024)
-
-        private fun acquireReadBuf(len: Int): ByteBuffer {
-            val existing = readBuf
-            return if (existing.capacity() >= len) {
-                existing.clear()
-                existing.limit(len)
-                existing
-            } else {
-                val newBuf = ByteBuffer.allocate(maxOf(len, existing.capacity() * 2))
-                newBuf.limit(len)
-                readBuf = newBuf
-                newBuf
-            }
-        }
-
-        private fun drainWrites(): Boolean {
-            var ok = true
-            try {
-                slotA.future?.get()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error draining slotA in worker", e)
-                deferredError = -5
-                ok = false
-            } finally {
-                slotA.future = null
-            }
-
-            try {
-                slotB.future?.get()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error draining slotB in worker", e)
-                deferredError = -5
-                ok = false
-            } finally {
-                slotB.future = null
-            }
-            return ok && (deferredError == 0)
-        }
 
         fun closeWorker() {
             running = false
             interrupt()
-            try { drainWrites() } catch (_: Exception) {}
-            try { writeExecutor.shutdownNow() } catch (_: Exception) {}
         }
 
         override fun run() {
             Log.i(TAG, "UsbBlockDeviceWorker starting for LBA ${partitionDriver.startLba}, pfd=${workerPfd.fd}")
-            val inStream = FileInputStream(workerPfd.fileDescriptor)
-            val outStream = FileOutputStream(workerPfd.fileDescriptor)
-            val headerBuf = ByteArray(12)
-            val statusBuf = ByteArray(4)
-            val sizeBuf = ByteArray(8)
-
+            val input = FileInputStream(workerPfd.fileDescriptor)
+            val output = FileOutputStream(workerPfd.fileDescriptor)
             try {
-                // Handshake with DAEMON_MAGIC (0x4249544CL little-endian)
-                writeIntLE(statusBuf, 0, DAEMON_MAGIC.toInt())
-                outStream.write(statusBuf, 0, 4)
-                outStream.flush()
-                Log.i(TAG, "UsbBlockDeviceWorker handshake sent")
-
-                while (running) {
-                    val cmd = inStream.read()
-                    if (cmd == -1 || cmd == CMD_EXIT) break
-
-                    when (cmd) {
-                        CMD_READ -> {
-                            // Ensure in-flight writes are flushed for read-after-write consistency
-                            drainWrites()
-
-                            readFully(inStream, headerBuf, 0, 12)
-                            val offset = readLongLE(headerBuf, 0)
-                            val len = readIntLE(headerBuf, 8)
-                            if (len <= 0) break
-
-                            val dataBuf = acquireReadBuf(len)
-                            try {
-                                partitionDriver.read(offset, dataBuf)
-                                dataBuf.flip()
-                                writeIntLE(statusBuf, 0, len)
-                                outStream.write(statusBuf, 0, 4)
-                                outStream.write(dataBuf.array(), dataBuf.arrayOffset(), len)
-                                outStream.flush()
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Worker CMD_READ error at offset $offset len $len", e)
-                                writeIntLE(statusBuf, 0, -5) // -EIO
-                                outStream.write(statusBuf, 0, 4)
-                                outStream.flush()
-                            }
-                        }
-                        CMD_WRITE -> {
-                            readFully(inStream, headerBuf, 0, 12)
-                            val offset = readLongLE(headerBuf, 0)
-                            val len = readIntLE(headerBuf, 8)
-                            if (len <= 0) break
-
-                            if (usePipelinedWrite) {
-                                // 1. Wait for active slot's previous write to complete before reusing its buffer
-                                val curSlot = activeSlot
-                                curSlot.future?.let { f ->
-                                    try {
-                                        f.get()
-                                    } catch (e: Exception) {
-                                        Log.e(TAG, "Worker deferred write error on slot ${curSlot.id}", e)
-                                        deferredError = -5
-                                    } finally {
-                                        curSlot.future = null
-                                    }
-                                }
-
-                                // 2. Read incoming payload from socket into active slot's buffer
-                                curSlot.ensureCapacity(len)
-                                readFully(inStream, curSlot.buffer.array(), curSlot.buffer.arrayOffset(), len)
-                                curSlot.offset = offset
-                                curSlot.length = len
-                                curSlot.buffer.position(0)
-                                curSlot.buffer.limit(len)
-
-                                // 3. Propagate deferred error if earlier background write failed
-                                if (deferredError != 0) {
-                                    val err = deferredError
-                                    deferredError = 0
-                                    writeIntLE(statusBuf, 0, err) // -5 (-EIO)
-                                    outStream.write(statusBuf, 0, 4)
-                                    outStream.flush()
-                                } else {
-                                    // 4. Dispatch active slot to background async writer thread
-                                    curSlot.future = writeExecutor.submit {
-                                        try {
-                                            partitionDriver.write(curSlot.offset, curSlot.buffer)
-                                        } catch (e: Exception) {
-                                            Log.e(TAG, "Async partition write error at offset ${curSlot.offset} len ${curSlot.length}", e)
-                                            deferredError = -5
-                                            throw e
-                                        }
-                                    }
-
-                                    // 5. Immediately send ACK to C driver so it can start preparing/encrypting the NEXT chunk!
-                                    writeIntLE(statusBuf, 0, len)
-                                    outStream.write(statusBuf, 0, 4)
-                                    outStream.flush()
-
-                                    // 6. Ping-pong flip to the other slot
-                                    activeSlot = if (activeSlot === slotA) slotB else slotA
-                                }
-                            } else {
-                                // Synchronous single-buffer fallback
-                                drainWrites()
-                                val curSlot = activeSlot
-                                curSlot.ensureCapacity(len)
-                                readFully(inStream, curSlot.buffer.array(), curSlot.buffer.arrayOffset(), len)
-                                curSlot.buffer.position(0)
-                                curSlot.buffer.limit(len)
-                                try {
-                                    partitionDriver.write(offset, curSlot.buffer)
-                                    writeIntLE(statusBuf, 0, len)
-                                    outStream.write(statusBuf, 0, 4)
-                                    outStream.flush()
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "Sync CMD_WRITE error at offset $offset len $len", e)
-                                    writeIntLE(statusBuf, 0, -5) // -EIO
-                                    outStream.write(statusBuf, 0, 4)
-                                    outStream.flush()
-                                }
-                            }
-                        }
-                        CMD_SYNC -> {
-                            drainWrites()
-                            val err = deferredError
-                            deferredError = 0
-                            writeIntLE(statusBuf, 0, err)
-                            outStream.write(statusBuf, 0, 4)
-                            outStream.flush()
-                        }
-                        CMD_SIZE -> {
-                            drainWrites()
-                            writeLongLE(sizeBuf, 0, partitionDriver.sizeBytes)
-                            outStream.write(sizeBuf, 0, 8)
-                            outStream.flush()
-                        }
-                        else -> {
-                            Log.w(TAG, "Unknown worker cmd: $cmd")
-                            break
-                        }
-                    }
-                }
-            } catch (_: Exception) {
-                // Pipe closed during session shutdown
+                UsbBlockProtocol(
+                    partitionDriver.sizeBytes,
+                    partitionDriver::read,
+                    partitionDriver::write
+                ) { command, offset, length, error ->
+                    Log.e(TAG, "USB block I/O failed: command=$command offset=$offset length=$length", error)
+                }.serve(input, output) { running }
+            } catch (error: Exception) {
+                if (running) Log.w(TAG, "USB block channel ended", error)
             } finally {
                 running = false
-                try { drainWrites() } catch (_: Exception) {}
-                try { writeExecutor.shutdown() } catch (_: Exception) {}
-                try { inStream.close() } catch (_: Exception) {}
-                try { outStream.close() } catch (_: Exception) {}
+                try { input.close() } catch (_: Exception) {}
+                try { output.close() } catch (_: Exception) {}
                 try { workerPfd.close() } catch (_: Exception) {}
             }
-        }
-
-        private fun readFully(inStream: FileInputStream, buf: ByteArray, offset: Int, length: Int) {
-            var got = 0
-            while (got < length) {
-                val r = inStream.read(buf, offset + got, length - got)
-                if (r < 0) throw java.io.EOFException("Unexpected EOF on worker socket")
-                got += r
-            }
-        }
-
-        private fun writeIntLE(buf: ByteArray, offset: Int, value: Int) {
-            buf[offset] = (value and 0xFF).toByte()
-            buf[offset + 1] = ((value ushr 8) and 0xFF).toByte()
-            buf[offset + 2] = ((value ushr 16) and 0xFF).toByte()
-            buf[offset + 3] = ((value ushr 24) and 0xFF).toByte()
-        }
-
-        private fun writeLongLE(buf: ByteArray, offset: Int, value: Long) {
-            for (i in 0 until 8) {
-                buf[offset + i] = ((value ushr (i * 8)) and 0xFFL).toByte()
-            }
-        }
-
-        private fun readIntLE(buf: ByteArray, offset: Int): Int {
-            return (buf[offset].toInt() and 0xFF) or
-                    ((buf[offset + 1].toInt() and 0xFF) shl 8) or
-                    ((buf[offset + 2].toInt() and 0xFF) shl 16) or
-                    ((buf[offset + 3].toInt() and 0xFF) shl 24)
-        }
-
-        private fun readLongLE(buf: ByteArray, offset: Int): Long {
-            var res = 0L
-            for (i in 0 until 8) {
-                res = res or ((buf[offset + i].toLong() and 0xFFL) shl (i * 8))
-            }
-            return res
         }
     }
 }

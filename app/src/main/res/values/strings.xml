@@ -113,12 +113,9 @@
     <string name="settings_root_active">Root Active</string>
     <string name="settings_root_not_granted">Root Not Granted</string>
     <string name="settings_root_required_hint">Requires Root privilege to be enabled and granted</string>
-    <string name="settings_pipelined_write_title">USB Pipelined Write (Non-Root)</string>
-    <string name="settings_pipelined_write_desc">Enables ping-pong buffering and async queues to reduce non-Root write stalls.</string>
     <string name="settings_saf_double_buffer_title">SAF Transfer Double-Buffering</string>
     <string name="settings_saf_double_buffer_desc">Uses a 2x512KB async double-buffered pipe to eliminate write backpressure.</string>
     <string name="settings_saf_double_buffer_short">SAF Double-Buffer</string>
-    <string name="settings_usb_pipeline_short">USB Pipeline</string>
     <string name="settings_performance_title">Performance Optimization</string>
     <string name="settings_performance_dialog_desc">ARMv8 Acceleration · SAF Double-Buffer · USB Pipeline</string>
     <string name="settings_performance_sec_hw">Hardware Cryptography Acceleration</string>

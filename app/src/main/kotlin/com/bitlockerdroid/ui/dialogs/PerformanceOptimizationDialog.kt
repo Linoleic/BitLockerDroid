@@ -38,8 +38,6 @@ fun PerformanceOptimizationDialog(
     onUseHardwareSha2Change: (Boolean) -> Unit,
     useSafDoubleBuffer: Boolean,
     onUseSafDoubleBufferChange: (Boolean) -> Unit,
-    usePipelinedWrite: Boolean,
-    onUsePipelinedWriteChange: (Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -242,17 +240,7 @@ fun PerformanceOptimizationDialog(
                         onCheckedChange = onUseSafDoubleBufferChange
                     )
 
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                    )
 
-                    SettingsSwitchItem(
-                        title = stringResource(R.string.settings_pipelined_write_title),
-                        description = stringResource(R.string.settings_pipelined_write_desc),
-                        checked = usePipelinedWrite,
-                        onCheckedChange = onUsePipelinedWriteChange
-                    )
                 }
             }
         },

@@ -427,24 +427,6 @@ object PreferenceHelper {
             } catch (_: Exception) {}
         }
 
-    fun isUsePipelinedWrite(context: Context): Boolean =
-        prefs(context).getBoolean("use_pipelined_write", true)
-
-    fun setUsePipelinedWrite(context: Context, enabled: Boolean): Boolean {
-        val ret = prefs(context).edit().putBoolean("use_pipelined_write", enabled).commit()
-        com.bitlockerdroid.usb.UsbStorageManager.usePipelinedWrite = enabled
-        return ret
-    }
-
-    var usePipelinedWrite: Boolean
-        get() = try { prefs(ContextProvider.app).getBoolean("use_pipelined_write", true) } catch (_: Exception) { true }
-        set(v) {
-            try {
-                prefs(ContextProvider.app).edit().putBoolean("use_pipelined_write", v).commit()
-                com.bitlockerdroid.usb.UsbStorageManager.usePipelinedWrite = v
-            } catch (_: Exception) {}
-        }
-
     fun isUseSafDoubleBuffer(context: Context): Boolean =
         prefs(context).getBoolean("use_saf_double_buffer", true)
 

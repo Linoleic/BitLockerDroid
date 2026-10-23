@@ -113,12 +113,9 @@
     <string name="settings_root_active">Root 已启用</string>
     <string name="settings_root_not_granted">未获取 Root</string>
     <string name="settings_root_required_hint">需要开启并授权 Root 权限方可使用</string>
-    <string name="settings_pipelined_write_title">USB 写入异步流水线 (免 Root)</string>
-    <string name="settings_pipelined_write_desc">启用双层乒乓缓冲与异步队列，重叠传输，缓解免 Root 写入卡顿。</string>
     <string name="settings_saf_double_buffer_title">SAF 文件传输双缓冲</string>
     <string name="settings_saf_double_buffer_desc">建立 2x512KB 异步双缓冲管道，消除跨进程写入反压，加速大文件传输。</string>
     <string name="settings_saf_double_buffer_short">SAF 双缓冲</string>
-    <string name="settings_usb_pipeline_short">USB 流水线</string>
     <string name="settings_performance_title">性能优化</string>
     <string name="settings_performance_dialog_desc">ARMv8 硬件加速 · SAF 双缓冲 · USB 流水线</string>
     <string name="settings_performance_sec_hw">硬件密码学加速</string>

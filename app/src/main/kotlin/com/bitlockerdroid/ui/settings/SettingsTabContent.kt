@@ -36,13 +36,11 @@ fun SettingsTabContent(
     currentLanguage: String,
     useHardwareAes: Boolean = PreferenceHelper.useHardwareAes,
     useHardwareSha2: Boolean = PreferenceHelper.useHardwareSha2,
-    usePipelinedWrite: Boolean = PreferenceHelper.usePipelinedWrite,
     useSafDoubleBuffer: Boolean = PreferenceHelper.useSafDoubleBuffer,
     onOpenCredentialsManager: () -> Unit,
     onOpenPerformanceOptimization: () -> Unit = {},
     onOpenHardwareAcceleration: () -> Unit = onOpenPerformanceOptimization,
     onOpenSystemDiagnostics: () -> Unit = {},
-    onUsePipelinedWriteChange: (Boolean) -> Unit = {},
     onUseSafDoubleBufferChange: (Boolean) -> Unit = {},
     onThemeModeChange: (ThemeMode) -> Unit,
     onLanguageChange: (String) -> Unit
@@ -267,11 +265,10 @@ fun SettingsTabContent(
                     }
                 }
 
-                val totalSwitches = 4
+                val totalSwitches = 3
                 val enabledCount = (if (useHardwareAes && isHwCryptoSupported) 1 else 0) +
                         (if (useHardwareSha2 && isHwCryptoSupported) 1 else 0) +
-                        (if (useSafDoubleBuffer) 1 else 0) +
-                        (if (usePipelinedWrite) 1 else 0)
+                        (if (useSafDoubleBuffer) 1 else 0)
 
                 val perfBadgeText = when {
                     enabledCount == totalSwitches -> stringResource(R.string.settings_performance_badge_all)
@@ -286,24 +283,20 @@ fun SettingsTabContent(
                 }
 
                 val safDoubleBufferShort = stringResource(R.string.settings_saf_double_buffer_short)
-                val usbPipelineShort = stringResource(R.string.settings_usb_pipeline_short)
                 val hwDisabledStr = stringResource(R.string.settings_hw_state_disabled)
 
                 val perfSummary = remember(
                     useHardwareAes,
                     useHardwareSha2,
                     useSafDoubleBuffer,
-                    usePipelinedWrite,
                     isHwCryptoSupported,
                     safDoubleBufferShort,
-                    usbPipelineShort,
                     hwDisabledStr
                 ) {
                     buildList {
                         if (useHardwareAes && isHwCryptoSupported) add("AES")
                         if (useHardwareSha2 && isHwCryptoSupported) add("SHA-256")
                         if (useSafDoubleBuffer) add(safDoubleBufferShort)
-                        if (usePipelinedWrite) add(usbPipelineShort)
                     }.joinToString(" · ").ifEmpty { hwDisabledStr }
                 }
 

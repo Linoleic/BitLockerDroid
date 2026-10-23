@@ -80,6 +80,7 @@ class PipelinedUsbCommunication(
 
     private fun transferSingleIn(dest: ByteBuffer, length: Int): Int {
         val requested = minOf(length, CHUNK_SIZE)
+        val started = System.nanoTime()
         val result = deviceConnection.bulkTransfer(
             inEndpoint,
             inTransferBuffer,
@@ -87,7 +88,7 @@ class PipelinedUsbCommunication(
             requested,
             TRANSFER_TIMEOUT
         )
-        val transferred = validateTransferResult("bulk IN", result, requested)
+        val transferred = validateTransferResult("bulk IN", inEndpoint.address, result, requested, started)
         dest.put(inTransferBuffer, 0, transferred)
         return transferred
     }
@@ -103,6 +104,7 @@ class PipelinedUsbCommunication(
     private fun transferSingleOut(src: ByteBuffer, length: Int): Int {
         val requested = minOf(length, CHUNK_SIZE)
         src.duplicate().get(outTransferBuffer, 0, requested)
+        val started = System.nanoTime()
         val result = deviceConnection.bulkTransfer(
             outEndpoint,
             outTransferBuffer,
@@ -110,12 +112,17 @@ class PipelinedUsbCommunication(
             requested,
             TRANSFER_TIMEOUT
         )
-        val transferred = validateTransferResult("bulk OUT", result, requested)
+        val transferred = validateTransferResult("bulk OUT", outEndpoint.address, result, requested, started)
         src.position(src.position() + transferred)
         return transferred
     }
 
-    private fun validateTransferResult(direction: String, result: Int, requested: Int): Int {
+    private fun validateTransferResult(direction: String, endpoint: Int, result: Int, requested: Int, started: Long): Int {
+        if (result <= 0 || result > requested) {
+            Log.e(TAG, "$direction failed: endpoint=$endpoint requested=$requested result=$result " +
+                "elapsedMs=${(System.nanoTime() - started) / 1_000_000} timeoutMs=$TRANSFER_TIMEOUT " +
+                "errno=${ErrNo.errno} ${ErrNo.errstr}")
+        }
         if (result < 0) {
             when (ErrNo.errno) {
                 32 /* EPIPE */ -> throw PipeException()
