@@ -1,319 +1,346 @@
 # 更新日志 / Changelog
 
-本文档记录 BitLockerDroid（BitUnlocker）的所有版本变更，包括已发布的 Release 历史以及暂存中（Unreleased）的最新改进。
-格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范，版本号遵循 [语义化版本 2.0.0](https://semver.org/lang/zh-CN/)。
+本文档记录各版本的重要变更。
+格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本 2.0.0](https://semver.org/lang/zh-CN/)。
 
-This document records all changes to BitLockerDroid (BitUnlocker), including released release history and unreleased staging changes.
-Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), adhering to [Semantic Versioning 2.0.0](https://semver.org/).
+All notable changes to this project are documented here.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
----
-
-## [Unreleased] - 暂存更新 / Staging Changes
+## [Unreleased]
 
 ### 中文
-- 暂无未发布暂存更改。
+
+#### 新增
+
+- 主页和设置统一连接与授权入口，支持模式选择、授权检测和 USB 授权。
+
+#### 变更
+
+- 免 Root USB 读写改为每次最多 16 KB 的同步传输，停用多请求并行传输。
+- SMART 查询按已验证桥接芯片选择协议；RTL9210 需通过控制器标识和日志校验，未知 USB 不发送专用探测命令。
+- 免 Root 主页仅识别可查询设备；安全关闭卷后，才可手动查询 SMART，避免干扰解锁和读写。
+- SMART 区分“尚未确认支持”和“不支持”，避免将设备占用或查询失败误报为硬件不支持。
+- Root 环境详情与通知屏蔽保留在高级设置；模式切换仍沿用安全关闭后再重启流程。
+
+#### 安全
+
+- 修复开启生物识别保护后，文件访问和虚拟挂载仍可能绕过验证、自动解锁的问题。
+- 快捷解锁、查看和复制保存的凭据遵守生物识别保护开关；切换解锁目标后，旧验证结果失效。
+
+#### 修复
+
+- 调试解锁接口未指定保存选项时不再删除已有凭据；自动和快捷解锁保留原保存项，快捷解锁成功后正常提示。
+- 修复设置分组和驱动器卡片隐藏子控件的无障碍信息，使入口、开关和解锁按钮可被识别。
+- 自动解锁统一遵守全局开关、单卷开关和手动锁定设置。
+- 修复不同卷的同名文件并发写入时互相干扰的问题。
+- 修复文件写入不完整、空文件覆盖后仍残留旧内容的问题。
+- 修复免 Root 模式下分区序号显示错误，以及重复扫描误判空盘、断开卷连接的问题。
+- 修复读取卷信息失败时刷新界面可能导致应用崩溃的问题。
+- USB 读写通道超时或响应不完整时终止会话，避免继续使用错位响应或返回补零数据。
+- 列出卷和文件时不再初始化写入组件，避免大容量卷长时间等待。
+- 免 Root 连接显式选择 USB BOT 接口，修复从 Root 模式切回后可能沿用 UAS 接口的问题。
+- 重复解锁已打开的卷时复用现有会话，避免误关 USB 通道、导致读取或安全关闭失败。
+- 写入未完成、刷盘失败或虚拟挂载未退出时，停止弹出和模式切换并提示原因；等待写入超时时保留卷会话。
 
 ### English
-- No unreleased staging changes yet.
 
----
+#### Added
+
+- Unify connection and authorization entry points on the home screen and in settings, with mode selection, authorization checks, and USB access requests.
+
+#### Changed
+
+- Use synchronous USB transfers of up to 16 KB in non-root mode, replacing multiple queued requests.
+- Select SMART protocols by verified bridge identity. Validate RTL9210 controller identity and logs; do not send vendor probes to unknown USB devices.
+- Offer non-root SMART queries only after volumes are safely closed. Home discovery only identifies candidate devices without issuing probe commands.
+- Distinguish unconfirmed SMART support from unsupported hardware when a device is busy or a query fails.
+- Keep root environment details and notification suppression in advanced settings; mode switching still follows the safe-close-and-restart flow.
+
+#### Security
+
+- Fix file access and virtual mounting bypassing authentication when biometric protection is enabled.
+- Respect the biometric protection switch for quick unlock and when revealing or copying saved credentials. Discard old authentication results when the unlock target changes.
+
+#### Fixed
+
+- Preserve saved credentials when debug unlock calls omit the save option. Automatic and quick unlocks keep existing entries, and quick unlocks show success feedback.
+- Restore accessibility information for controls inside settings groups and drive cards, including unlock buttons.
+- Apply global, per-volume, and manual-lock settings consistently to automatic unlocking.
+- Fix concurrent writes to identically named files on different volumes interfering with each other.
+- Fix incomplete writes and old content remaining after an empty overwrite.
+- Fix incorrect partition numbers in non-root mode and repeated scans incorrectly treating encrypted drives as empty and closing their connections.
+- Fix crashes during UI refresh when volume information cannot be read.
+- Terminate USB I/O sessions on timeout or incomplete responses instead of reusing misaligned responses or returning zero-filled data.
+- Avoid initializing filesystem writers while listing volumes and files, preventing long waits on large volumes.
+- Explicitly select the USB BOT interface in non-root mode instead of retaining UAS after switching from root mode.
+- Reuse live sessions for duplicate unlock requests instead of closing their USB workers and breaking reads or safe closure.
+- Stop ejects and mode switches if writes are unfinished, flushing fails, or a virtual mount has not exited. Show the cause and keep the volume session open on write timeout.
 
 ## [v1.1.1] - 2026-10-22
 
 ### 中文
 
 #### 修复
-- **多分区物理磁盘系统挂载隔离保护**：
-  - 针对单盘多分区混合场景（例如同一物理移动硬盘同时包含普通 exFAT/FAT32 系统挂载分区与 BitLocker 加密卷），弹出 BitLocker 卷前全面扫描 `/proc/mounts`、全局挂载命名空间（`su -M`）以及 `sysfs` holders。
-  - 若检测到该物理磁盘仍有其他分区被系统挂载使用，严格禁止触发物理停机和从内核注销块设备节点（`/sys/block/.../device/delete`），防止单卷弹出导致同盘其他系统分区意外掉线或损坏。
-- **SCSI 缓存同步与停机错误传递及通知分级**：
-  - 原生守护进程（`smart_reader.c`）和 USB BOT 驱动增加对 SCSI `SYNCHRONIZE CACHE` 与 `START STOP UNIT` 返回值和 sense 码的严格校验。
-  - 若缓存同步失败，立即阻断设备脱机流程，返回明确错误码，防止带脏数据直接注销设备。
-  - 界面与系统通知根据真实执行状态进行三级细分：“完全安全停机（可安全拔出）”、“卷已安全关闭（同盘仍有其他分区在使用，请勿拔出）”、“卷已关闭但停机失败（请谨慎拔出）”。
-- **多卷并发安全弹出竞争修复与物理磁盘串行化**：
-  - 引入基于物理磁盘父节点的互斥锁，同盘多个卷的弹出操作严格按序串行化执行。
-  - 引入 `closingSessions` 状态追踪机制，确保排空 SAF 写管道和底层会话刷盘期间该卷依然计入物理盘占用，彻底根除后触发卷提前关停并注销底层设备节点的并发写竞争问题。
-- **免 Root USB 模式多卷会话生命周期对齐**：
-  - 为 `UsbSession` 增加原子生命周期关闭回调，并在 `DislockerCore.close()` 触发时可靠通知 `UsbStorageManager` 注销对应的活动会话记录。
-  - 彻底解决先弹出卷的残留记录导致最后一个卷被误判同盘仍有活动会话而跳过物理停机的问题。
+
+- 同盘仍有其他分区被系统挂载或占用时，只关闭目标卷，不停止或移除整盘。
+- 缓存同步失败时阻止磁盘脱机，并区分显示可拔出、同盘仍在使用和停盘失败三种结果。
+- 修复同盘多卷并发弹出时，过早停盘导致其他卷掉线的问题。
+- 修复免 Root 模式下残留会话导致最后一个卷弹出后未停盘的问题。
 
 ### English
 
 #### Fixed
-- **Physical Disk System Mount Isolation for Mixed Partitions**:
-  - Before physical spindown and device node offlining, inspect `/proc/mounts`, global mount namespaces (`su -M`), and sysfs holders for sibling partitions on the same parent disk.
-  - If any other partition on the physical drive is actively mounted or used by Android system (e.g. standard exFAT/FAT32 automounts), physical spindown and `/sys/block/.../device/delete` are strictly skipped, preventing external partition drops or I/O corruption.
-- **SCSI Cache Sync Error Propagation & Tiered Eject Notifications**:
-  - Added strict validation of return codes and sense buffers for SCSI `SYNCHRONIZE CACHE (10)` and `START STOP UNIT` in both native daemon (`smart_reader.c`) and Non-Root USB BOT transport.
-  - Aborts device offlining immediately upon cache sync failures to avoid dropping unwritten sectors.
-  - Tiered eject status and notifications across the UI: "Fully Spun Down (Safe to remove)", "Volume Closed (Other drive partitions remain in use; do not unplug)", and "Volume Closed with Spindown Warning".
-- **Concurrent Safe Eject Serialization & Closing State Tracking**:
-  - Serialized safe eject operations per physical parent disk with dedicated mutex locks.
-  - Introduced a `closingSessions` tracking set to maintain drive occupancy across in-flight SAF write drain and disk flush steps, eliminating race conditions where concurrent ejects prematurely offlined active drives.
-- **Non-Root USB Multi-Volume Session Lifecycle Alignment**:
-  - Bound `UsbSession` lifecycle cleanup with atomic callbacks and ensured `DislockerCore.close()` explicitly unregisters the volume from `UsbStorageManager.activeSessions`.
-  - Fixed an issue where stale session records from earlier ejected volumes caused the final volume to skip physical spindown.
 
----
+- Close only the target volume when sibling partitions are mounted or in use; keep the physical disk online.
+- Block disk offlining if cache synchronization fails, and distinguish safe removal, disk still in use, and spindown failure.
+- Fix concurrent ejects stopping a shared physical disk before other volumes have closed.
+- Fix stale non-root sessions preventing spindown after the last volume is ejected.
 
 ## [v1.1.0] - 2026-10-13
 
 ### 中文
 
 #### 新增
-- **物理块设备完整停机与下线脱机**：
-  - 彻底根治外接 PSSD 移动固态硬盘（如 Realtek RTL9210 / JMicron JMS583 / ASMedia 等桥接方案）每次拔出时 NVMe SMART 异常断电计数（`unsafe_shutdowns`）不断递增的问题。
-  - 在“安全弹出”与“全部弹出”时完整补全了硬件级停机下线序列：
-    1. 系统级脏页刷新：执行全系统 `sync` 与 `ioctl(BLKFLSBUF)`，清空内核与块层缓冲区。
-    2. SCSI 缓存强制落盘：下发 SCSI `SYNCHRONIZE CACHE (10)` (`0x35`) 指令，强制桥接固件与 SSD 刷写内部 DRAM / SLC Cache 缓存。
-    3. SCSI 物理停机睡眠：下发 SCSI `START STOP UNIT` (`0x1B`, `START=0`) 指令，触发 SSD 控制器完成 NVMe 关机通告（`CC.SHN`）并进入 Standby 低功耗模式。
-    4. 内核电源管理接管：动态开启 `/sys/block/.../device/scsi_disk/*/manage_start_stop = 1`。
-    5. SCSI 节点干净脱机：向 `/sys/block/.../device/delete` 写入 `1`，通知内核注销设备节点，安全脱机。
-    6. USB 端口低功耗休眠：联动 USB 核心写入 `power/control = auto`，引导 USB 端口进入 U3 Suspend。
-  - **多分区物理拓扑安全隔离**：单盘多分区环境下，仅在弹出该物理磁盘上的**最后一个活动分区块**（或一键全部弹出）时才执行物理停机与脱机，防止单卷卸载影响同盘其余活动分区。
-  - **免 Root USB 主机模式全面覆盖**：在 Non-Root 模式下通过 USB BOT 通道下发 SCSI 缓存同步与停机指令。
-- **物理磁盘一键全部弹出**：在物理磁盘汇总卡片（`DeviceGroupCard`）新增“全部弹出”按钮，支持一键安全卸载并弹出当前外接设备下的所有已挂载/已解锁卷。
-- **多分区物理拓扑顺序对齐**：单盘多分区根据磁盘底层物理起始扇区（`startSector`）升序排序，严格还原物理空间布局。
-- **多分区节点角标细化**：分区徽章清晰标明分区序号与系统块设备节点（例如：`分区 5 · sdg5`），便于准确定位各分区。
-- **挂载状态常驻徽章**：盘符卡片右上角常驻 `已挂载` 与 `已解锁` 状态徽章，直观区分卷状态。
-- **OTG 插盘后台静默就绪**：插入外接存储时后台静默探测并自动解锁已保存凭据的分区，推送就绪通知，支持一键打开。
 
-#### 优化
-- **小分辨率竖屏自适应布局重构**：
-  - 针对手机窄屏（宽度 < 600dp，如 360dp - 412dp）深度重构卡片响应式布局，调整断点阈值以全面适配竖屏握持。
-  - 解决物理磁盘卡片容量文本在动作按钮挤压下逐字竖向换行折行（`9 \n 3 \n 1 \n . \n 5 \n G \n B`）的问题，整合为单行防溢出显示，并将 S.M.A.R.T. 与全部弹出按钮自适应下沉至专属操作行。
-  - 优化盘符卡片中 36 字符卷 GUID 与 45 字符恢复密钥标识符的字号与溢出省略规则，避免卡片内部文字越界与双字符断行。
-  - 适配 POSIX 虚拟挂载与局域网无线共享在窄屏下的操作布局，防止按钮与地址挤压重叠。
-- **性能优化设置文案精简与底层指令集状态诊断细化**：
-  - 精简性能优化设置与硬件加速对话框中冗长生涩的技术文案（流水线异步并发写、SAF 双重缓冲管道），统一使用“支持 / 不支持 / 已激活 / 已停用”等简洁明晰的状态徽章。
-  - 深度扩充底层硬件密码学指令集诊断信息：在 JNI 原生层扩充 `native_getHardwareAesDetails` 与 `native_getHardwareSha2Details`，直观呈现内核 `HWCAP` 特性掩码、底层执行指令集族（`AESE/AESD/PMULL`、`SHA256H/SHA256SU0`）以及自检向量校验状态。
-  - 在“性能优化”与“系统环境与诊断”对话框中引入实时硬件微秒级密钥拉伸基准测试（`nativeBenchmarkKeyStretching`），显示 1000 轮密钥拉伸实测开销（例如：`135µs`），为排查移动端 CPU 硬件密码学加速性能提供精准依据。
-- **USB 传输协议位置优化**：将 USB 传输协议识别从基准测速对话框移出，收纳至已解锁卷的“详细硬件与卷参数”展开列表中，并提供一键复制按钮（如 `USB 3.0 (5 Gbps 高速)`）。
-- **测速流程精简**：从基准测速流程中剔除冗余的“检测硬件链路速率…”阶段与延时，测速过程专注于顺序读写速率与 4K 随机延时。
-- **拔盘即时主动刷新**：监听系统 USB 插拔广播事件，外接盘拔出时毫秒级主动同步设备列表，彻底消除拔出后界面顿挫与延迟消失的问题。
-- **外设过滤与防抖节流**：自动忽略鼠标、键盘等非存储类 USB 外设，加入解密唤醒防抖节流，避免高频广播造成重复唤醒。
+- Root 和免 Root 模式均支持弹出前同步缓存并停止磁盘；Root 模式在最后一个活动卷关闭后使设备脱机。
+- 新增物理磁盘“全部弹出”按钮，以及卷的“已挂载”和“已解锁”状态徽章。
+- 插盘后可自动解锁已保存凭据的卷，并通过通知一键打开。
+- 新增硬件加速状态详情和密钥派生耗时测试。
+
+#### 变更
+
+- 按物理分区顺序排列卷，并显示分区序号和设备节点。
+- 调整窄屏布局，避免容量、卷标识符、挂载路径和共享地址挤压或换行异常。
+- 精简性能设置文案；将 USB 协议信息移至卷详情，测速专注于读写性能。
+- 改进插拔后的列表刷新，忽略非存储外设并减少重复扫描。
 
 #### 修复
-- **运行诊断日志徽章文案修正**：修复“系统环境与诊断”对话框中“运行诊断日志”操作项的右侧状态徽章错误显示为“查看密码”的文案混淆问题，修正为“查看日志”。
-- **横竖屏旋转主页重复加载与防重载**：为 `BitLockerSettingsActivity` 与 `UnlockDialogActivity` 声明完整的 `android:configChanges`（`orientation|screenSize|smallestScreenSize|screenLayout|density|uiMode`），并在 Activity 中接管 `onConfigurationChanged` 旋转回调及记忆当前选中的 Tab 状态；彻底消除在屏幕旋转/横竖屏切换时 Activity 重新创建、盘符列表白屏重扫及刷新闪烁的问题。
-- **系统格式化提示屏蔽开关**：修复主界面设置中“屏蔽系统格式化提示”开关无法开启及点击无响应的问题，完善回调连接。
 
----
+- 修复旋转屏幕后重复加载、白屏和重新扫描的问题。
+- 修复“屏蔽系统格式化提示”开关无响应的问题。
+- 修正运行诊断日志按钮误显示“查看密码”的文案。
 
 ### English
 
 #### Added
-- **Full Physical Block Device Spindown & Safe Offline**:
-  - Completely resolves the issue where external portable SSDs (especially Realtek RTL9210, JMicron JMS583, and ASMedia NVMe bridges) suffered incrementing SMART `unsafe_shutdowns` counters every time they were unplugged.
-  - Implements the complete hardware spindown and offlining sequence during "Safe Eject" and "Eject All":
-    1. System-wide dirty buffer writeback via `sync` and `ioctl(BLKFLSBUF)`.
-    2. SCSI cache synchronization via SCSI `SYNCHRONIZE CACHE (10)` (`0x35`), ensuring internal DRAM/SLC caches are flushed to NAND.
-    3. SCSI physical spindown via SCSI `START STOP UNIT` (`0x1B`, `START=0`), signaling the SSD controller to perform clean NVMe shutdown notification (`CC.SHN`) and transition to standby low-power mode.
-    4. Kernel power management enablement via `/sys/block/.../device/scsi_disk/*/manage_start_stop = 1`.
-    5. Clean SCSI block device offlining and removal via `/sys/block/.../device/delete = 1`.
-    6. USB port power suspension via `/sys/bus/usb/devices/.../power/control = auto` and autosuspend delay `0` (U3 Suspend).
-  - **Multi-Partition Safety Isolation**: On physical drives hosting multiple partitions, physical spindown and offlining is only executed when ejecting the **last remaining active volume session** on that physical disk (or when invoking "Eject All"), safeguarding all other concurrently active partitions.
-  - **Full Non-Root USB Host Mode Coverage**: Issues SCSI cache synchronization and spindown unit commands via USB BOT bulk transfer before closing device handles in non-root mode.
-- **Eject All for Physical Storage Devices**: Added an "Eject All" action button on the physical device card (`DeviceGroupCard`) to safely unmount all unlocked volumes on the device in a single tap.
-- **Physical Topology Partition Ordering**: Multi-partitions are now sorted in ascending order of their physical start sector (`startSector`), accurately mirroring on-disk layout.
-- **Detailed Partition Badges**: Partition chips explicitly display the partition number and kernel block node name (e.g., `Partition 5 · sdg5`).
-- **Persistent Volume Status Badges**: Added permanent `Mounted` / `Unlocked` status badges on the top right of volume cards for immediate state recognition.
-- **Silent Auto-Mount on OTG Plug**: Automatically decrypts and mounts remembered BitLocker partitions in the background upon connection, posting a system notification for one-tap browsing.
 
-#### Optimized
-- **Responsive Layout for Small Portrait Screens**:
-  - Deeply refactored responsive layouts across drive cards for mobile portrait viewports (width < 600dp, e.g. 360dp - 412dp) with Material 3 compact breakpoints.
-  - Resolved character-by-character vertical text wrapping bugs on physical disk capacity subtitles by consolidating info strings and moving S.M.A.R.T. & Eject All buttons to a dedicated action row.
-  - Adjusted font sizes and ellipsis rules for 36-char volume GUIDs and 45-char Recovery Key IDs to prevent two-character orphan line breaks.
-  - Adapted POSIX virtual mount and LAN wireless share cards to wrap URL and action controls gracefully on compact displays.
-- **Concise Performance Descriptions & Detailed Instruction Set Diagnostics**:
-  - Streamlined verbose technical descriptions for USB pipelined writing and SAF double-buffering into clean, concise badges (Supported, Unsupported, Active, Disabled).
-  - Deeply expanded low-level cryptographic hardware instruction set diagnostics: extended JNI native helpers (`native_getHardwareAesDetails`, `native_getHardwareSha2Details`) to report kernel `HWCAP` hex bitmasks, execution instruction subsets (`AESE/AESD/PMULL`, `SHA256H/SHA256SU0`), and vector self-test status.
-  - Added real-time microsecond key-stretching benchmarks (`nativeBenchmarkKeyStretching`) in both "Performance Optimization" and "System Environment & Diagnostics" dialogs, measuring actual 1000-iteration key derivation latency (e.g. `135µs`) for detailed hardware profiling.
-- **Relocated USB Protocol Detection**: Moved USB transmission protocol detection out of the benchmark speed test dialog into the "Hardware & Volume Details" expandable section on the volume card, with one-touch clipboard copy.
-- **Streamlined Benchmark Engine**: Eliminated the hardware link speed detection phase from the benchmark runner, removing artificial progress delays.
-- **Instant USB Detachment Refresh**: Listened directly to USB attach/detach broadcasts to instantly synchronize device lists, resolving UI hesitation when drives are unplugged.
-- **Non-Storage Filtering & Throttling**: Automatically ignores non-storage peripherals (keyboards, mice, DACs) and throttles background unlock attempts against broadcast storms.
+- Synchronize caches and stop disks before ejecting in root and non-root modes; offline the device in root mode after the last active volume closes.
+- Add an Eject All action per physical disk and Mounted/Unlocked volume badges.
+- Automatically unlock remembered volumes on connection, with a notification to open them.
+- Add hardware acceleration details and key derivation timing tests.
+
+#### Changed
+
+- Sort volumes by physical partition order and show partition numbers and device nodes.
+- Adapt narrow-screen layouts to prevent wrapping and overlap in capacities, volume identifiers, mount paths, and sharing addresses.
+- Simplify performance settings, move USB protocol details to volume information, and focus benchmarks on read/write performance.
+- Improve device list updates on connection changes, ignore non-storage peripherals, and reduce duplicate scans.
 
 #### Fixed
-- **Diagnostic Log Action Badge Text**: Corrected the action badge in the "System Environment & Diagnostics" dialog for "Running Diagnostic Logs", which previously erroneously displayed "View Password" instead of "View Logs".
-- **Prevent Activity Recreation & Drive Rescanning on Orientation Change**: Configured `android:configChanges` (`orientation|screenSize|smallestScreenSize|screenLayout|density|uiMode`) for `BitLockerSettingsActivity` and `UnlockDialogActivity`, handled `onConfigurationChanged`, and preserved selected navigation tabs via `rememberSaveable`; completely eliminating screen rotation activity teardown, empty white-flash reloading, and repetitive block device rescanning.
-- **Suppress System Format Prompt Toggle**: Fixed a callback wiring issue where the "Suppress System Format Prompt" toggle in Settings could not be enabled.
 
----
+- Fix repeated loading, blank screens, and rescanning after screen rotation.
+- Fix the unresponsive Suppress System Format Prompt toggle.
+- Correct the diagnostic log action incorrectly labeled View Password.
 
 ## [v1.0.6] - 2026-10-10
 
 ### 中文
 
 #### 新增
-- **存储硬件健康度与 S.M.A.R.T. 遥测**：为支持 NVMe/SCSI 直通的外接 SSD 固态硬盘引入底层 S.M.A.R.T. 遥测读取器，展示健康度百分比、写入总量、备用块、设备温度与临界警告。
-- **智能硬件能力探测**：自动识别并对不支持 SMART 诊断指令的普通 U 盘隐藏该功能入口。
-- **物理存储设备聚合卡片**：主页新增 `DeviceGroupCard`，统一归类展示同一物理设备下的所有分区卷、磁盘型号、总容量及健康状态。
 
-#### 优化
-- **底层 I/O 流水线与 SAF 双缓冲传输**：调优原生 C 驱动块管道，微调内核块队列参数，大幅提升 SAF 框架流式读取吞吐量。
-- **设置中心滑动微卡顿消除**：重构设置中心渲染层级，整合性能调优选项为独立控制面板，实现 144Hz 满帧滑动。
+- 支持读取兼容外接 SSD 的 S.M.A.R.T. 健康度、写入量、温度和警告信息。
+- 自动隐藏不支持的 S.M.A.R.T. 功能。
+- 按物理磁盘归类展示分区、型号、容量和健康状态。
+
+#### 变更
+
+- 优化底层传输和系统文件访问的读取性能。
+- 改善设置页滚动流畅度，并集中展示性能调优选项。
 
 #### 修复
-- **高速移动固态硬盘 (PSSD) UAS 协议兼容**：增加 UAS (USB Attached SCSI) 传输协议适配与 SELinux 安全块设备分区枚举。
 
----
+- 改进高速移动固态硬盘的 UAS 协议兼容性和分区识别。
 
 ### English
 
 #### Added
-- **Storage Hardware Health & S.M.A.R.T. Telemetry**: Implemented low-level S.M.A.R.T. telemetry reader for external SSDs (NVMe/SCSI passthrough), providing health percentages, TBW, spare blocks, and temperatures.
-- **Smart Capability Probing**: Automatically detects device capabilities and hides SMART options on unsupported USB thumb drives.
-- **Physical Device Grouping Card**: Introduced `DeviceGroupCard` to group all partition volumes under their parent physical drive.
 
-#### Optimized
-- **Native Driver Pipeline & SAF Double-Buffering**: Tuned native C driver pipeline and kernel block queue parameters to enhance SAF streaming throughput.
-- **Smooth 144Hz Settings Scrolling**: Eliminated micro-stutter in Settings and consolidated performance tuning toggles into an interactive dialog.
+- Read S.M.A.R.T. health, write totals, temperature, and warnings from compatible external SSDs.
+- Hide unsupported S.M.A.R.T. features automatically.
+- Group partitions, model, capacity, and health information by physical disk.
+
+#### Changed
+
+- Improve low-level transfer and SAF read performance.
+- Improve settings scrolling and consolidate performance options.
 
 #### Fixed
-- **PSSD UAS Protocol Compatibility**: Added UAS (USB Attached SCSI) protocol support and SELinux-safe partition traversal for high-speed portable SSDs.
 
----
+- Improve UAS compatibility and partition detection for portable SSDs.
 
 ## [v1.0.5] - 2026-10-06
 
 ### 中文
 
 #### 新增
-- **ARMv8 CE 硬件密码学加速**：原生调用 ARMv8 密码学扩展指令集（PMULL, AES, SHA2），将 104.8 万轮 PBKDF2 密钥派生耗时从 ~495ms 缩短至 ~104ms（4.75 倍加速）。
-- **Non-Root USB 乒乓交叠写入流水线**：为 `UsbBlockDeviceWorker` 引入双阶段交叠写入流水线，大文件写入速率提升数倍。
-- **USB 写入流水线配置开关**：在设置中心提供“USB 写入流水线优化”控制项，支持实时生效与自检。
 
-#### 优化
-- **144Hz 丝滑滑动专项调优**：全面采用 LazyColumn 虚拟化、独立 RenderNode 渲染层、隔离无障碍语义合并，消除主线程 Binder IPC 与重组开销。
+- 支持 ARMv8 硬件密码学加速，缩短解锁时的密钥派生耗时。
+- 新增免 Root USB 写入流水线及对应设置开关，提高大文件写入性能。
+- 支持 x86_64 架构。
+
+#### 变更
+
+- 优化列表渲染，改善高刷新率屏幕上的滚动流畅度。
 
 #### 修复
-- **底层稳定性与架构安全**：完善 JNI 异常守卫（`ExceptionCheck`）；消除 AES-XTS 未对齐指针强转警告；增加 x86_64 ABI 支持；清零内存敏感密码字符。
 
----
+- 改进原生层异常处理和 AES-XTS 内存对齐。
+
+#### 安全
+
+- 使用后清零内存中的密码缓冲区。
 
 ### English
 
 #### Added
-- **ARMv8 CE Hardware Acceleration**: Added native ARMv8 Cryptography Extensions (PMULL, AES, SHA2) support, accelerating 1.05M-round PBKDF2 derivation from ~495ms to ~104ms (4.75x speedup).
-- **USB Overlapping Pipelined Write**: Implemented a 2-stage ping-pong overlapping write pipeline in Non-Root mode, greatly accelerating large file write throughput.
-- **Pipelined Write Setting Toggle**: Added an interactive toggle for USB pipelined write under Advanced Settings.
 
-#### Optimized
-- **144Hz Smooth Scrolling**: Fully virtualized list rendering with LazyColumn, isolated RenderNode layers, and decoupled main-thread Binder IPC.
+- Support ARMv8 hardware cryptography to reduce key derivation time during unlock.
+- Add a non-root USB write pipeline and settings toggle to improve large-file writes.
+- Support the x86_64 architecture.
+
+#### Changed
+
+- Improve list rendering and scrolling on high-refresh-rate displays.
 
 #### Fixed
-- **Stability & Architecture**: Added JNI ExceptionCheck guards; removed unaligned pointer casts in AES-XTS; added x86_64 ABI; zeroed out password buffers in memory.
 
----
+- Improve native exception handling and AES-XTS memory alignment.
+
+#### Security
+
+- Clear password buffers from memory after use.
 
 ## [v1.0.4] - 2026-09-27
 
 ### 中文
 
 #### 新增
-- **局域网无线文件共享 (Web & WebDAV 双协议)**：内置轻量级 Web 门户与 WebDAV 服务端，跨设备免安装客户端秒级访问解密卷，支持多媒体在线串流播放与断点续传。
-- **原生非加密外接驱动器支持**：支持直接浏览打开非加密外接盘（FAT32, exFAT），提供存储用量概览与直通打开。
 
-#### 优化
-- **Android 15+ 16 KB Page Size 内存分页对齐**：全面适配 Android 15 原生 16 KB Page Size 内存分页规范，通过严格校验。
+- 支持通过浏览器和 WebDAV 共享文件，包括媒体串流和分段下载。
+- 支持浏览非加密 FAT32、exFAT 外接盘，并查看存储用量。
 
-#### 修复
-- **无线共享安全性强化**：增加 HTTP PUT 报文长度防御、防路径穿越校验、防止伪造分离。
+#### 变更
 
----
+- 适配 Android 15 及更高版本的 16 KB 内存分页。
+
+#### 安全
+
+- 增加上传长度检查、路径穿越防护和共享会话身份校验。
 
 ### English
 
 #### Added
-- **Wireless LAN Sharing (Web & WebDAV)**: Built-in Web browser portal and standard WebDAV server for cross-device access without third-party clients, supporting video streaming and range requests.
-- **Unencrypted Drive Support**: Added native detection and browsing for unencrypted USB drives (FAT32, exFAT).
 
-#### Optimized
-- **Android 15+ 16 KB Page Size Alignment**: Verified and aligned all native shared libraries to support Android 15+ 16 KB memory page sizes.
+- Share files through a browser or WebDAV, including media streaming and range downloads.
+- Browse unencrypted FAT32/exFAT external drives and view storage usage.
 
-#### Fixed
-- **LAN Sharing Security Hardening**: Added PUT length checks, path traversal guards, and session authentication validations.
+#### Changed
 
----
+- Support 16 KB memory pages on Android 15 and later.
+
+#### Security
+
+- Add upload length checks, path traversal protection, and sharing session authentication checks.
 
 ## [v1.0.3] - 2026-09-20
 
 ### 中文
 
 #### 新增
-- **生物识别凭据保险箱**：基于 Android Keystore 硬件安全模块加密存储 BitLocker 密码与恢复密钥，支持指纹/面容快速解锁。
-- **安全防窥与二次认证**：查看已保存凭据前强制二次生物验证；动态激活 `FLAG_SECURE` 防录屏截屏。
-- **FVE 卷头元数据容灾备份 (`.fvemeta`)**：支持备份 Sector 0 与三处 64KB FVE 元数据副本并支持导出底层镜像，防范硬件损坏。
 
----
+- 使用 Android Keystore 加密保存密码和恢复密钥，支持生物识别快捷解锁。
+- 支持 FVE 卷头元数据备份（`.fvemeta`）和卷镜像导出。
+
+#### 安全
+
+- 查看保存的凭据前进行身份验证，并为敏感界面启用截屏和录屏保护。
 
 ### English
 
 #### Added
-- **Biometric Credential Vault**: Secured BitLocker passwords and recovery keys using Android Keystore hardware-backed encryption, enabling fingerprint and face unlock.
-- **Privacy Shield & Secondary Auth**: Mandatory biometric prompt before viewing credentials, with dynamic `FLAG_SECURE` screen privacy protection.
-- **FVE Metadata Disaster Recovery Backup**: Export and backup Sector 0 and three 64KB FVE metadata blocks (`.fvemeta`), along with raw image dumping.
 
----
+- Encrypt saved passwords and recovery keys with Android Keystore and support biometric quick unlock.
+- Support FVE metadata backups (`.fvemeta`) and volume image exports.
+
+#### Security
+
+- Authenticate before revealing saved credentials and protect sensitive screens from screenshots and recording.
 
 ## [v1.0.2] - 2026-09-12
 
 ### 中文
 
 #### 新增
-- **脏卷一键修复**：一键安全重置因未安全弹出造成的 NTFS、FAT32、exFAT unclean 软脏标记。
-- **深度文件系统结构诊断**：毫秒级检验引导扇区、分配表一致性与根目录元数据，前置拦截结构性损坏风险。
 
----
+- 支持清除 NTFS、FAT32、exFAT 卷因未正常卸载留下的脏标记。
+- 支持检查文件系统引导扇区、分配表和目录结构。
 
 ### English
 
 #### Added
-- **One-Tap Dirty Volume Repair**: Safely resets unclean unmount flags on NTFS, FAT32, and exFAT volumes.
-- **Deep Filesystem Integrity Diagnostics**: Performs non-destructive checks on boot sectors, allocation tables, and directory structures.
 
----
+- Clear unclean-unmount flags on NTFS, FAT32, and exFAT volumes.
+- Diagnose filesystem boot sectors, allocation tables, and directory structures.
 
 ## [v1.0.1] - 2026-09-08
 
 ### 中文
 
-#### 优化
-- **独立卷配置与滑动流畅度**：修复 POSIX FUSE 挂载路径兼容性；各驱动器独立记忆只读模式状态；优化界面渲染性能。
-- **双语文档分离**：分离中英文文档结构，增加跨语言互联导航。
+#### 变更
 
----
+- 按卷记忆只读设置，并改善界面滚动性能。
+- 分离中英文项目说明，并增加语言切换链接。
+
+#### 修复
+
+- 修复 POSIX FUSE 挂载路径兼容问题。
 
 ### English
 
-#### Optimized
-- **Independent Volume State & Scrolling**: Fixed POSIX FUSE mount paths; remembered read-only settings per volume; smoothed UI rendering.
-- **Separated Documentation**: Split Chinese and English documentation with cross-language navigation.
+#### Changed
 
----
+- Remember read-only settings per volume and improve scrolling performance.
+- Separate Chinese and English project documentation with language-switching links.
+
+#### Fixed
+
+- Fix POSIX FUSE mount path compatibility.
 
 ## [v1.0.0] - 2026-09-06
 
 ### 中文
 
 #### 新增
-- **首个正式发布版本**：
-  - Android 平台免电脑全功能 BitLocker 加密存储管理器。
-  - 支持解密 NTFS、FAT32、exFAT 格式 BitLocker 卷。
-  - 支持用户密码与 48 位恢复密钥双重解密途径。
-  - 支持 Root 驱动直通极速挂载 与 Non-Root 免 Root USB Host API 双运行模式。
-  - 现代化 Material 3 界面设计，支持基准测速、只读保护、深浅色模式与 SAF 存储访问框架集成。
 
----
+- 首个正式版本，支持在 Android 上访问 NTFS、FAT32、exFAT 格式的 BitLocker 卷。
+- 支持密码和 48 位恢复密钥解锁，以及 Root 和免 Root USB 两种模式。
+- 提供系统文件访问、虚拟挂载、基准测速、只读设置和深浅色主题。
 
 ### English
 
 #### Added
-- **Initial Public Release**:
-  - Full-featured BitLocker drive reader on Android without a PC.
-  - Decrypts NTFS, FAT32, and exFAT BitLocker-encrypted partitions.
-  - Dual unlock methods: User Password and 48-digit Recovery Key.
-  - Dual operating modes: Root direct driver mount and Non-Root USB Host API mode.
-  - Material 3 design, read-only protection, benchmark testing, dark/light themes, and SAF integration.
+
+- Initial public release with Android access to NTFS, FAT32, and exFAT BitLocker volumes.
+- Unlock with passwords or 48-digit recovery keys in root or non-root USB mode.
+- Provide SAF access, virtual mounting, benchmarks, read-only settings, and light/dark themes.
+
+[Unreleased]: https://github.com/Linoleic/BitLockerDroid/compare/v1.1.1...HEAD
+[v1.1.1]: https://github.com/Linoleic/BitLockerDroid/compare/v1.1.0...v1.1.1
+[v1.1.0]: https://github.com/Linoleic/BitLockerDroid/compare/v1.0.6...v1.1.0
+[v1.0.6]: https://github.com/Linoleic/BitLockerDroid/compare/v1.0.5...v1.0.6
+[v1.0.5]: https://github.com/Linoleic/BitLockerDroid/compare/v1.0.4...v1.0.5
+[v1.0.4]: https://github.com/Linoleic/BitLockerDroid/compare/v1.0.3...v1.0.4
+[v1.0.3]: https://github.com/Linoleic/BitLockerDroid/compare/v1.0.2...v1.0.3
+[v1.0.2]: https://github.com/Linoleic/BitLockerDroid/compare/v1.0.1...v1.0.2
+[v1.0.1]: https://github.com/Linoleic/BitLockerDroid/compare/v1.0.0...v1.0.1
+[v1.0.0]: https://github.com/Linoleic/BitLockerDroid/releases/tag/v1.0.0
