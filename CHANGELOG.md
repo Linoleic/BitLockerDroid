@@ -14,119 +14,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### 新增
 
-- 磁盘健康显示查询时间、耗时、失败阶段与独立的数据校验结果。
-- 主页统一连接与授权入口，支持模式选择、授权检测和 USB 授权。
+- 主页统一“连接与授权”，集中管理模式、授权与 Root 环境。
+- 磁盘健康新增查询诊断、数据校验及原始数据来源说明。
 
 #### 变更
 
-- S.M.A.R.T. 原始表标明原始页、摘要、换算与未提供的数据来源，复制时保留说明。
-- 精简 S.M.A.R.T. 入口为“磁盘健康”，详情标题为“磁盘健康（S.M.A.R.T.）”。
-- Root 环境合入主页“连接与授权”，移除设置中的重复入口；精确过滤系统修复提示在 Root 模式自动启用，不再提供开关。
-- 免 Root USB 读写改为每次最多 16 KB 的同步传输，停用多请求并行传输。
-- S.M.A.R.T. 查询按已验证桥接芯片选择协议；RTL9210 需通过控制器标识和日志校验，未知 USB 不发送专用探测命令。
-- 免 Root 主页仅识别可查询设备；安全关闭卷后，才可手动查询 S.M.A.R.T.，避免干扰解锁和读写。
-- S.M.A.R.T. 区分“尚未确认支持”和“不支持”，避免将设备占用或查询失败误报为硬件不支持。
+- 免 Root USB 改用同步传输；模式切换同步关闭卷并保持磁盘在线。
+- S.M.A.R.T. 仅使用已验证桥接协议；免 Root 查询需先关闭该设备全部卷。
 
 #### 安全
 
-- 系统通知过滤仅匹配已验证 BitLocker 卷的无法挂载提示，不再卸载卷或长期延后同盘通知。
-- 修复开启生物识别保护后，文件访问和虚拟挂载仍可能绕过验证、自动解锁的问题。
-- 快捷解锁、查看和复制保存的凭据遵守生物识别保护开关；切换解锁目标后，旧验证结果失效。
+- 统一解锁、文件访问、虚拟挂载和凭据查看的生物识别授权，防止绕过验证。
+- Root 模式仅过滤已确认 BitLocker 卷的系统修复提示，不再卸载卷或长期延后通知。
 
 #### 修复
 
-- 修复原始数据表列错位；统一列宽，完整保留长计数，并将属性名放在末列。
-- 校验 ATA S.M.A.R.T. 数据页校验和；校验失败时停止健康解读，保留原始数据用于诊断。
-- SATA 型号未经验证时不再推算寿命和写入字节数，也不以零错误计数断言整体健康。
-- S.M.A.R.T. 详情和原始表保留完整大计数，拒绝截断数据页；ATA 缺少真实阈值时不再猜测属性健康状态。
-- Root S.M.A.R.T. 完整保留 NVMe 128 位计数及读写总量，修复截断和溢出；统一两种模式的 NVMe 告警规则。
-- S.M.A.R.T. 查询失败、响应无效时显示“待确认”，保留重试入口，不再误判为不支持。
-- S.M.A.R.T. 缺失指标显示为未知，不再补成满健康度、默认温度或零错误；原始表不再虚构标准化值和阈值。
-- 修复窄屏主页标题裁切和“全部弹出”按钮挤成竖排的问题。
-- 修复短横屏下凭据列表不可见、模式切换说明被裁切的问题，列表和正文可滚动查看。
-- 免 Root 写入实际完成后才返回成功，写盘失败后不再复用异常通道。
-- USB 命令等待原状态响应后才继续；状态超时不再重发整条写命令，异常通道不再反复初始化。
-- 切换模式只同步并关闭卷，保持磁盘在线；安全弹出仍执行停盘保护。
-- 免 Root 停盘命令失败时正确提示，不再误报已停盘、可安全拔出。
-- 卷列表只读取缓存的剩余空间，避免遍历大容量卷时阻塞刷新；尚无缓存时暂不显示剩余空间。
-- 修复 Root 扫描时因分区路径别名变化而误关已解锁卷的问题。
-- 修复已验证 RTL9210 PSSD 从免 Root 切到 Root 时识别超时的问题；安全同步并关闭卷后再交回内核驱动。
-- 切换模式时暂停扫描和新解锁，等待正在进行的操作结束后再安全关闭卷。
-- 调试解锁接口未指定保存选项时不再删除已有凭据；自动和快捷解锁保留原保存项，快捷解锁成功后正常提示。
-- 修复设置分组和驱动器卡片隐藏子控件的无障碍信息，使入口、开关和解锁按钮可被识别。
-- 自动解锁统一遵守全局开关、单卷开关和手动锁定设置。
-- 修复不同卷的同名文件并发写入时互相干扰的问题。
-- 修复文件写入不完整、空文件覆盖后仍残留旧内容的问题。
-- 修复免 Root 模式下分区序号显示错误，以及重复扫描误判空盘、断开卷连接的问题。
-- 修复读取卷信息失败时刷新界面可能导致应用崩溃的问题。
-- USB 读写通道超时或响应不完整时终止会话，避免继续使用错位响应或返回补零数据。
-- 列出卷和文件时不再初始化写入组件，避免大容量卷长时间等待。
-- 免 Root 连接显式选择 USB BOT 接口，修复从 Root 模式切回后可能沿用 UAS 接口的问题。
-- 重复解锁已打开的卷时复用现有会话，避免误关 USB 通道、导致读取或安全关闭失败。
-- 写入未完成、刷盘失败或虚拟挂载未退出时，停止弹出和模式切换并提示原因；等待写入超时时保留卷会话。
+- 修复 USB 读写超时、分区识别及模式切换后的连接异常。
+- 修复文件覆盖、并发写入和会话误关；写入或同步失败时阻止弹出和模式切换，停盘失败时明确提示。
+- 修复保存凭据误删、自动解锁设置失效、卷列表查询阻塞及刷新崩溃。
+- 修复 S.M.A.R.T. 大计数截断、缺失值误报与表格错位；不再解读坏页或推算未经验证的 SATA 指标。
+- 修复窄屏和短横屏的标题、按钮及弹窗布局。
 
 #### 移除
 
-- 移除免 Root USB 异步写入开关。
+- 移除设置中的重复 Root 入口和免 Root USB 异步写入开关。
 
 ### English
 
 #### Added
 
-- Show query time, elapsed duration, failure stage, and a separate data-validation result in Disk Health.
-- Unify connection and authorization on the home screen, with mode selection, authorization checks, and USB access requests.
+- Unify mode selection, authorization, and Root environment details in the home connection panel.
+- Add query diagnostics, data validation, and raw-value sources to Disk Health.
 
 #### Changed
 
-- Label S.M.A.R.T. table values as device-page, summary, converted, or unavailable data, and retain the source legend when copying.
-- Shorten the S.M.A.R.T. entry to “Disk Health” and the dialog title to “Disk Health (S.M.A.R.T.)”.
-- Move Root environment details into the home connection panel, remove duplicate settings entries, and automatically filter verified repair prompts in Root mode without a toggle.
-- Use synchronous USB transfers of up to 16 KB in non-root mode, replacing multiple queued requests.
-- Select S.M.A.R.T. protocols by verified bridge identity. Validate RTL9210 controller identity and logs; do not send vendor probes to unknown USB devices.
-- Offer non-root S.M.A.R.T. queries only after volumes are safely closed. Home discovery only identifies candidate devices without issuing probe commands.
-- Distinguish unconfirmed S.M.A.R.T. support from unsupported hardware when a device is busy or a query fails.
+- Use synchronous non-root USB transfers; flush and close volumes during mode changes while keeping the disk online.
+- Use verified S.M.A.R.T. bridge protocols only; close all device volumes before a non-root query.
 
 #### Security
 
-- Limit system notification filtering to unmountable warnings for verified BitLocker volumes; remove volume unmounting and long-lived notification snoozing.
-- Fix file access and virtual mounting bypassing authentication when biometric protection is enabled.
-- Respect the biometric protection switch for quick unlock and when revealing or copying saved credentials. Discard old authentication results when the unlock target changes.
+- Enforce biometric authorization for unlocking, file access, virtual mounts, and saved credentials.
+- Limit Root notification filtering to verified BitLocker repair prompts, without unmounting volumes or prolonged notification delays.
 
 #### Fixed
 
-- Align raw-data columns with consistent widths, preserve full counters, and place attribute names last.
-- Validate ATA S.M.A.R.T. page checksums; stop health interpretation on validation failure and retain raw data for diagnostics.
-- Stop inferring remaining life, write byte totals, or overall good health from generic attributes of unverified SATA models.
-- Keep full-width counters in S.M.A.R.T. details and raw tables, reject truncated pages, and leave ATA attribute health unknown when thresholds are unavailable.
-- Preserve full NVMe 128-bit counters and byte totals in Root S.M.A.R.T. results, and align NVMe warning rules across modes.
-- Keep failed or invalid S.M.A.R.T. queries unconfirmed and available for retry instead of marking them unsupported.
-- Show missing S.M.A.R.T. metrics as unknown instead of full health, default temperatures, or zero errors; stop inventing normalized values and thresholds in the raw table.
-- Fix clipped home titles and vertically squeezed eject buttons on narrow screens.
-- Keep the credential list visible and mode-switch explanations scrollable in short landscape windows.
-- Acknowledge non-root writes only after completion and stop reusing a failed I/O channel.
-- Wait for the original USB command status before continuing. Do not replay an entire write after a status timeout or repeatedly initialize a failed channel.
-- Flush and close volumes during mode changes while keeping the disk online. Keep spindown protection for explicit ejects.
-- Report failed non-root spindown commands instead of claiming that the disk has stopped and is safe to unplug.
-- Use cached free space in volume lists to avoid blocking refreshes on large volumes. Leave free space unavailable until cached.
-- Keep unlocked Root volumes open when vold publishes an alias for the same USB partition.
-- Fix detection timeouts when handing a verified RTL9210 PSSD from non-root mode back to the kernel, after safely flushing and closing its volumes.
-- Pause scans and new unlocks during mode switching, and wait for ongoing operations before safely closing volumes.
-- Preserve saved credentials when debug unlock calls omit the save option. Automatic and quick unlocks keep existing entries, and quick unlocks show success feedback.
-- Restore accessibility information for controls inside settings groups and drive cards, including unlock buttons.
-- Apply global, per-volume, and manual-lock settings consistently to automatic unlocking.
-- Fix concurrent writes to identically named files on different volumes interfering with each other.
-- Fix incomplete writes and old content remaining after an empty overwrite.
-- Fix incorrect partition numbers in non-root mode and repeated scans incorrectly treating encrypted drives as empty and closing their connections.
-- Fix crashes during UI refresh when volume information cannot be read.
-- Terminate USB I/O sessions on timeout or incomplete responses instead of reusing misaligned responses or returning zero-filled data.
-- Avoid initializing filesystem writers while listing volumes and files, preventing long waits on large volumes.
-- Explicitly select the USB BOT interface in non-root mode instead of retaining UAS after switching from root mode.
-- Reuse live sessions for duplicate unlock requests instead of closing their USB workers and breaking reads or safe closure.
-- Stop ejects and mode switches if writes are unfinished, flushing fails, or a virtual mount has not exited. Show the cause and keep the volume session open on write timeout.
+- Fix USB I/O timeouts, partition detection, and connection failures after mode changes.
+- Fix file overwrites, concurrent writes, and premature session closure; block ejects and mode changes on write or flush failure, and report spindown failures.
+- Prevent unintended credential deletion and respect auto-unlock settings; fix blocked volume queries and refresh crashes.
+- Fix truncated S.M.A.R.T. counters, misleading missing values, and table alignment; stop interpreting invalid pages or inferring unverified SATA metrics.
+- Fix titles, buttons, and dialogs on narrow and short landscape screens.
 
 #### Removed
 
-- Remove the non-root USB async write toggle.
+- Remove duplicate Root settings entries and the non-root USB asynchronous-write toggle.
 
 ## [v1.1.1] - 2026-10-22
 
