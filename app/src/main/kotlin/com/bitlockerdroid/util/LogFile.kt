@@ -3,7 +3,6 @@ package com.bitlockerdroid.util
 import android.content.Context
 import android.util.Log
 import java.io.File
-import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -22,27 +21,31 @@ import java.util.Locale
 object LogFile {
 
     private const val TAG = "BitLockerLog"
-    private const val MAX_BYTES = 512 * 1024L
 
     @Volatile
-    private var appLogDir: File? = null
+    private var store: LogSnapshotStore? = null
 
     /** Called once an application context is available (service / receiver). */
+    @Synchronized
     fun init(context: Context) {
-        if (appLogDir == null) {
+        if (store == null) {
             try {
-                appLogDir = File(context.filesDir, "logs")
+                store = LogSnapshotStore(File(context.filesDir, "logs"))
             } catch (e: Throwable) {
-                appLogDir = null
+                store = null
             }
         }
     }
 
     /** Best-effort path of the module-app log file (for the settings UI). */
     fun appLogFile(): File? {
-        val dir = appLogDir ?: return null
-        return File(dir, "bitlocker.log")
+        return store?.applicationFile
     }
+
+    fun readApplication(): String? = store?.readApplication()
+    fun clear() { store?.clear() }
+    fun snapshot(): LogSnapshot = store?.snapshot()
+        ?: LogSnapshot(null, null, listOf("Application log storage is unavailable."))
 
     /**
      * Appends a line to the log. `scope` identifies the writer, e.g. "app",
@@ -52,10 +55,10 @@ object LogFile {
         val line = buildLine(scope, message)
 
         // app files dir (app-private sandbox)
-        val appFile = appLogFile()
-        if (appFile != null) {
+        val currentStore = store
+        if (currentStore != null) {
             try {
-                appendCapped(appFile, line)
+                currentStore.append(line)
             } catch (e: Throwable) {
                 // ignore
             }
@@ -76,31 +79,4 @@ object LogFile {
         return "$ts [$scope] $message\n"
     }
 
-    private fun appendCapped(file: File, line: String) {
-        file.parentFile?.mkdirs()
-        if (!file.exists()) {
-            file.createNewFile()
-        }
-        // Trim if too large: keep the tail.
-        if (file.length() + line.length > MAX_BYTES) {
-            val keep = (MAX_BYTES / 2).toInt()
-            val raf = java.io.RandomAccessFile(file, "rw")
-            try {
-                val len = raf.length()
-                if (len > keep) {
-                    raf.seek(len - keep)
-                    val tail = ByteArray(keep)
-                    raf.readFully(tail)
-                    raf.setLength(0)
-                    raf.seek(0)
-                    raf.write(tail)
-                }
-            } finally {
-                raf.close()
-            }
-        }
-        FileOutputStream(file, true).use { fos ->
-            fos.write(line.toByteArray(Charsets.UTF_8))
-        }
-    }
 }
