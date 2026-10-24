@@ -59,11 +59,13 @@ fun DeviceGroupCard(
     onDisasterUnlockedClick: (UnlockedVolume) -> Unit,
     onDisasterDetectedClick: (DetectedVolume) -> Unit,
     onSmartHealthClick: (String) -> Unit,
-    onEjectGroup: ((List<String>) -> Unit)? = null,
+    onEjectGroup: ((String, List<String>) -> Unit)? = null,
     onCloseGroup: ((String, List<String>) -> Unit)? = null,
     operationStates: Map<String, VolumeOperationProgress> = emptyMap(),
     modifier: Modifier = Modifier
 ) {
+    val canEjectDevice = (group.hasUnlocked || group.hasDetected) && !group.physicalDiskPath.startsWith("storage:")
+    val ejectLabel = stringResource(if (group.hasUnlocked) R.string.notification_eject_all else R.string.eject_device)
     var isExpanded by remember { mutableStateOf(true) }
     var showCloseVolumesConfirm by remember(group.deviceKey) { mutableStateOf(false) }
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
@@ -196,13 +198,13 @@ fun DeviceGroupCard(
                         }
 
                         // Eject All Action Button (Shown when group contains unlocked volumes)
-                        if (group.hasUnlocked && onEjectGroup != null) {
+                        if (canEjectDevice && onEjectGroup != null) {
                             val unlockedPaths = remember(group.unlockedVolumes) { group.unlockedVolumes.map { it.devicePath } }
                             val isAnyEjecting = remember(unlockedPaths, ejectingPaths, group.physicalDiskPath, diskOperation) {
                                 diskOperation != null || group.physicalDiskPath in ejectingPaths || unlockedPaths.any { ejectingPaths.contains(it) }
                             }
                             AppButton(
-                                onClick = { onEjectGroup(unlockedPaths) },
+                                onClick = { onEjectGroup(group.physicalDiskPath, unlockedPaths) },
                                 enabled = !isAnyEjecting,
                                 shape = RoundedCornerShape(10.dp),
                                 containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
@@ -224,13 +226,13 @@ fun DeviceGroupCard(
                                 } else {
                                     Icon(
                                         painter = painterResource(id = R.drawable.ic_eject),
-                                        contentDescription = stringResource(R.string.notification_eject_all),
+                                        contentDescription = ejectLabel,
                                         modifier = Modifier.size(16.dp),
                                         tint = MaterialTheme.colorScheme.onErrorContainer
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = stringResource(R.string.notification_eject_all),
+                                        text = ejectLabel,
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.SemiBold
                                     )
@@ -345,7 +347,7 @@ fun DeviceGroupCard(
                     }
 
                     // Keep each action at its natural width and wrap when needed.
-                    val hasActions = isSmartSupported || (group.hasUnlocked && (onEjectGroup != null || onCloseGroup != null))
+                    val hasActions = isSmartSupported || (canEjectDevice && onEjectGroup != null) || (group.hasUnlocked && onCloseGroup != null)
                     if (hasActions) {
                         Spacer(modifier = Modifier.height(10.dp))
                         FlowRow(
@@ -376,13 +378,13 @@ fun DeviceGroupCard(
                                 }
                             }
 
-                            if (group.hasUnlocked && onEjectGroup != null) {
+                            if (canEjectDevice && onEjectGroup != null) {
                                 val unlockedPaths = remember(group.unlockedVolumes) { group.unlockedVolumes.map { it.devicePath } }
                                 val isAnyEjecting = remember(unlockedPaths, ejectingPaths, group.physicalDiskPath, diskOperation) {
                                     diskOperation != null || group.physicalDiskPath in ejectingPaths || unlockedPaths.any { ejectingPaths.contains(it) }
                                 }
                                 AppButton(
-                                    onClick = { onEjectGroup(unlockedPaths) },
+                                    onClick = { onEjectGroup(group.physicalDiskPath, unlockedPaths) },
                                     enabled = !isAnyEjecting,
                                     shape = RoundedCornerShape(10.dp),
                                     containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
@@ -404,13 +406,13 @@ fun DeviceGroupCard(
                                     } else {
                                         Icon(
                                             painter = painterResource(id = R.drawable.ic_eject),
-                                            contentDescription = stringResource(R.string.notification_eject_all),
+                                            contentDescription = ejectLabel,
                                             modifier = Modifier.size(15.dp),
                                             tint = MaterialTheme.colorScheme.onErrorContainer
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
-                                            text = stringResource(R.string.notification_eject_all),
+                                            text = ejectLabel,
                                             style = MaterialTheme.typography.labelMedium,
                                             fontWeight = FontWeight.SemiBold
                                         )
@@ -445,6 +447,11 @@ fun DeviceGroupCard(
         }
 
         diskOperation?.let { VolumeOperationStatus(it) }
+        if (canEjectDevice && !group.hasUnlocked) {
+            Text(stringResource(R.string.closed_device_eject_hint),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 8.dp))
+        }
 
         // Child Partitions List
         AnimatedVisibility(visible = isExpanded) {

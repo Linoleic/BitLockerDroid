@@ -198,7 +198,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
     private val onLockVolumeAction: (String) -> Unit = { path -> lockVolume(path) }
     private val onUnlockDetectedAction: (String) -> Unit = { path -> promptUnlock(path) }
     private val onBiometricUnlockDetectedAction: (String) -> Unit = { path -> biometricUnlock(path) }
-    private val onEjectVolumesAction: (List<String>) -> Unit = { paths -> ejectVolumes(paths) }
+    private val onEjectVolumesAction: (String, List<String>) -> Unit = { device, paths -> ejectVolumes(device, paths) }
     private val onCloseVolumesAction: (String, List<String>) -> Unit = { path, volumePaths ->
         lifecycleScope.launch {
             val result = closeDeviceVolumesTracked(path, volumePaths)
@@ -628,51 +628,25 @@ class BitLockerSettingsActivity : FragmentActivity() {
         }
     }
 
-    private fun ejectVolumes(paths: List<String>) {
-        val targets = paths.filter { !ejectingPathsState.value.contains(it) }
-        if (targets.isEmpty()) return
+    private fun ejectVolumes(devicePath: String, paths: List<String>) {
+        val targets = (paths + devicePath).toSet()
+        if (targets.any { it in ejectingPathsState.value }) return
         ejectingPathsState.value = ejectingPathsState.value + targets
-        LogFile.write("app", "safe eject requested for group: $targets")
-        lifecycleScope.launch(Dispatchers.IO) {
-            val results = mutableListOf<Pair<String, Result<com.bitlockerdroid.service.EjectResult>>>()
-            for (path in targets) {
-                val result = UnlockManager.safeEject(path)
-                results.add(path to result)
-                if (result.isFailure) break
-            }
-            withContext(Dispatchers.Main) {
-                ejectingPathsState.value = ejectingPathsState.value - targets.toSet()
-                val failures = results.filter { !it.second.isSuccess }
-                if (failures.isEmpty()) {
-                    if (targets.size == 1) {
-                        val ejectRes = results.first().second.getOrNull()
-                        val label = ejectRes?.label ?: ""
-                        val msg = when (ejectRes?.status) {
-                            EjectStatus.DISK_SPUN_DOWN -> getString(R.string.safe_eject_success, label)
-                            EjectStatus.VOLUME_CLOSED_DISK_BUSY -> getString(R.string.safe_eject_part_success, label)
-                            EjectStatus.VOLUME_CLOSED_SPINDOWN_FAILED, null -> getString(R.string.safe_eject_spindown_warning, label)
-                        }
-                        Toast.makeText(
-                            this@BitLockerSettingsActivity,
-                            msg,
-                            Toast.LENGTH_LONG
-                        ).show()
-                    } else {
-                        Toast.makeText(
-                            this@BitLockerSettingsActivity,
-                            getString(R.string.notification_eject_finished),
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                } else {
-                    val err = failures.first().second.exceptionOrNull()?.message ?: ""
-                    Toast.makeText(
-                        this@BitLockerSettingsActivity,
-                        getString(R.string.safe_eject_failed, err),
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
+        lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) { UnlockManager.safeEjectDevice(devicePath) }
+                val value = result.getOrNull()
+                val message = if (value != null) when (value.status) {
+                    EjectStatus.DISK_SPUN_DOWN -> getString(R.string.safe_eject_success, value.label)
+                    EjectStatus.VOLUME_CLOSED_DISK_BUSY -> getString(R.string.safe_eject_part_success, value.label)
+                    EjectStatus.VOLUME_CLOSED_SPINDOWN_FAILED -> getString(R.string.safe_eject_spindown_warning, value.label)
+                } else getString(R.string.safe_eject_failed, result.exceptionOrNull()?.message.orEmpty())
+                Toast.makeText(this@BitLockerSettingsActivity, message, Toast.LENGTH_LONG).show()
                 refreshData()
+            } finally {
+                withContext(NonCancellable + Dispatchers.Main) {
+                    ejectingPathsState.value = ejectingPathsState.value - targets
+                }
             }
         }
     }
@@ -906,7 +880,7 @@ fun MainAppScreen(
     onLockVolume: (String) -> Unit,
     onUnlockDetected: (String) -> Unit,
     onBiometricUnlockDetected: ((String) -> Unit)? = null,
-    onEjectVolumes: ((List<String>) -> Unit)? = null,
+    onEjectVolumes: ((String, List<String>) -> Unit)? = null,
     onCloseVolumes: ((String, List<String>) -> Unit)? = null,
     onSmartCloseVolumes: suspend (String) -> Result<Int> = { Result.failure(IllegalStateException("Not available")) },
     ejectingPaths: Set<String> = emptySet(),

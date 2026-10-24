@@ -51,7 +51,7 @@ fun VolumesTabContent(
     onLockVolume: (String) -> Unit,
     onUnlockDetected: (String) -> Unit,
     onBiometricUnlockDetected: ((String) -> Unit)? = null,
-    onEjectGroup: ((List<String>) -> Unit)? = null,
+    onEjectGroup: ((String, List<String>) -> Unit)? = null,
     onCloseGroup: ((String, List<String>) -> Unit)? = null,
     onSmartCloseVolumes: suspend (String) -> Result<Int> = { Result.failure(IllegalStateException("Not available")) }
 ) {
