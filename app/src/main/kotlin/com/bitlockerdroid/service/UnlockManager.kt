@@ -851,7 +851,17 @@ object UnlockManager {
             if (handoffTarget != null) {
                 prepareUsbKernelHandoff(handoffTarget)
             } else {
-                safeEjectAll().firstOrNull { it.isFailure }?.getOrThrow()
+                // A mode change hands the same disk to another backend; STOP UNIT
+                // and disk offlining belong only to an explicit user eject.
+                val paths = synchronized(lock) { sessions.keys.toList() }
+                paths.forEach {
+                    closeVolume(it, stopPhysicalDisk = false, postEjectNotification = false).getOrThrow()
+                }
+            }
+            check(synchronized(lock) { sessions.isEmpty() }) { "Volume sessions remain open" }
+            sessionCredentials.clear()
+            com.bitlockerdroid.util.ContextProvider.app?.let { app ->
+                com.bitlockerdroid.share.LanShareManager.stopAll(app)
             }
             VirtualStorageMountManager.unmountAll()
             Unit
