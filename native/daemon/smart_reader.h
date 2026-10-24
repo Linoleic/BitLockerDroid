@@ -10,7 +10,7 @@ extern "C" {
 /**
  * Queries SMART telemetry using a conservative transport policy. Only the
  * allowlisted Realtek RTL9210 USB bridge receives vendor-specific E4 commands;
- * unknown USB bridges are reported unsupported. Non-USB devices retain SAT.
+ * unknown USB bridges remain unconfirmed. Non-USB devices retain SAT.
  *
  * @param dev_path Device node path (e.g., "/dev/block/sdg", "/dev/block/sdg1", "/dev/block/vold/public:8,101")
  * @param json Destination buffer for JSON output
@@ -49,6 +49,12 @@ int smart_test_format_sata_metrics_json(const unsigned char *page, size_t len,
                                         char *out, size_t out_max);
 int smart_test_format_nvme_temperature_json(const unsigned char *page, size_t len,
                                             char *out, size_t out_max);
+int smart_test_format_nvme_counter_json(const unsigned char *counter, size_t len,
+                                        unsigned int scale, char *out, size_t out_max);
+int smart_test_format_nvme_counters_json(const unsigned char *page, size_t len,
+                                         char *out, size_t out_max);
+const char *smart_test_nvme_status(int critical_warning, int available_spare,
+                                   int spare_threshold, int percentage_used);
 #endif
 
 #ifdef __cplusplus

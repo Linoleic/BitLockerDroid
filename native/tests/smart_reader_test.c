@@ -190,6 +190,66 @@ static void test_nvme_temperature_missing_and_zero(void)
 	assert(strcmp(temperature, "0") == 0);
 }
 
+static void assert_nvme_counter(const unsigned char counter[16], unsigned int scale,
+                               const char *expected)
+{
+	char output[64];
+	assert(smart_test_format_nvme_counter_json(counter, 16, scale, output, sizeof(output)) ==
+	       (int)strlen(expected));
+	assert(strcmp(output, expected) == 0);
+}
+
+static void test_nvme_full_width_counter_formatting(void)
+{
+	unsigned char counter[16] = {0};
+	counter[6] = 1; /* 2^48 */
+	assert_nvme_counter(counter, 1, "281474976710656");
+	assert_nvme_counter(counter, 512000, "144115188075855872000");
+
+	memset(counter, 0, sizeof(counter));
+	counter[8] = 1; /* 2^64 */
+	assert_nvme_counter(counter, 1, "18446744073709551616");
+
+	memset(counter, 0, sizeof(counter));
+	counter[15] = 0x80; /* 2^127 */
+	assert_nvme_counter(counter, 1, "170141183460469231731687303715884105728");
+	assert_nvme_counter(counter, 512000, "87112285931760246646623899502532662132736000");
+
+	memset(counter, 0xff, sizeof(counter));
+	assert_nvme_counter(counter, 1, "340282366920938463463374607431768211455");
+	assert_nvme_counter(counter, 512000, "174224571863520493293247799005065324264960000");
+	char too_small[8];
+	assert(smart_test_format_nvme_counter_json(counter, sizeof(counter), 1,
+	                                          too_small, sizeof(too_small)) < 0);
+
+	unsigned char page[512] = {0};
+	char fields[1024];
+	page[32 + 6] = 1;  /* total_bytes_read: 2^48 units */
+	page[112 + 8] = 1; /* power_cycles: 2^64 */
+	memset(page + 48, 0xff, 16);
+	page[64 + 15] = 0x80; /* host_read_commands: 2^127 */
+	assert(smart_test_format_nvme_counters_json(page, sizeof(page), fields, sizeof(fields)) > 0);
+	assert(strstr(fields, "\"total_bytes_read\":\"144115188075855872000\"") != NULL);
+	assert(strstr(fields, "\"power_cycles\":\"18446744073709551616\"") != NULL);
+	assert(strstr(fields, "\"total_bytes_written\":\"174224571863520493293247799005065324264960000\"") != NULL);
+	assert(strstr(fields, "\"host_read_commands\":\"170141183460469231731687303715884105728\"") != NULL);
+	assert(strstr(fields, "\"power_hours\":\"0\"") != NULL);
+	char small_fields[8];
+	assert(smart_test_format_nvme_counters_json(page, sizeof(page), small_fields, sizeof(small_fields)) < 0);
+}
+
+static void test_nvme_unified_status_thresholds(void)
+{
+	assert(strcmp(smart_test_nvme_status(0, 10, 10, 99), "HEALTHY") == 0);
+	assert(strcmp(smart_test_nvme_status(0, 9, 10, 99), "WARNING") == 0);
+	assert(strcmp(smart_test_nvme_status(0, 100, 10, 99), "HEALTHY") == 0);
+	assert(strcmp(smart_test_nvme_status(0, 100, 10, 100), "WARNING") == 0);
+	assert(strcmp(smart_test_nvme_status(0, 100, 10, 255), "WARNING") == 0);
+	for (int flag = 1; flag <= 0x20; flag <<= 1) {
+		assert(strcmp(smart_test_nvme_status(flag, 100, 10, 0), "CRITICAL") == 0);
+	}
+}
+
 int main(void)
 {
 	test_sysfs_usb_allowlist();
@@ -198,6 +258,8 @@ int main(void)
 	test_nvme_smart_log_validation();
 	test_sata_missing_and_zero_metrics();
 	test_nvme_temperature_missing_and_zero();
+	test_nvme_full_width_counter_formatting();
+	test_nvme_unified_status_thresholds();
 	test_missing_device_error_status();
 	puts("smart_reader_test: all tests passed");
 	return 0;

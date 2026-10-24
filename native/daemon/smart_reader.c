@@ -254,6 +254,80 @@ static int format_nvme_temperature_json(const unsigned char *page, size_t len,
     return n >= 0 && (size_t)n < out_max ? n : -1;
 }
 
+/* Convert a little-endian 128-bit NVMe counter to exact decimal without
+ * relying on compiler-specific wide integer types. The decimal digits are
+ * multiplied by scale after conversion, so scaled values retain all 128 bits. */
+static int format_nvme_counter_json(const unsigned char *counter, size_t len,
+                                    unsigned int scale, char *out, size_t out_max) {
+    if (!counter || len != 16 || (scale != 1 && scale != 512000) || !out || out_max == 0) return -1;
+    out[0] = '\0';
+    unsigned char digits[64] = {0}; /* least-significant decimal digit first */
+    size_t digit_count = 1;
+    for (size_t i = 16; i > 0; i--) {
+        unsigned int carry = counter[i - 1];
+        for (size_t j = 0; j < digit_count; j++) {
+            unsigned int value = (unsigned int)digits[j] * 256U + carry;
+            digits[j] = (unsigned char)(value % 10U);
+            carry = value / 10U;
+        }
+        while (carry != 0) {
+            if (digit_count >= sizeof(digits)) return -1;
+            digits[digit_count++] = (unsigned char)(carry % 10U);
+            carry /= 10U;
+        }
+    }
+    unsigned int carry = 0;
+    for (size_t j = 0; j < digit_count; j++) {
+        unsigned int value = (unsigned int)digits[j] * scale + carry;
+        digits[j] = (unsigned char)(value % 10U);
+        carry = value / 10U;
+    }
+    while (carry != 0) {
+        if (digit_count >= sizeof(digits)) return -1;
+        digits[digit_count++] = (unsigned char)(carry % 10U);
+        carry /= 10U;
+    }
+    if (digit_count + 1 > out_max) return -1;
+    for (size_t j = 0; j < digit_count; j++) out[j] = (char)('0' + digits[digit_count - 1 - j]);
+    out[digit_count] = '\0';
+    return (int)digit_count;
+}
+
+static int format_nvme_counters_json(const unsigned char *page, size_t len,
+                                     char *out, size_t out_max) {
+    if (!page || len < 192 || !out || out_max == 0) return -1;
+    char power_cycles[64], power_hours[64], unsafe_shutdowns[64];
+    char bytes_read[64], bytes_written[64], host_reads[64], host_writes[64];
+    char ctrl_busy[64], media_errs[64], err_entries[64];
+    if (format_nvme_counter_json(page + 112, 16, 1, power_cycles, sizeof(power_cycles)) < 0 ||
+        format_nvme_counter_json(page + 128, 16, 1, power_hours, sizeof(power_hours)) < 0 ||
+        format_nvme_counter_json(page + 144, 16, 1, unsafe_shutdowns, sizeof(unsafe_shutdowns)) < 0 ||
+        format_nvme_counter_json(page + 32, 16, 512000, bytes_read, sizeof(bytes_read)) < 0 ||
+        format_nvme_counter_json(page + 48, 16, 512000, bytes_written, sizeof(bytes_written)) < 0 ||
+        format_nvme_counter_json(page + 64, 16, 1, host_reads, sizeof(host_reads)) < 0 ||
+        format_nvme_counter_json(page + 80, 16, 1, host_writes, sizeof(host_writes)) < 0 ||
+        format_nvme_counter_json(page + 96, 16, 1, ctrl_busy, sizeof(ctrl_busy)) < 0 ||
+        format_nvme_counter_json(page + 160, 16, 1, media_errs, sizeof(media_errs)) < 0 ||
+        format_nvme_counter_json(page + 176, 16, 1, err_entries, sizeof(err_entries)) < 0) return -1;
+    /* Worst-case numeric content is 402 digits (2 scaled 128-bit and 8
+     * unscaled counters); a 1024-byte fragment covers names and punctuation. */
+    int n = snprintf(out, out_max,
+        "\"power_cycles\":\"%s\",\"power_hours\":\"%s\",\"unsafe_shutdowns\":\"%s\","
+        "\"total_bytes_read\":\"%s\",\"total_bytes_written\":\"%s\","
+        "\"host_read_commands\":\"%s\",\"host_write_commands\":\"%s\","
+        "\"controller_busy_time\":\"%s\",\"media_errors\":\"%s\",\"error_log_entries\":\"%s\"",
+        power_cycles, power_hours, unsafe_shutdowns, bytes_read, bytes_written,
+        host_reads, host_writes, ctrl_busy, media_errs, err_entries);
+    return n >= 0 && (size_t)n < out_max ? n : -1;
+}
+
+static const char *nvme_status(int critical_warning, int available_spare,
+                               int spare_threshold, int percentage_used) {
+    if (critical_warning != 0) return "CRITICAL";
+    if (available_spare < spare_threshold || percentage_used >= 100) return "WARNING";
+    return "HEALTHY";
+}
+
 static int format_sata_metrics_json(const unsigned char *page, size_t len,
                                     char *out, size_t out_max) {
     sata_metrics metrics;
@@ -305,6 +379,18 @@ int smart_test_format_sata_metrics_json(const unsigned char *page, size_t len,
 int smart_test_format_nvme_temperature_json(const unsigned char *page, size_t len,
                                             char *out, size_t out_max) {
     return format_nvme_temperature_json(page, len, out, out_max);
+}
+int smart_test_format_nvme_counter_json(const unsigned char *counter, size_t len,
+                                        unsigned int scale, char *out, size_t out_max) {
+    return format_nvme_counter_json(counter, len, scale, out, out_max);
+}
+int smart_test_format_nvme_counters_json(const unsigned char *page, size_t len,
+                                         char *out, size_t out_max) {
+    return format_nvme_counters_json(page, len, out, out_max);
+}
+const char *smart_test_nvme_status(int critical_warning, int available_spare,
+                                   int spare_threshold, int percentage_used) {
+    return nvme_status(critical_warning, available_spare, spare_threshold, percentage_used);
 }
 #endif
 
@@ -468,31 +554,13 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         int spare_thresh = nvme_smart[4];
         int percent_used = nvme_smart[5];
         int health_pct = percent_used <= 100 ? (100 - percent_used) : 0;
-
-        uint64_t power_cycles = 0;
-        memcpy(&power_cycles, nvme_smart + 112, 8);
-        uint64_t power_hours = 0;
-        memcpy(&power_hours, nvme_smart + 128, 8);
-        uint64_t unsafe_shutdowns = 0;
-        memcpy(&unsafe_shutdowns, nvme_smart + 144, 8);
-
-        uint64_t units_read = 0;
-        memcpy(&units_read, nvme_smart + 32, 8);
-        uint64_t units_written = 0;
-        memcpy(&units_written, nvme_smart + 48, 8);
-        uint64_t bytes_read = units_read * 512000ULL;
-        uint64_t bytes_written = units_written * 512000ULL;
-
-        uint64_t host_reads = 0;
-        memcpy(&host_reads, nvme_smart + 64, 8);
-        uint64_t host_writes = 0;
-        memcpy(&host_writes, nvme_smart + 80, 8);
-        uint64_t ctrl_busy = 0;
-        memcpy(&ctrl_busy, nvme_smart + 96, 8);
-        uint64_t media_errs = 0;
-        memcpy(&media_errs, nvme_smart + 160, 8);
-        uint64_t err_entries = 0;
-        memcpy(&err_entries, nvme_smart + 176, 8);
+        char nvme_counter_fields[1024];
+        if (format_nvme_counters_json(nvme_smart, sizeof(nvme_smart),
+                                      nvme_counter_fields, sizeof(nvme_counter_fields)) < 0) {
+            close(fd);
+            snprintf(json, json_max, "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"reason\":\"NVMe counters could not be formatted safely.\"}");
+            return 0;
+        }
 
         char raw_page_hex[1025];
         for (int i = 0; i < 512; i++) {
@@ -500,8 +568,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         }
         raw_page_hex[1024] = '\0';
 
-        const char *status_str = (crit_warn == 0 && health_pct >= 10) ? "HEALTHY" :
-                                 (health_pct < 10 ? "CRITICAL" : "WARNING");
+        const char *status_str = nvme_status(crit_warn, avail_spare, spare_thresh, percent_used);
 
         char esc_model[64], esc_serial[64], esc_fw[32], esc_vendor[32], esc_prod[32];
         escape_json_str(model[0] ? model : product, esc_model, sizeof(esc_model));
@@ -510,6 +577,9 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         escape_json_str(vendor, esc_vendor, sizeof(esc_vendor));
         escape_json_str(product, esc_prod, sizeof(esc_prod));
 
+        /* Under the daemon's 4096-byte JSON buffer, the fixed response fields
+         * plus bounded identity strings (<=219), device path (<=255), raw
+         * page (1024), and counter fragment (<1024) stay below 3000 bytes. */
         snprintf(json, json_max,
             "{"
             "\"supported\":true,"
@@ -525,27 +595,13 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
             "\"available_spare\":%d,"
             "\"spare_threshold\":%d,"
             "\"critical_warning\":%d,"
-            "\"power_cycles\":%llu,"
-            "\"power_hours\":%llu,"
-            "\"unsafe_shutdowns\":%llu,"
-            "\"total_bytes_read\":%llu,"
-            "\"total_bytes_written\":%llu,"
-            "\"host_read_commands\":%llu,"
-            "\"host_write_commands\":%llu,"
-            "\"controller_busy_time\":%llu,"
-            "\"media_errors\":%llu,"
-            "\"error_log_entries\":%llu,"
+            "%s,"
             "\"device_node\":\"%s\","
             "\"raw_page_hex\":\"%s\""
             "}",
             status_str, disk_type, esc_model, esc_serial, esc_fw,
             esc_vendor, esc_prod, temp_text, health_pct, avail_spare,
-            spare_thresh, crit_warn, (unsigned long long)power_cycles,
-            (unsigned long long)power_hours, (unsigned long long)unsafe_shutdowns,
-            (unsigned long long)bytes_read, (unsigned long long)bytes_written,
-            (unsigned long long)host_reads, (unsigned long long)host_writes,
-            (unsigned long long)ctrl_busy, (unsigned long long)media_errs,
-            (unsigned long long)err_entries,
+            spare_thresh, crit_warn, nvme_counter_fields,
             actual_dev,
             raw_page_hex
         );

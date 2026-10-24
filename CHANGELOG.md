@@ -31,6 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### 修复
 
+- Root SMART 完整保留 NVMe 128 位计数及读写总量，修复截断和溢出；统一两种模式的 NVMe 告警规则。
 - SMART 查询失败、响应无效时显示“待确认”，保留重试入口，不再误判为不支持。
 - SMART 缺失指标显示为未知，不再补成满健康度、默认温度或零错误；原始表不再虚构标准化值和阈值。
 - 修复窄屏主页标题裁切和“全部弹出”按钮挤成竖排的问题。
@@ -83,6 +84,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### Fixed
 
+- Preserve full NVMe 128-bit counters and byte totals in Root SMART results, and align NVMe warning rules across modes.
 - Keep failed or invalid SMART queries unconfirmed and available for retry instead of marking them unsupported.
 - Show missing SMART metrics as unknown instead of full health, default temperatures, or zero errors; stop inventing normalized values and thresholds in the raw table.
 - Fix clipped home titles and vertically squeezed eject buttons on narrow screens.
