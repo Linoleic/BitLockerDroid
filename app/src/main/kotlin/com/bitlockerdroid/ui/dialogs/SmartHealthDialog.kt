@@ -45,11 +45,13 @@ import com.bitlockerdroid.ui.theme.WarningAmber
 import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 
 @Composable
 fun SmartHealthDialog(
     devicePath: String,
     usbDeviceId: Int? = null,
+    onCloseVolumes: suspend (String) -> Result<Int> = { Result.failure(IllegalStateException("Not available")) },
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -59,6 +61,8 @@ fun SmartHealthDialog(
     var smartInfo by remember(devicePath, usbDeviceId) { mutableStateOf<SmartHealthInfo?>(null) }
     var isLoading by remember(devicePath, usbDeviceId) { mutableStateOf(true) }
     var showRawData by remember(devicePath, usbDeviceId) { mutableStateOf(false) }
+    var showCloseVolumesConfirm by remember(devicePath, usbDeviceId) { mutableStateOf(false) }
+    var isClosingVolumes by remember(devicePath, usbDeviceId) { mutableStateOf(false) }
 
     suspend fun refreshTelemetry() {
         isLoading = true
@@ -529,35 +533,92 @@ fun SmartHealthDialog(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 // Actions Footer
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    TextButton(
-                        onClick = { scope.launch { refreshTelemetry() } },
-                        enabled = !isLoading
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(text = stringResource(R.string.smart_refresh_btn))
+                    if (smartInfo?.failureStage == SmartFailureStage.BUSY) {
+                        OutlinedButton(
+                            onClick = { showCloseVolumesConfirm = true },
+                            enabled = !isLoading && !isClosingVolumes,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            if (isClosingVolumes) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            else Text(stringResource(R.string.smart_close_and_query))
+                        }
                     }
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    Button(
-                        onClick = onDismiss,
-                        shape = RoundedCornerShape(8.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(text = stringResource(R.string.smart_close_btn))
+                        TextButton(
+                            onClick = { scope.launch { refreshTelemetry() } },
+                            enabled = !isLoading && !isClosingVolumes
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(text = stringResource(R.string.smart_refresh_btn))
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(onClick = onDismiss, shape = RoundedCornerShape(8.dp)) {
+                            Text(text = stringResource(R.string.smart_close_btn))
+                        }
                     }
                 }
             }
         }
+    }
+
+    if (showCloseVolumesConfirm) {
+        AlertDialog(
+            onDismissRequest = { if (!isClosingVolumes) showCloseVolumesConfirm = false },
+            title = { Text(stringResource(R.string.volume_close_confirm_title)) },
+            text = {
+                Box(Modifier.heightIn(max = 120.dp).verticalScroll(rememberScrollState())) {
+                    Text(stringResource(R.string.smart_close_and_query_confirm))
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !isClosingVolumes,
+                    onClick = {
+                        showCloseVolumesConfirm = false
+                        isClosingVolumes = true
+                        scope.launch {
+                            val result = try {
+                                onCloseVolumes(devicePath)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: Exception) {
+                                Result.failure(error)
+                            } finally {
+                                isClosingVolumes = false
+                            }
+                            if (result.isSuccess) {
+                                refreshTelemetry()
+                            } else {
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.volume_close_failed, result.exceptionOrNull()?.message ?: ""),
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    }
+                ) { Text(stringResource(R.string.smart_close_and_query)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCloseVolumesConfirm = false }, enabled = !isClosingVolumes) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
     }
 }
 

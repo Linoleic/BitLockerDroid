@@ -49,7 +49,9 @@ fun VolumesTabContent(
     onLockVolume: (String) -> Unit,
     onUnlockDetected: (String) -> Unit,
     onBiometricUnlockDetected: ((String) -> Unit)? = null,
-    onEjectGroup: ((List<String>) -> Unit)? = null
+    onEjectGroup: ((List<String>) -> Unit)? = null,
+    onCloseGroup: ((String, List<String>) -> Unit)? = null,
+    onSmartCloseVolumes: suspend (String) -> Result<Int> = { Result.failure(IllegalStateException("Not available")) }
 ) {
     val activeMounts by VirtualStorageMountManager.activeMountsFlow.collectAsState()
     val shareStates by com.bitlockerdroid.share.LanShareManager.shareStates.collectAsState()
@@ -130,6 +132,7 @@ fun VolumesTabContent(
                             onDisasterDetectedClick = { det -> disasterDetectedTarget = det },
                             onSmartHealthClick = { diskPath -> smartHealthTarget = diskPath },
                             onEjectGroup = onEjectGroup,
+                            onCloseGroup = onCloseGroup,
                             modifier = cardModifier
                         )
                     }
@@ -210,6 +213,7 @@ fun VolumesTabContent(
     smartHealthTarget?.let { path ->
         SmartHealthDialog(
             devicePath = path,
+            onCloseVolumes = onSmartCloseVolumes,
             onDismiss = { smartHealthTarget = null }
         )
     }

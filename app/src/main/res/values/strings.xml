@@ -95,6 +95,15 @@
     <string name="safe_eject_part_success">Volume \"%1$s\" safely closed. Other partitions on this drive remain active; do not unplug the device yet.</string>
     <string name="safe_eject_spindown_warning">Volume \"%1$s\" closed, but disk spindown or cache sync failed. Please unplug with caution.</string>
     <string name="safe_eject_failed">Safe eject failed. Do not unplug yet: %1$s</string>
+    <string name="volume_close_button">Close volumes</string>
+    <string name="volume_closing">Closing volumes…</string>
+    <string name="volume_close_confirm_title">Close unlocked volumes?</string>
+    <string name="volume_close_confirm_message">This syncs pending writes, stops sharing and virtual mounts, and closes the unlocked volumes. This action does not request a device disconnect; you must unlock the volumes again to access them. This does not make the device safe to unplug.</string>
+    <string name="volume_close_confirm_action">Close volumes</string>
+    <string name="volume_close_success">Closed %1$d volume(s). This action did not request a device disconnect; unlock again to access them.</string>
+    <string name="volume_close_none">No open volumes remained. This action did not request a device disconnect.</string>
+    <string name="volume_close_failed">Could not close volumes: %1$s</string>
+    <string name="volume_close_in_progress">A volume operation is already running for this device.</string>
     <string name="safe_to_unplug_title">【%1$s】Safely Ejected</string>
     <string name="safe_to_unplug_desc">All data synced and drive spun down. It is now safe to unplug the device.</string>
     <string name="volume_closed_title">【%1$s】Volume Closed</string>
@@ -537,6 +546,8 @@
     <string name="smart_usb_unavailable">USB connection is unavailable. Reconnect and authorize the device, then try again.</string>
     <string name="smart_usb_unverified">This USB bridge has no verified S.M.A.R.T. query route. No probe commands were sent.</string>
     <string name="smart_usb_close_volumes">Safely close this device’s unlocked volumes before querying its health, then try again.</string>
+    <string name="smart_close_and_query">Close volumes and query</string>
+    <string name="smart_close_and_query_confirm">Close the unlocked volumes after syncing pending writes and stopping sharing and virtual mounts, then retry the health query? This action does not request a device disconnect; unlock the volumes again to access them. This does not make the device safe to unplug.</string>
     <string name="smart_query_retry">The health query failed, but the USB connection recovered. S.M.A.R.T. support is unconfirmed; you can retry.</string>
     <string name="smart_query_failed">The health query failed or returned invalid data. Support is unconfirmed; check the connection and authorization, then retry.</string>
     <string name="smart_status_unknown_health">Health status unconfirmed</string>

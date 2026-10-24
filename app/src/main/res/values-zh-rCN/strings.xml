@@ -95,6 +95,15 @@
     <string name="safe_eject_part_success">【%1$s】已安全关闭。同盘仍有其他分区在使用，请勿拔出设备</string>
     <string name="safe_eject_spindown_warning">【%1$s】卷已关闭，但硬盘硬件停机或缓存刷新失败，请谨慎拔出</string>
     <string name="safe_eject_failed">安全弹出失败，请暂勿拔出设备：%1$s</string>
+    <string name="volume_close_button">关闭卷（保持连接）</string>
+    <string name="volume_closing">正在关闭卷…</string>
+    <string name="volume_close_confirm_title">关闭已解锁的卷？</string>
+    <string name="volume_close_confirm_message">此操作会同步待写入数据、停止共享和虚拟挂载，并关闭已解锁的卷。此操作不会主动断开磁盘；再次访问需要手动重新解锁。本操作不表示设备可以拔出。</string>
+    <string name="volume_close_confirm_action">关闭卷</string>
+    <string name="volume_close_success">已关闭 %1$d 个卷。此操作未主动断开磁盘；访问卷前请重新解锁。</string>
+    <string name="volume_close_none">没有仍处于打开状态的卷。此操作未主动断开磁盘。</string>
+    <string name="volume_close_failed">关闭卷失败：%1$s</string>
+    <string name="volume_close_in_progress">此设备已有卷操作正在进行。</string>
     <string name="safe_to_unplug_title">【%1$s】已安全停机</string>
     <string name="safe_to_unplug_desc">数据已全部同步且硬盘已停机，现在可以安全拔出设备</string>
     <string name="volume_closed_title">【%1$s】卷已安全关闭</string>
@@ -535,6 +544,8 @@
     <string name="smart_usb_unavailable">USB 连接不可用，请重新插入并授权后重试。</string>
     <string name="smart_usb_unverified">尚未验证此 USB 桥接芯片的 S.M.A.R.T. 查询方式，未发送探测命令。</string>
     <string name="smart_usb_close_volumes">请先安全关闭此设备上已解锁的卷，再查询磁盘健康。</string>
+    <string name="smart_close_and_query">关闭卷并查询</string>
+    <string name="smart_close_and_query_confirm">同步待写入数据并停止共享和虚拟挂载后，关闭已解锁的卷并重试健康查询？此操作不会主动断开磁盘；访问卷前请手动重新解锁。关闭卷不代表设备可以拔出。</string>
     <string name="smart_query_retry">健康查询失败，USB 连接已恢复。尚未确认 S.M.A.R.T. 支持，可重新查询。</string>
     <string name="smart_query_failed">健康查询失败或返回数据无效，尚未确认支持。请检查连接和授权后重试。</string>
     <string name="smart_status_unknown_health">健康状态待确认</string>

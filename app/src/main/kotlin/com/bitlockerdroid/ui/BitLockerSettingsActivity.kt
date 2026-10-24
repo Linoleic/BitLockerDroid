@@ -47,9 +47,12 @@ import com.bitlockerdroid.ui.theme.BitLockerTheme
 import com.bitlockerdroid.ui.theme.ThemeMode
 import com.bitlockerdroid.ui.volumes.VolumesTabContent
 import com.bitlockerdroid.util.LogFile
+import com.bitlockerdroid.util.DeviceIdentity
 import com.bitlockerdroid.util.PreferenceHelper
 import com.bitlockerdroid.util.RootAccess
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -181,6 +184,33 @@ class BitLockerSettingsActivity : FragmentActivity() {
     private val onUnlockDetectedAction: (String) -> Unit = { path -> promptUnlock(path) }
     private val onBiometricUnlockDetectedAction: (String) -> Unit = { path -> biometricUnlock(path) }
     private val onEjectVolumesAction: (List<String>) -> Unit = { paths -> ejectVolumes(paths) }
+    private val onCloseVolumesAction: (String, List<String>) -> Unit = { path, volumePaths ->
+        lifecycleScope.launch {
+            val result = closeDeviceVolumesTracked(path, volumePaths)
+            withContext(Dispatchers.Main) {
+                if (result.isSuccess) {
+                    val closed = result.getOrNull() ?: 0
+                    Toast.makeText(
+                        this@BitLockerSettingsActivity,
+                        if (closed == 0) getString(R.string.volume_close_none) else getString(R.string.volume_close_success, closed),
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    Toast.makeText(
+                        this@BitLockerSettingsActivity,
+                        getString(R.string.volume_close_failed, result.exceptionOrNull()?.message ?: ""),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                refreshData()
+            }
+        }
+    }
+    private val onSmartCloseVolumesAction: suspend (String) -> Result<Int> = { path ->
+        val result = closeDeviceVolumesTracked(path, listOf(path))
+        withContext(Dispatchers.Main) { refreshData() }
+        result
+    }
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(com.bitlockerdroid.util.LocaleHelper.wrapContext(newBase))
@@ -294,6 +324,8 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     onUnlockDetected = onUnlockDetectedAction,
                     onBiometricUnlockDetected = onBiometricUnlockDetectedAction,
                     onEjectVolumes = onEjectVolumesAction,
+                    onCloseVolumes = onCloseVolumesAction,
+                    onSmartCloseVolumes = onSmartCloseVolumesAction,
                     ejectingPaths = ejectingPaths
                 )
             }
@@ -549,6 +581,33 @@ class BitLockerSettingsActivity : FragmentActivity() {
         }
     }
 
+    private suspend fun closeDeviceVolumesTracked(devicePath: String, affectedPaths: List<String>): Result<Int> {
+        val parentDisk = runCatching { DeviceIdentity.resolveParentDiskNode(devicePath) }.getOrDefault(devicePath)
+        val sameDiskVolumePaths = unlockedVolumesState.value.filter { volume ->
+            runCatching { DeviceIdentity.resolveParentDiskNode(volume.devicePath) }.getOrDefault(volume.devicePath) == parentDisk
+        }.map { it.devicePath }
+        val paths = (affectedPaths + sameDiskVolumePaths + devicePath).filter { it.isNotBlank() }.toSet()
+        val claimed = withContext(Dispatchers.Main) {
+            if (paths.any { it in ejectingPathsState.value }) false
+            else {
+                ejectingPathsState.value = ejectingPathsState.value + paths
+                true
+            }
+        }
+        if (!claimed) return Result.failure(IllegalStateException(getString(R.string.volume_close_in_progress)))
+        return try {
+            withContext(Dispatchers.IO) { UnlockManager.closeDeviceVolumes(devicePath) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Result.failure(error)
+        } finally {
+            withContext(NonCancellable + Dispatchers.Main) {
+                ejectingPathsState.value = ejectingPathsState.value - paths
+            }
+        }
+    }
+
     private fun ejectVolumes(paths: List<String>) {
         val targets = paths.filter { !ejectingPathsState.value.contains(it) }
         if (targets.isEmpty()) return
@@ -781,6 +840,8 @@ fun MainAppScreen(
     onUnlockDetected: (String) -> Unit,
     onBiometricUnlockDetected: ((String) -> Unit)? = null,
     onEjectVolumes: ((List<String>) -> Unit)? = null,
+    onCloseVolumes: ((String, List<String>) -> Unit)? = null,
+    onSmartCloseVolumes: suspend (String) -> Result<Int> = { Result.failure(IllegalStateException("Not available")) },
     ejectingPaths: Set<String> = emptySet(),
     initialTab: Int = 0
 ) {
@@ -921,7 +982,9 @@ fun MainAppScreen(
                     onLockVolume = onLockVolume,
                     onUnlockDetected = onUnlockDetected,
                     onBiometricUnlockDetected = onBiometricUnlockDetected,
-                    onEjectGroup = onEjectVolumes
+                    onEjectGroup = onEjectVolumes,
+                    onCloseGroup = onCloseVolumes,
+                    onSmartCloseVolumes = onSmartCloseVolumes
                 )
             } else {
                 SettingsTabContent(

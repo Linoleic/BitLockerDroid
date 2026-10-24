@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### 中文
+
+#### 新增
+
+- 新增“关闭卷（保持连接）”，支持免 Root 关闭卷后查询磁盘健康；访问卷前需手动重新解锁。
+
+### English
+
+#### Added
+
+- Close a device's volumes while keeping it connected, including before a non-root health query. Unlock the volumes manually to access them again.
+
 ## [v1.2.0] - 2026-10-24
 
 ### 中文

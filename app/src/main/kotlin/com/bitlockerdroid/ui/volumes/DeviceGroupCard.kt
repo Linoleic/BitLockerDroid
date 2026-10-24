@@ -6,7 +6,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -56,9 +58,11 @@ fun DeviceGroupCard(
     onDisasterDetectedClick: (DetectedVolume) -> Unit,
     onSmartHealthClick: (String) -> Unit,
     onEjectGroup: ((List<String>) -> Unit)? = null,
+    onCloseGroup: ((String, List<String>) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var isExpanded by remember { mutableStateOf(true) }
+    var showCloseVolumesConfirm by remember(group.deviceKey) { mutableStateOf(false) }
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
     val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -91,18 +95,19 @@ fun DeviceGroupCard(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // Physical Device Classification Header
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f), RoundedCornerShape(20.dp))
                 .border(1.dp, outlineColor.copy(alpha = 0.5f), RoundedCornerShape(20.dp))
         ) {
+            val useCompactHeader = isCompact || maxWidth < 680.dp
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(14.dp)
             ) {
-                if (!isCompact) {
+                if (!useCompactHeader) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -185,8 +190,8 @@ fun DeviceGroupCard(
                         // Eject All Action Button (Shown when group contains unlocked volumes)
                         if (group.hasUnlocked && onEjectGroup != null) {
                             val unlockedPaths = remember(group.unlockedVolumes) { group.unlockedVolumes.map { it.devicePath } }
-                            val isAnyEjecting = remember(unlockedPaths, ejectingPaths) {
-                                unlockedPaths.any { ejectingPaths.contains(it) }
+                            val isAnyEjecting = remember(unlockedPaths, ejectingPaths, group.physicalDiskPath) {
+                                group.physicalDiskPath in ejectingPaths || unlockedPaths.any { ejectingPaths.contains(it) }
                             }
                             AppButton(
                                 onClick = { onEjectGroup(unlockedPaths) },
@@ -224,6 +229,28 @@ fun DeviceGroupCard(
                                 }
                             }
 
+                            Spacer(modifier = Modifier.width(4.dp))
+                        }
+
+                        if (group.hasUnlocked && onCloseGroup != null) {
+                            val unlockedPaths = remember(group.unlockedVolumes) { group.unlockedVolumes.map { it.devicePath } }
+                            val isAnyClosing = group.physicalDiskPath in ejectingPaths || unlockedPaths.any { it in ejectingPaths }
+                            AppButton(
+                                onClick = { showCloseVolumesConfirm = true },
+                                enabled = !isAnyClosing,
+                                shape = RoundedCornerShape(10.dp),
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                if (isAnyClosing) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(stringResource(R.string.volume_closing), style = MaterialTheme.typography.labelMedium)
+                                } else {
+                                    Text(stringResource(R.string.volume_close_button), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
                             Spacer(modifier = Modifier.width(4.dp))
                         }
 
@@ -310,7 +337,7 @@ fun DeviceGroupCard(
                     }
 
                     // Keep each action at its natural width and wrap when needed.
-                    val hasActions = isSmartSupported || (group.hasUnlocked && onEjectGroup != null)
+                    val hasActions = isSmartSupported || (group.hasUnlocked && (onEjectGroup != null || onCloseGroup != null))
                     if (hasActions) {
                         Spacer(modifier = Modifier.height(10.dp))
                         FlowRow(
@@ -343,8 +370,8 @@ fun DeviceGroupCard(
 
                             if (group.hasUnlocked && onEjectGroup != null) {
                                 val unlockedPaths = remember(group.unlockedVolumes) { group.unlockedVolumes.map { it.devicePath } }
-                                val isAnyEjecting = remember(unlockedPaths, ejectingPaths) {
-                                    unlockedPaths.any { ejectingPaths.contains(it) }
+                                val isAnyEjecting = remember(unlockedPaths, ejectingPaths, group.physicalDiskPath) {
+                                    group.physicalDiskPath in ejectingPaths || unlockedPaths.any { ejectingPaths.contains(it) }
                                 }
                                 AppButton(
                                     onClick = { onEjectGroup(unlockedPaths) },
@@ -379,6 +406,27 @@ fun DeviceGroupCard(
                                             style = MaterialTheme.typography.labelMedium,
                                             fontWeight = FontWeight.SemiBold
                                         )
+                                    }
+                                }
+                            }
+
+                            if (group.hasUnlocked && onCloseGroup != null) {
+                                val unlockedPaths = remember(group.unlockedVolumes) { group.unlockedVolumes.map { it.devicePath } }
+                                val isAnyClosing = group.physicalDiskPath in ejectingPaths || unlockedPaths.any { it in ejectingPaths }
+                                AppButton(
+                                    onClick = { showCloseVolumesConfirm = true },
+                                    enabled = !isAnyClosing,
+                                    shape = RoundedCornerShape(10.dp),
+                                    containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    if (isAnyClosing) {
+                                        CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp)
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(stringResource(R.string.volume_closing), style = MaterialTheme.typography.labelMedium)
+                                    } else {
+                                        Text(stringResource(R.string.volume_close_button), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                                     }
                                 }
                             }
@@ -495,5 +543,26 @@ fun DeviceGroupCard(
                 }
             }
         }
+    }
+
+    if (showCloseVolumesConfirm && onCloseGroup != null) {
+        AlertDialog(
+            onDismissRequest = { showCloseVolumesConfirm = false },
+            title = { Text(stringResource(R.string.volume_close_confirm_title)) },
+            text = {
+                Box(Modifier.heightIn(max = 120.dp).verticalScroll(rememberScrollState())) {
+                    Text(stringResource(R.string.volume_close_confirm_message))
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showCloseVolumesConfirm = false
+                    onCloseGroup(group.physicalDiskPath, group.unlockedVolumes.map { it.devicePath })
+                }) { Text(stringResource(R.string.volume_close_confirm_action)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCloseVolumesConfirm = false }) { Text(stringResource(R.string.cancel)) }
+            }
+        )
     }
 }
