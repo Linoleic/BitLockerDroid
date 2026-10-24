@@ -618,86 +618,101 @@ object UnlockManager {
      *    Checks remaining sessions AND sibling system partition mounts before spindown.
      * 5. Updates DocumentsProvider roots, foreground state, and posts safe-to-unplug notification
      */
-    fun safeEject(devicePath: String): Result<EjectResult> =
-        closeVolume(devicePath, stopPhysicalDisk = true, postEjectNotification = true)
-            .map { it ?: throw IllegalStateException("Safe eject did not produce a result") }
+    fun safeEject(devicePath: String): Result<EjectResult> = try {
+        ProcessSessionTransition.gate.withAdmissionsPaused {
+            closeVolume(devicePath, stopPhysicalDisk = true, postEjectNotification = true)
+                .map { it ?: throw IllegalStateException("Safe eject did not produce a result") }
+        }
+    } catch (e: Exception) { Result.failure(e) }
 
     private fun closeVolume(
         devicePath: String,
         stopPhysicalDisk: Boolean,
-        postEjectNotification: Boolean
+        postEjectNotification: Boolean,
+        operationKind: VolumeOperationKind = if (stopPhysicalDisk) VolumeOperationKind.EJECT else VolumeOperationKind.CLOSE
     ): Result<EjectResult?> {
         val app = com.bitlockerdroid.util.ContextProvider.app
         val parentDisk = com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(devicePath)
         val diskLock = getParentDiskLock(parentDisk)
 
         synchronized(diskLock) {
-            val progress = volumeOperations.begin(devicePath, parentDisk,
-                if (stopPhysicalDisk) VolumeOperationKind.EJECT else VolumeOperationKind.CLOSE)
+            val progress = volumeOperations.begin(devicePath, parentDisk, operationKind)
             closingSessions.add(devicePath)
             var ejectingCore: DislockerCore? = null
             try {
                 val devInfo = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(devicePath, forceRefresh = true)
-                val stale: DislockerCore
+                require(parentDisk.isNotBlank() && !parentDisk.startsWith("storage:")) { "A physical device is required" }
+                val stale: DislockerCore?
                 val effectiveLabel: String
-                val closedVolume: DetectedVolume
+                val closedVolume: DetectedVolume?
                 synchronized(lock) {
                     val core = sessions[devicePath]
-                        ?: throw java.io.IOException("Volume session not found")
                     stale = core
                     ejectingCore = core
-                    val guid = core.volumeGuid ?: BitLockerDetector.getVolumeGuid(devicePath)
-                    val recoveryKeyId = core.recoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
-                    if (!guid.isNullOrBlank()) {
-                        manuallyLockedGuids.add(guid)
+                    if (core == null) {
+                        val known = detected[devicePath] ?: detected.values.firstOrNull {
+                            devicePath == parentDisk && com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(it.devicePath) == parentDisk
+                        }
+                        check(stopPhysicalDisk && known != null) { "No tracked BitLocker device at this path" }
+                        effectiveLabel = devInfo.friendlyName.ifBlank { known.deviceName.ifBlank { parentDisk } }
+                        closedVolume = null
+                    } else {
+                        val guid = core.volumeGuid ?: BitLockerDetector.getVolumeGuid(devicePath)
+                        val recoveryKeyId = core.recoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
+                        if (!guid.isNullOrBlank()) {
+                            manuallyLockedGuids.add(guid)
+                        }
+                        manuallyLockedGuids.add(devicePath)
+                        val fallbackLabel = app.getString(R.string.notification_drive_title)
+                        effectiveLabel = core.volumeLabel.ifBlank { devInfo.friendlyName.ifBlank { fallbackLabel } }
+                        progress.label(effectiveLabel)
+
+                        LogFile.write("app", "UnlockManager.closeVolume: closing $devicePath ($effectiveLabel, guid=$guid, rkId=$recoveryKeyId)")
+
+                        val isRo = com.bitlockerdroid.util.PreferenceHelper.isVolumeReadOnly(app, guid, devicePath)
+                        val partInfo = com.bitlockerdroid.util.DeviceIdentity.resolvePartitionInfo(devicePath)
+                        closedVolume = DetectedVolume(
+                            devicePath = devicePath,
+                            guid = guid,
+                            recoveryKeyId = recoveryKeyId,
+                            deviceName = devInfo.friendlyName,
+                            capacity = devInfo.sizeBytes,
+                            isReadOnly = isRo,
+                            partitionIndex = partInfo.partitionIndex,
+                            partitionName = partInfo.partitionNodeName
+                        )
                     }
-                    manuallyLockedGuids.add(devicePath)
-                    val fallbackLabel = app.getString(R.string.notification_drive_title)
-                    effectiveLabel = core.volumeLabel.ifBlank { devInfo.friendlyName.ifBlank { fallbackLabel } }
-                    progress.label(effectiveLabel)
-
-                    LogFile.write("app", "UnlockManager.closeVolume: closing $devicePath ($effectiveLabel, guid=$guid, rkId=$recoveryKeyId)")
-
-                    val isRo = com.bitlockerdroid.util.PreferenceHelper.isVolumeReadOnly(app, guid, devicePath)
-                    val partInfo = com.bitlockerdroid.util.DeviceIdentity.resolvePartitionInfo(devicePath)
-                    closedVolume = DetectedVolume(
-                        devicePath = devicePath,
-                        guid = guid,
-                        recoveryKeyId = recoveryKeyId,
-                        deviceName = devInfo.friendlyName,
-                        capacity = devInfo.sizeBytes,
-                        isReadOnly = isRo,
-                        partitionIndex = partInfo.partitionIndex,
-                        partitionName = partInfo.partitionNodeName
-                    )
                 }
-                // Freeze admissions before waiting, without discarding the live session.
-                // A timeout must leave the worker's native handles open.
-                progress.stage(VolumeOperationStage.WAITING_FOR_WRITES)
-                com.bitlockerdroid.provider.BitLockerDocumentsProvider.drainActiveWrites(stale)
+                progress.label(effectiveLabel)
+                if (stale != null) {
+                    // Freeze admissions before waiting, without discarding the live session.
+                    // A timeout must leave the worker's native handles open.
+                    progress.stage(VolumeOperationStage.WAITING_FOR_WRITES)
+                    com.bitlockerdroid.provider.BitLockerDocumentsProvider.drainActiveWrites(stale)
 
-                // Stop any active LAN sharing for this volume.
-                progress.stage(VolumeOperationStage.STOPPING_SHARES)
-                try {
-                    app?.let { appCtx ->
-                        com.bitlockerdroid.share.LanShareManager.stopSharingForDevice(appCtx, devicePath, stale.volumeGuid)
+                    // Stop any active LAN sharing for this volume.
+                    progress.stage(VolumeOperationStage.STOPPING_SHARES)
+                    try {
+                        app?.let { appCtx ->
+                            com.bitlockerdroid.share.LanShareManager.stopSharingForDevice(appCtx, devicePath, stale.volumeGuid)
+                        }
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "LAN share stop warning for $devicePath", e)
                     }
-                } catch (e: Throwable) {
-                    Log.w(TAG, "LAN share stop warning for $devicePath", e)
-                }
 
-                // Unmount POSIX FUSE before closing the backing session.
-                progress.stage(VolumeOperationStage.UNMOUNTING)
-                VirtualStorageMountManager.unmountChecked(devicePath)
+                    // Unmount POSIX FUSE before closing the backing session.
+                    progress.stage(VolumeOperationStage.UNMOUNTING)
+                    VirtualStorageMountManager.unmountChecked(devicePath)
 
-                // Flush & close only after all writes really completed.
-                progress.stage(VolumeOperationStage.SYNCING_VOLUME)
-                stale.closeChecked { progress.stage(VolumeOperationStage.CLOSING_VOLUME) }
-                synchronized(lock) {
-                    sessions.remove(devicePath)
-                    detected[devicePath] = closedVolume
+                    // Flush & close only after all writes really completed.
+                    progress.stage(VolumeOperationStage.SYNCING_VOLUME)
+                    stale.closeChecked { progress.stage(VolumeOperationStage.CLOSING_VOLUME) }
+                    synchronized(lock) {
+                        sessions.remove(devicePath)
+                        detected[devicePath] = checkNotNull(closedVolume)
+                    }
+                    sessionCredentials.remove(devicePath)
                 }
-                sessionCredentials.remove(devicePath)
 
                 var spindownError: String? = null
                 val outcome: EjectStatus? = if (!stopPhysicalDisk) {
@@ -716,7 +731,7 @@ object UnlockManager {
 
                     val hasSystemPartitionsInUse = com.bitlockerdroid.util.DeviceIdentity.isParentDiskInUseBySystem(
                         parentDiskNode = parentDisk,
-                        excludeDevicePaths = setOf(devicePath)
+                        excludeDevicePaths = if (stale != null) setOf(devicePath) else emptySet()
                     )
 
                     if (hasOtherBitLockerSessions || hasSystemPartitionsInUse) {
@@ -878,6 +893,28 @@ object UnlockManager {
         Result.success(count)
     } catch (e: Exception) {
         Log.w(TAG, "Device volume closure failed for $devicePath", e)
+        Result.failure(e)
+    }
+
+    /** Closes all tracked sessions, then ejects even when they were already closed. */
+    fun safeEjectDevice(devicePath: String): Result<EjectResult> = try {
+        val result = ProcessSessionTransition.gate.withAdmissionsPaused {
+            val parent = com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(devicePath)
+            synchronized(getParentDiskLock(parent)) {
+                val (open, known) = synchronized(lock) {
+                    sessions.keys.toList() to (sessions.keys + detected.keys).distinct()
+                }
+                DeviceEjection.eject(
+                    devicePath, open, known,
+                    com.bitlockerdroid.util.DeviceIdentity::resolveParentDiskNode,
+                    closeVolume = { path -> closeVolume(path, false, false, VolumeOperationKind.EJECT).getOrThrow() },
+                    finishDevice = { disk -> checkNotNull(closeVolume(disk, true, true).getOrThrow()) }
+                )
+            }
+        }
+        Result.success(result)
+    } catch (e: Exception) {
+        Log.w(TAG, "Device eject failed for $devicePath", e)
         Result.failure(e)
     }
 
