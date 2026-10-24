@@ -45,6 +45,10 @@ int smart_test_parse_nvme_identity(const unsigned char *id, size_t len,
 int smart_test_validate_nvme_smart_log(const unsigned char *page, size_t len);
 int smart_test_sg_response_ok(int status, int host_status, int driver_status,
                               int resid, int data_len);
+int smart_test_format_sata_metrics_json(const unsigned char *page, size_t len,
+                                        char *out, size_t out_max);
+int smart_test_format_nvme_temperature_json(const unsigned char *page, size_t len,
+                                            char *out, size_t out_max);
 #endif
 
 #ifdef __cplusplus

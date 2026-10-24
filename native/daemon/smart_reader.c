@@ -184,6 +184,99 @@ static int validate_nvme_smart_log(const unsigned char *page, size_t len) {
     return 0;
 }
 
+typedef struct {
+    int temperature_c, has_temperature;
+    int health_percent, has_health;
+    uint64_t reallocated_sectors, pending_sectors, uncorrectable_sectors;
+    uint64_t power_cycles, power_hours, total_bytes_written;
+    int has_reallocated, has_pending, has_uncorrectable;
+    int has_power_cycles, has_power_hours, has_total_bytes_written;
+    const char *status;
+} sata_metrics;
+
+/* Parse only the standard 30 ATA SMART attribute slots. A successful SG_IO
+ * alone is not enough to infer temperature, health, or zero-valued counters. */
+static int extract_sata_metrics(const unsigned char *page, size_t len, sata_metrics *m) {
+    if (!page || len != 512 || !m) return -1;
+    int all_zero = 1, all_ff = 1;
+    for (size_t i = 0; i < len; i++) {
+        if (page[i] != 0) all_zero = 0;
+        if (page[i] != 0xff) all_ff = 0;
+    }
+    if (all_zero || all_ff) return -1;
+    memset(m, 0, sizeof(*m));
+    for (int i = 0; i < 30; i++) {
+        const unsigned char *attr = page + 2 + i * 12;
+        int id = attr[0];
+        if (id == 0) continue;
+        int current = attr[3];
+        uint64_t raw = (uint64_t)attr[5] | ((uint64_t)attr[6] << 8) |
+                       ((uint64_t)attr[7] << 16) | ((uint64_t)attr[8] << 24) |
+                       ((uint64_t)attr[9] << 32) | ((uint64_t)attr[10] << 40);
+        if (id == 0x05) { m->reallocated_sectors = raw; m->has_reallocated = 1; }
+        else if (id == 0x09) { m->power_hours = raw; m->has_power_hours = 1; }
+        else if (id == 0x0C) { m->power_cycles = raw; m->has_power_cycles = 1; }
+        else if (id == 0xC2 || id == 0xBE) { m->temperature_c = (int)(raw & 0xff); m->has_temperature = 1; }
+        else if (id == 0xC5) { m->pending_sectors = raw; m->has_pending = 1; }
+        else if (id == 0xC6) { m->uncorrectable_sectors = raw; m->has_uncorrectable = 1; }
+        else if (id == 0xE7 || id == 0xA9 || id == 0xB1 || id == 0xE8) {
+            if (current > 0 && current <= 100) { m->health_percent = current; m->has_health = 1; }
+            else if (raw > 0 && raw <= 100) { m->health_percent = (int)raw; m->has_health = 1; }
+        } else if (id == 0xF1) {
+            m->total_bytes_written = raw * 512ULL; m->has_total_bytes_written = 1;
+        }
+    }
+    int has_bad = (m->has_reallocated && m->reallocated_sectors > 0) ||
+                  (m->has_pending && m->pending_sectors > 0) ||
+                  (m->has_uncorrectable && m->uncorrectable_sectors > 0);
+    if (m->has_uncorrectable && m->uncorrectable_sectors > 0) m->status = "CRITICAL";
+    else if (has_bad) m->status = "WARNING";
+    else if (m->has_reallocated && m->has_pending && m->has_uncorrectable) m->status = "HEALTHY";
+    else m->status = "UNCONFIRMED";
+    return 0;
+}
+
+static const char *format_optional_u64(uint64_t value, int present, char *buf, size_t max) {
+    if (!present) return "null";
+    snprintf(buf, max, "%llu", (unsigned long long)value);
+    return buf;
+}
+
+static int format_nvme_temperature_json(const unsigned char *page, size_t len,
+                                        char *out, size_t out_max) {
+    if (!page || len < 3 || !out || out_max == 0) return -1;
+    unsigned int kelvin = (unsigned int)page[1] | ((unsigned int)page[2] << 8);
+    if (kelvin == 0) {
+        int n = snprintf(out, out_max, "null");
+        return n >= 0 && (size_t)n < out_max ? n : -1;
+    }
+    int n = snprintf(out, out_max, "%d", (int)kelvin - 273);
+    return n >= 0 && (size_t)n < out_max ? n : -1;
+}
+
+static int format_sata_metrics_json(const unsigned char *page, size_t len,
+                                    char *out, size_t out_max) {
+    sata_metrics metrics;
+    sata_metrics *m = &metrics;
+    if (!out || out_max == 0 || extract_sata_metrics(page, len, m) != 0) return -1;
+    char temp[24], health[24], reallocated[24], pending[24], uncorrectable[24];
+    char cycles[24], hours[24], written[24];
+    const char *temp_s = m->has_temperature ? format_optional_u64((uint64_t)m->temperature_c, 1, temp, sizeof(temp)) : "null";
+    const char *health_s = m->has_health ? format_optional_u64((uint64_t)m->health_percent, 1, health, sizeof(health)) : "null";
+    int n = snprintf(out, out_max,
+        "\"status\":\"%s\",\"temperature_c\":%s,\"health_percent\":%s,"
+        "\"reallocated_sectors\":%s,\"pending_sectors\":%s,\"uncorrectable_sectors\":%s,"
+        "\"power_cycles\":%s,\"power_hours\":%s,\"total_bytes_written\":%s",
+        m->status, temp_s, health_s,
+        format_optional_u64(m->reallocated_sectors, m->has_reallocated, reallocated, sizeof(reallocated)),
+        format_optional_u64(m->pending_sectors, m->has_pending, pending, sizeof(pending)),
+        format_optional_u64(m->uncorrectable_sectors, m->has_uncorrectable, uncorrectable, sizeof(uncorrectable)),
+        format_optional_u64(m->power_cycles, m->has_power_cycles, cycles, sizeof(cycles)),
+        format_optional_u64(m->power_hours, m->has_power_hours, hours, sizeof(hours)),
+        format_optional_u64(m->total_bytes_written, m->has_total_bytes_written, written, sizeof(written)));
+    return n >= 0 && (size_t)n < out_max ? n : -1;
+}
+
 #ifdef SMART_READER_TEST
 int smart_test_detect_usb_ids(const char *sysfs_path, unsigned int *vendor, unsigned int *product) {
     return detect_usb_ids_from_sysfs(sysfs_path, vendor, product);
@@ -204,6 +297,14 @@ int smart_test_validate_nvme_smart_log(const unsigned char *page, size_t len) {
 int smart_test_sg_response_ok(int status, int host_status, int driver_status,
                               int resid, int data_len) {
     return sg_response_ok(status, host_status, driver_status, resid, data_len);
+}
+int smart_test_format_sata_metrics_json(const unsigned char *page, size_t len,
+                                        char *out, size_t out_max) {
+    return format_sata_metrics_json(page, len, out, out_max);
+}
+int smart_test_format_nvme_temperature_json(const unsigned char *page, size_t len,
+                                            char *out, size_t out_max) {
+    return format_nvme_temperature_json(page, len, out, out_max);
 }
 #endif
 
@@ -234,7 +335,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
 
     struct stat st;
     if (stat(dev_path, &st) < 0) {
-        snprintf(json, json_max, "{\"supported\":false,\"error\":\"Cannot stat device: %s\"}", strerror(errno));
+        snprintf(json, json_max, "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"reason\":\"Cannot stat device: %s\"}", strerror(errno));
         return -errno;
     }
 
@@ -252,7 +353,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         fd = open(actual_dev, O_RDONLY | O_LARGEFILE | O_CLOEXEC);
     }
     if (fd < 0) {
-        snprintf(json, json_max, "{\"supported\":false,\"error\":\"Cannot open %s: %s\"}", actual_dev, strerror(errno));
+        snprintf(json, json_max, "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"reason\":\"Cannot open %s: %s\"}", actual_dev, strerror(errno));
         return -errno;
     }
 
@@ -361,8 +462,8 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
 
     if (is_nvme) {
         int crit_warn = nvme_smart[0];
-        int kelvin = nvme_smart[1] | (nvme_smart[2] << 8);
-        int temp_c = kelvin > 273 ? (kelvin - 273) : 0;
+        char temp_text[24];
+        format_nvme_temperature_json(nvme_smart, sizeof(nvme_smart), temp_text, sizeof(temp_text));
         int avail_spare = nvme_smart[3];
         int spare_thresh = nvme_smart[4];
         int percent_used = nvme_smart[5];
@@ -419,7 +520,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
             "\"firmware\":\"%s\","
             "\"vendor\":\"%s\","
             "\"product\":\"%s\","
-            "\"temperature_c\":%d,"
+            "\"temperature_c\":%s,"
             "\"health_percent\":%d,"
             "\"available_spare\":%d,"
             "\"spare_threshold\":%d,"
@@ -438,7 +539,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
             "\"raw_page_hex\":\"%s\""
             "}",
             status_str, disk_type, esc_model, esc_serial, esc_fw,
-            esc_vendor, esc_prod, temp_c, health_pct, avail_spare,
+            esc_vendor, esc_prod, temp_text, health_pct, avail_spare,
             spare_thresh, crit_warn, (unsigned long long)power_cycles,
             (unsigned long long)power_hours, (unsigned long long)unsafe_shutdowns,
             (unsigned long long)bytes_read, (unsigned long long)bytes_written,
@@ -467,43 +568,10 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
     memset(smart_data, 0, sizeof(smart_data));
     memset(sense, 0, sizeof(sense));
     int has_sata_smart = (do_sg_io(fd, smart_cdb, 16, smart_data, 512, SG_DXFER_FROM_DEV, sense, sizeof(sense)) == 0);
+    char sata_fields[512];
+    int valid_sata_smart = has_sata_smart && format_sata_metrics_json(smart_data, sizeof(smart_data), sata_fields, sizeof(sata_fields)) >= 0;
 
-    if (has_sata_smart) {
-        int temp_c = 0;
-        int health_pct = 100;
-        uint64_t power_hours = 0;
-        uint64_t power_cycles = 0;
-        uint64_t reallocated_sectors = 0;
-        uint64_t pending_sectors = 0;
-        uint64_t uncorrectable_sectors = 0;
-        uint64_t bytes_written = 0;
-
-        for (int i = 0; i < 30; i++) {
-            unsigned char *attr = smart_data + 2 + i * 12;
-            int id = attr[0];
-            if (id == 0) continue;
-            int current = attr[3];
-            uint64_t raw = (uint64_t)attr[5] | ((uint64_t)attr[6] << 8) |
-                           ((uint64_t)attr[7] << 16) | ((uint64_t)attr[8] << 24) |
-                           ((uint64_t)attr[9] << 32) | ((uint64_t)attr[10] << 40);
-
-            if (id == 0x05) reallocated_sectors = raw;
-            else if (id == 0x09) power_hours = raw;
-            else if (id == 0x0C) power_cycles = raw;
-            else if (id == 0xC2 || id == 0xBE) temp_c = (int)(raw & 0xFF);
-            else if (id == 0xC5) pending_sectors = raw;
-            else if (id == 0xC6) uncorrectable_sectors = raw;
-            else if (id == 0xE7 || id == 0xA9 || id == 0xB1 || id == 0xE8) {
-                if (current > 0 && current <= 100) health_pct = current;
-                else if (raw > 0 && raw <= 100) health_pct = (int)raw;
-            } else if (id == 0xF1) {
-                bytes_written = raw * 512ULL;
-            }
-        }
-
-        const char *status_str = (reallocated_sectors == 0 && pending_sectors == 0 && uncorrectable_sectors == 0) ? "HEALTHY" :
-                                 (uncorrectable_sectors > 0 ? "CRITICAL" : "WARNING");
-
+    if (valid_sata_smart) {
         char esc_model[64], esc_serial[64], esc_fw[32], esc_vendor[32], esc_prod[32];
         escape_json_str(model[0] ? model : product, esc_model, sizeof(esc_model));
         escape_json_str(serial, esc_serial, sizeof(esc_serial));
@@ -520,32 +588,18 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         snprintf(json, json_max,
             "{"
             "\"supported\":true,"
-            "\"status\":\"%s\","
             "\"disk_type\":\"%s\","
             "\"model\":\"%s\","
             "\"serial\":\"%s\","
             "\"firmware\":\"%s\","
             "\"vendor\":\"%s\","
             "\"product\":\"%s\","
-            "\"temperature_c\":%d,"
-            "\"health_percent\":%d,"
-            "\"reallocated_sectors\":%llu,"
-            "\"pending_sectors\":%llu,"
-            "\"uncorrectable_sectors\":%llu,"
-            "\"power_cycles\":%llu,"
-            "\"power_hours\":%llu,"
-            "\"total_bytes_written\":%llu,"
+            "%s,"
             "\"device_node\":\"%s\","
             "\"raw_page_hex\":\"%s\""
             "}",
-            status_str, disk_type, esc_model, esc_serial, esc_fw,
-            esc_vendor, esc_prod, temp_c, health_pct,
-            (unsigned long long)reallocated_sectors,
-            (unsigned long long)pending_sectors,
-            (unsigned long long)uncorrectable_sectors,
-            (unsigned long long)power_cycles,
-            (unsigned long long)power_hours,
-            (unsigned long long)bytes_written,
+            disk_type, esc_model, esc_serial, esc_fw,
+            esc_vendor, esc_prod, sata_fields,
             actual_dev,
             raw_page_hex
         );
@@ -553,7 +607,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         return 0;
     }
 
-    // 7. If device is accessible but does not implement standard SMART (e.g. standard USB thumb drive)
+    // 7. A failed command or empty page cannot establish lack of SMART capability.
     char esc_vendor[32], esc_prod[32], esc_rev[16];
     escape_json_str(vendor, esc_vendor, sizeof(esc_vendor));
     escape_json_str(product, esc_prod, sizeof(esc_prod));
@@ -562,15 +616,17 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
     snprintf(json, json_max,
         "{"
         "\"supported\":false,"
-        "\"status\":\"UNSUPPORTED\","
-        "\"disk_type\":\"USB Flash Drive\","
+        "\"status\":\"UNCONFIRMED\","
+        "\"disk_type\":\"Unknown\","
         "\"vendor\":\"%s\","
         "\"product\":\"%s\","
         "\"firmware\":\"%s\","
         "\"device_node\":\"%s\","
-        "\"reason\":\"The storage device controller does not implement standard ATA or NVMe SMART telemetry.\""
+        "\"reason\":\"%s\""
         "}",
-        esc_vendor, esc_prod, esc_rev, actual_dev
+        esc_vendor, esc_prod, esc_rev, actual_dev,
+        has_sata_smart ? "The ATA SMART command returned an empty or invalid data page; capability is unconfirmed." :
+                         "The ATA SMART command failed; capability is unconfirmed."
     );
 
     close(fd);

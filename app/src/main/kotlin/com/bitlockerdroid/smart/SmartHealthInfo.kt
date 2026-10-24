@@ -56,7 +56,7 @@ data class SmartHealthInfo(
      * Builds standard CrystalDiskInfo-compatible S.M.A.R.T. telemetry attribute table.
      */
     private fun buildSmartAttributeTable(): String {
-        if (!isSupported) {
+        if (!isSupported && status == SmartOverallStatus.UNSUPPORTED) {
             val sb = StringBuilder()
             sb.appendLine("-- S.M.A.R.T. --------------------------------------------------------------")
             sb.appendLine("当前设备不支持标准 S.M.A.R.T. 硬件监控。")
@@ -69,6 +69,12 @@ data class SmartHealthInfo(
         val sb = StringBuilder()
         sb.appendLine("-- S.M.A.R.T. --------------------------------------------------------------")
         sb.appendLine("ID Sta Cur Wor Thr RawValues    AttributeName (标题含义见说明)")
+
+        if (!isSupported && status == SmartOverallStatus.UNCONFIRMED) {
+            sb.appendLine("状态尚未确认，当前没有可用的原始 S.M.A.R.T. 数据。")
+            if (!reason.isNullOrBlank()) sb.appendLine(reason)
+            return sb.toString().trimEnd()
+        }
 
         val isNvme = diskType.contains("NVMe", ignoreCase = true)
         val rows = if (isNvme) buildNvmeRows() else buildSataRows()
@@ -110,91 +116,67 @@ data class SmartHealthInfo(
 
     private fun buildNvmeRows(): List<SmartRow> {
         val hex = rawPageHex ?: ""
-        val hasHex = hex.length >= 384
+        val hasHex = hex.length >= 384 && hex.length % 2 == 0 && hex.all { it.digitToIntOrNull(16) != null }
 
-        fun getU8(offset: Int): Int {
-            if (hasHex && offset * 2 + 2 <= hex.length) {
-                return try { hex.substring(offset * 2, offset * 2 + 2).toInt(16) } catch (_: Exception) { 0 }
+        fun getU8(offset: Int): Int? = if (hasHex) hex.substring(offset * 2, offset * 2 + 2).toInt(16) else null
+
+        fun getU16Le(offset: Int): Int? = if (hasHex) {
+            hex.substring(offset * 2, offset * 2 + 2).toInt(16) or
+                (hex.substring(offset * 2 + 2, offset * 2 + 4).toInt(16) shl 8)
+        } else null
+
+        fun getU48LeHex(offset: Int): String? = if (hasHex) buildString {
+            for (i in 5 downTo 0) append(hex.substring((offset + i) * 2, (offset + i) * 2 + 2).uppercase())
+        } else null
+
+        fun getU64Le(offset: Int): Long? = if (hasHex) {
+            var v = 0L
+            for (i in 0 until 8) {
+                val b = hex.substring((offset + i) * 2, (offset + i) * 2 + 2).toLong(16)
+                v = v or (b shl (i * 8))
             }
-            return 0
-        }
+            v
+        } else null
 
-        fun getU16Le(offset: Int): Int {
-            if (hasHex && offset * 2 + 4 <= hex.length) {
-                return try {
-                    val b0 = hex.substring(offset * 2, offset * 2 + 2).toInt(16)
-                    val b1 = hex.substring(offset * 2 + 2, offset * 2 + 4).toInt(16)
-                    b0 or (b1 shl 8)
-                } catch (_: Exception) { 0 }
-            }
-            return 0
-        }
+        val critWarn = getU8(0) ?: criticalWarning
+        val kelvin = getU16Le(1)?.takeIf { it != 0 }
+        val tempC = kelvin?.minus(273) ?: temperatureCelsius
+        val availSpare = getU8(3) ?: availableSpare
+        val spareThresh = getU8(4) ?: spareThreshold
+        val percentUsed = getU8(5) ?: healthPercentage?.let { 100 - it }
 
-        fun getU48LeHex(offset: Int): String {
-            if (hasHex && offset * 2 + 12 <= hex.length) {
-                val s = StringBuilder()
-                for (i in 5 downTo 0) {
-                    s.append(hex.substring((offset + i) * 2, (offset + i) * 2 + 2).uppercase())
-                }
-                return s.toString()
-            }
-            return "000000000000"
-        }
+        val unitsRead = getU64Le(32) ?: totalBytesRead?.div(512000L)
+        val unitsWritten = getU64Le(48) ?: totalBytesWritten?.div(512000L)
+        val hReads = getU64Le(64) ?: hostReadCommands
+        val hWrites = getU64Le(80) ?: hostWriteCommands
+        val busyTime = getU64Le(96) ?: controllerBusyMinutes
+        val pCycles = getU64Le(112) ?: powerCycles
+        val pHours = getU64Le(128) ?: powerHours
+        val unsafeOff = getU64Le(144) ?: unsafeShutdowns
+        val mediaErrs = getU64Le(160) ?: mediaErrors
+        val errLog = getU64Le(176) ?: errorLogEntries
 
-        fun getU64Le(offset: Int): Long {
-            if (hasHex && offset * 2 + 16 <= hex.length) {
-                var v = 0L
-                for (i in 0 until 8) {
-                    val b = hex.substring((offset + i) * 2, (offset + i) * 2 + 2).toLong(16)
-                    v = v or (b shl (i * 8))
-                }
-                return v
-            }
-            return 0L
-        }
-
-        val critWarn = if (hasHex) getU8(0) else (criticalWarning ?: 0)
-        val kelvin = if (hasHex) getU16Le(1) else ((temperatureCelsius ?: 40) + 273)
-        val tempC = if (kelvin > 273) kelvin - 273 else (temperatureCelsius ?: 40)
-        val availSpare = if (hasHex) getU8(3) else (availableSpare ?: 100)
-        val spareThresh = if (hasHex) getU8(4) else (spareThreshold ?: 5)
-        val percentUsed = if (hasHex) getU8(5) else (if (healthPercentage != null) maxOf(0, 100 - healthPercentage) else 0)
-
-        val unitsRead = if (hasHex) getU64Le(32) else ((totalBytesRead ?: 0L) / 512000L)
-        val unitsWritten = if (hasHex) getU64Le(48) else ((totalBytesWritten ?: 0L) / 512000L)
-        val hReads = if (hasHex) getU64Le(64) else (hostReadCommands ?: 0L)
-        val hWrites = if (hasHex) getU64Le(80) else (hostWriteCommands ?: 0L)
-        val busyTime = if (hasHex) getU64Le(96) else (controllerBusyMinutes ?: 0L)
-        val pCycles = if (hasHex) getU64Le(112) else (powerCycles ?: 0L)
-        val pHours = if (hasHex) getU64Le(128) else (powerHours ?: 0L)
-        val unsafeOff = if (hasHex) getU64Le(144) else (unsafeShutdowns ?: 0L)
-        val mediaErrs = if (hasHex) getU64Le(160) else (mediaErrors ?: 0L)
-        val errLog = if (hasHex) getU64Le(176) else (errorLogEntries ?: 0L)
-
-        val curWorThr = "__0"
+        fun row(id: String, value: Long?, name: String, sta: String = "U", raw: String? = null) =
+            SmartRow(id, sta, "—", "—", "—", raw ?: value?.let { "%012X".format(it and 0xFFFFFFFFFFFFL) } ?: "—", name)
 
         return listOf(
-            SmartRow("01", if (critWarn == 0) "G" else "B", curWorThr, curWorThr, curWorThr, "%012X".format(critWarn), "严重警告标志"),
-            SmartRow("02", when { (critWarn and 0x02) != 0 || tempC > 65 -> "B"; tempC > 55 -> "W"; else -> "G" }, curWorThr, curWorThr, curWorThr, "%012X".format(kelvin), "温度"),
-            SmartRow("03", if (availSpare >= spareThresh) "G" else if (availSpare > 0) "W" else "B", curWorThr, curWorThr, curWorThr, "%012X".format(availSpare), "可用备用空间"),
-            SmartRow("04", "G", curWorThr, curWorThr, curWorThr, "%012X".format(spareThresh), "可用备用空间阈值"),
-            SmartRow("05", when { percentUsed > 100 -> "B"; percentUsed >= 90 -> "W"; else -> "G" }, curWorThr, curWorThr, curWorThr, "%012X".format(percentUsed), "已用寿命百分比"),
-            SmartRow("06", "G", curWorThr, curWorThr, curWorThr, if (hasHex) getU48LeHex(32) else "%012X".format(unitsRead and 0xFFFFFFFFFFFFL), "主机总计读取"),
-            SmartRow("07", "G", curWorThr, curWorThr, curWorThr, if (hasHex) getU48LeHex(48) else "%012X".format(unitsWritten and 0xFFFFFFFFFFFFL), "主机总计写入"),
-            SmartRow("08", "G", curWorThr, curWorThr, curWorThr, if (hasHex) getU48LeHex(64) else "%012X".format(hReads and 0xFFFFFFFFFFFFL), "主机读命令计数"),
-            SmartRow("09", "G", curWorThr, curWorThr, curWorThr, if (hasHex) getU48LeHex(80) else "%012X".format(hWrites and 0xFFFFFFFFFFFFL), "主机写命令计数"),
-            SmartRow("0A", "G", curWorThr, curWorThr, curWorThr, if (hasHex) getU48LeHex(96) else "%012X".format(busyTime and 0xFFFFFFFFFFFFL), "控制器忙状态时间"),
-            SmartRow("0B", "G", curWorThr, curWorThr, curWorThr, if (hasHex) getU48LeHex(112) else "%012X".format(pCycles and 0xFFFFFFFFFFFFL), "通电次数"),
-            SmartRow("0C", "G", curWorThr, curWorThr, curWorThr, if (hasHex) getU48LeHex(128) else "%012X".format(pHours and 0xFFFFFFFFFFFFL), "通电时间(小时)"),
-            SmartRow("0D", "G", curWorThr, curWorThr, curWorThr, if (hasHex) getU48LeHex(144) else "%012X".format(unsafeOff and 0xFFFFFFFFFFFFL), "不安全关机计数"),
-            SmartRow("0E", if (mediaErrs == 0L) "G" else "B", curWorThr, curWorThr, curWorThr, if (hasHex) getU48LeHex(160) else "%012X".format(mediaErrs and 0xFFFFFFFFFFFFL), "媒体与数据完整性错误计数"),
-            SmartRow("0F", if (errLog == 0L) "G" else "W", curWorThr, curWorThr, curWorThr, if (hasHex) getU48LeHex(176) else "%012X".format(errLog and 0xFFFFFFFFFFFFL), "错误日志项数")
+            row("01", critWarn?.toLong(), "严重警告标志", critWarn?.let { if (it == 0) "G" else "B" } ?: "U"),
+            row("02", tempC?.toLong(), "温度", tempC?.let { when { (critWarn ?: 0) and 0x02 != 0 || it > 65 -> "B"; it > 55 -> "W"; else -> "G" } } ?: "U", kelvin?.let { "%012X".format(it) }),
+            row("03", availSpare?.toLong(), "可用备用空间", if (availSpare != null && spareThresh != null) if (availSpare >= spareThresh) "G" else if (availSpare > 0) "W" else "B" else "U"),
+            row("04", spareThresh?.toLong(), "可用备用空间阈值", if (spareThresh == null) "U" else "G"),
+            row("05", percentUsed?.toLong(), "已用寿命百分比", percentUsed?.let { when { it > 100 -> "B"; it >= 90 -> "W"; else -> "G" } } ?: "U"),
+            row("06", unitsRead, "主机总计读取", raw = getU48LeHex(32)), row("07", unitsWritten, "主机总计写入", raw = getU48LeHex(48)),
+            row("08", hReads, "主机读命令计数", raw = getU48LeHex(64)), row("09", hWrites, "主机写命令计数", raw = getU48LeHex(80)),
+            row("0A", busyTime, "控制器忙状态时间", raw = getU48LeHex(96)), row("0B", pCycles, "通电次数", raw = getU48LeHex(112)),
+            row("0C", pHours, "通电时间(小时)", raw = getU48LeHex(128)), row("0D", unsafeOff, "不安全关机计数", raw = getU48LeHex(144)),
+            row("0E", mediaErrs, "媒体与数据完整性错误计数", sta = mediaErrs?.let { if (it == 0L) "G" else "B" } ?: "U", raw = getU48LeHex(160)),
+            row("0F", errLog, "错误日志项数", sta = errLog?.let { if (it == 0L) "G" else "W" } ?: "U", raw = getU48LeHex(176))
         )
     }
 
     private fun buildSataRows(): List<SmartRow> {
         val hex = rawPageHex ?: ""
-        val hasHex = hex.length >= 720
+        val hasHex = hex.length >= 720 && hex.length % 2 == 0 && hex.all { it.digitToIntOrNull(16) != null }
         val rows = mutableListOf<SmartRow>()
 
         fun formatCurWor(v: Int): String {
@@ -209,10 +191,10 @@ data class SmartHealthInfo(
             for (i in 0 until 30) {
                 val off = 2 + i * 12
                 if (off * 2 + 24 > hex.length) break
-                val id = hex.substring(off * 2, off * 2 + 2).toInt(16)
+                val id = hex.substring(off * 2, off * 2 + 2).toIntOrNull(16) ?: continue
                 if (id == 0) continue
-                val cur = hex.substring((off + 3) * 2, (off + 3) * 2 + 2).toInt(16)
-                val wor = hex.substring((off + 4) * 2, (off + 4) * 2 + 2).toInt(16)
+                val cur = hex.substring((off + 3) * 2, (off + 3) * 2 + 2).toIntOrNull(16) ?: continue
+                val wor = hex.substring((off + 4) * 2, (off + 4) * 2 + 2).toIntOrNull(16) ?: continue
                 val rawSb = StringBuilder()
                 for (b in 5 downTo 0) {
                     rawSb.append(hex.substring((off + 5 + b) * 2, (off + 5 + b) * 2 + 2).uppercase())
@@ -222,22 +204,26 @@ data class SmartHealthInfo(
                 val sta = if (cur <= 10 && cur > 0) "W" else "G"
                 val idHex = "%02X".format(id)
 
-                rows.add(SmartRow(idHex, sta, formatCurWor(cur), formatCurWor(wor), "__0", rawStr, name))
+                rows.add(SmartRow(idHex, sta, formatCurWor(cur), formatCurWor(wor), "—", rawStr, name))
             }
         }
 
-        if (rows.isEmpty()) {
-            // Synthesized standard SATA rows if raw page missing
-            rows.add(SmartRow("01", "G", "100", "100", "_50", "000000000000", "读取错误率"))
-            rows.add(SmartRow("05", if ((reallocatedSectors ?: 0L) == 0L) "G" else "B", "100", "100", "_10", "%012X".format(reallocatedSectors ?: 0L), "重新分配扇区数"))
-            rows.add(SmartRow("09", "G", "_98", "_98", "__0", "%012X".format(powerHours ?: 0L), "通电时间(小时)"))
-            rows.add(SmartRow("0C", "G", "_98", "_98", "__0", "%012X".format(powerCycles ?: 0L), "通电周期计数"))
-            rows.add(SmartRow("C2", "G", "_60", "_50", "__0", "%012X".format(temperatureCelsius ?: 35), "温度"))
-            rows.add(SmartRow("C5", if ((pendingSectors ?: 0L) == 0L) "G" else "W", "100", "100", "__0", "%012X".format(pendingSectors ?: 0L), "当前待映射扇区数"))
-            rows.add(SmartRow("C6", if ((uncorrectableSectors ?: 0L) == 0L) "G" else "B", "100", "100", "__0", "%012X".format(uncorrectableSectors ?: 0L), "脱机无法纠正扇区数"))
-            rows.add(SmartRow("E7", "G", "100", "100", "_10", "%012X".format(healthPercentage ?: 100), "SSD 剩余寿命"))
-            rows.add(SmartRow("F1", "G", "100", "100", "__0", "%012X".format((totalBytesWritten ?: 0L) / 512L), "主机总计写入"))
-        }
+        // Structured counters are useful raw values, but do not contain normalized ATA values or thresholds.
+        fun field(id: String, value: Long?, name: String, status: String = if (value == 0L) "G" else "U") =
+            SmartRow(id, status, "—", "—", "—", value?.let { "%012X".format(it) } ?: "—", name)
+        val knownFields = listOf(
+            field("01", null, "读取错误率"),
+            field("05", reallocatedSectors, "重新分配扇区数", reallocatedSectors?.let { if (it == 0L) "G" else "B" } ?: "U"),
+            field("09", powerHours, "通电时间(小时)"),
+            field("0C", powerCycles, "通电周期计数"),
+            field("C2", temperatureCelsius?.toLong(), "温度"),
+            field("C5", pendingSectors, "当前待映射扇区数", pendingSectors?.let { if (it == 0L) "G" else "W" } ?: "U"),
+            field("C6", uncorrectableSectors, "脱机无法纠正扇区数", uncorrectableSectors?.let { if (it == 0L) "G" else "B" } ?: "U"),
+            field("E7", healthPercentage?.toLong(), "SSD 剩余寿命"),
+            field("F1", totalBytesWritten?.div(512L), "主机总计写入")
+        )
+        val existingIds = rows.mapTo(mutableSetOf()) { it.id }
+        rows.addAll(knownFields.filterNot { it.id in existingIds })
 
         return rows
     }

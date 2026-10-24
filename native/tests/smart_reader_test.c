@@ -4,6 +4,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -119,12 +120,85 @@ static void test_nvme_smart_log_validation(void)
 	assert(smart_test_validate_nvme_smart_log(page, sizeof(page)) < 0);
 }
 
+static void set_sata_attr(unsigned char *page, int slot, unsigned char id,
+                          unsigned char current, uint64_t raw)
+{
+	unsigned char *attr = page + 2 + slot * 12;
+	attr[0] = id;
+	attr[3] = current;
+	for (int i = 0; i < 6; i++) attr[5 + i] = (unsigned char)(raw >> (i * 8));
+}
+
+static void test_sata_missing_and_zero_metrics(void)
+{
+	unsigned char page[512] = {0};
+	char fields[512];
+	page[0] = 1; /* A non-empty attribute page with no relevant attributes. */
+	assert(smart_test_format_sata_metrics_json(page, sizeof(page), fields, sizeof(fields)) > 0);
+	assert(strstr(fields, "\"status\":\"UNCONFIRMED\"") != NULL);
+	assert(strstr(fields, "\"temperature_c\":null") != NULL);
+	assert(strstr(fields, "\"health_percent\":null") != NULL);
+	assert(strstr(fields, "\"reallocated_sectors\":null") != NULL);
+	assert(strstr(fields, "\"power_hours\":null") != NULL);
+
+	/* A vendor health/life remaining value is useful telemetry, but without
+	 * the three risk counters it is not enough to confirm overall health. */
+	set_sata_attr(page, 0, 0xE7, 90, 0);
+	assert(smart_test_format_sata_metrics_json(page, sizeof(page), fields, sizeof(fields)) > 0);
+	assert(strstr(fields, "\"status\":\"UNCONFIRMED\"") != NULL);
+	assert(strstr(fields, "\"health_percent\":90") != NULL);
+
+	memset(page, 0, sizeof(page));
+	page[0] = 1;
+	set_sata_attr(page, 0, 0xC2, 0, 0); /* A present zero temperature is real. */
+	set_sata_attr(page, 1, 0x05, 100, 0);
+	set_sata_attr(page, 2, 0xC5, 100, 0);
+	set_sata_attr(page, 3, 0xC6, 100, 0);
+	set_sata_attr(page, 4, 0x09, 100, 0);
+	assert(smart_test_format_sata_metrics_json(page, sizeof(page), fields, sizeof(fields)) > 0);
+	assert(strstr(fields, "\"status\":\"HEALTHY\"") != NULL);
+	assert(strstr(fields, "\"temperature_c\":0") != NULL);
+	assert(strstr(fields, "\"health_percent\":null") != NULL);
+	assert(strstr(fields, "\"reallocated_sectors\":0") != NULL);
+	assert(strstr(fields, "\"power_hours\":0") != NULL);
+
+	memset(page, 0xff, sizeof(page));
+	assert(smart_test_format_sata_metrics_json(page, sizeof(page), fields, sizeof(fields)) < 0);
+}
+
+static void test_missing_device_error_status(void)
+{
+	const char *base = access("/data/local/tmp", W_OK) == 0 ? "/data/local/tmp" : "/tmp";
+	char root[128], missing[256], json[512];
+	snprintf(root, sizeof(root), "%s/smart-error-XXXXXX", base);
+	assert(mkdtemp(root) != NULL);
+	snprintf(missing, sizeof(missing), "%s/no-device", root);
+	assert(read_smart_json(missing, json, sizeof(json)) < 0);
+	assert(strstr(json, "\"status\":\"UNCONFIRMED\"") != NULL);
+	assert(strstr(json, "\"reason\":\"Cannot stat device:") != NULL);
+	assert(rmdir(root) == 0);
+}
+
+static void test_nvme_temperature_missing_and_zero(void)
+{
+	unsigned char page[512] = {0};
+	char temperature[24];
+	assert(smart_test_format_nvme_temperature_json(page, sizeof(page), temperature, sizeof(temperature)) == 4);
+	assert(strcmp(temperature, "null") == 0);
+	page[1] = 0x11; page[2] = 0x01; /* 273 K */
+	assert(smart_test_format_nvme_temperature_json(page, sizeof(page), temperature, sizeof(temperature)) == 1);
+	assert(strcmp(temperature, "0") == 0);
+}
+
 int main(void)
 {
 	test_sysfs_usb_allowlist();
 	test_e4_commands_and_identity();
 	test_sg_completion_validation();
 	test_nvme_smart_log_validation();
+	test_sata_missing_and_zero_metrics();
+	test_nvme_temperature_missing_and_zero();
+	test_missing_device_error_status();
 	puts("smart_reader_test: all tests passed");
 	return 0;
 }

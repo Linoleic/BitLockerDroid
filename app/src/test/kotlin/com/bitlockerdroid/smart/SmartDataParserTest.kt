@@ -47,16 +47,16 @@ class SmartDataParserTest {
         val table = info.formattedRawData
         assertTrue(table.contains("-- S.M.A.R.T. --------------------------------------------------------------"))
         assertTrue(table.contains("ID Sta Cur Wor Thr RawValues    AttributeName (标题含义见说明)"))
-        assertTrue(table.contains("01  G  __0 __0 __0 000000000000 严重警告标志"))
-        assertTrue(table.contains("02  G  __0 __0 __0 00000000013A 温度"))
-        assertTrue(table.contains("03  G  __0 __0 __0 000000000063 可用备用空间"))
-        assertTrue(table.contains("04  G  __0 __0 __0 000000000001 可用备用空间阈值"))
-        assertTrue(table.contains("05  G  __0 __0 __0 000000000001 已用寿命百分比"))
-        assertTrue(table.contains("0B  G  __0 __0 __0 000000000185 通电次数"))
-        assertTrue(table.contains("0C  G  __0 __0 __0 000000000288 通电时间(小时)"))
-        assertTrue(table.contains("0D  G  __0 __0 __0 000000000099 不安全关机计数"))
-        assertTrue(table.contains("0E  B  __0 __0 __0 00000000000E 媒体与数据完整性错误计数"))
-        assertTrue(table.contains("0F  W  __0 __0 __0 000000000005 错误日志项数"))
+        assertTrue(table.contains("01  G  — — — 000000000000 严重警告标志"))
+        assertTrue(table.contains("02  G  — — — 000000000029 温度"))
+        assertTrue(table.contains("03  G  — — — 000000000063 可用备用空间"))
+        assertTrue(table.contains("04  G  — — — 000000000001 可用备用空间阈值"))
+        assertTrue(table.contains("05  G  — — — 000000000001 已用寿命百分比"))
+        assertTrue(table.contains("0B  U  — — — 000000000185 通电次数"))
+        assertTrue(table.contains("0C  U  — — — 000000000288 通电时间(小时)"))
+        assertTrue(table.contains("0D  U  — — — 000000000099 不安全关机计数"))
+        assertTrue(table.contains("0E  B  — — — 00000000000E 媒体与数据完整性错误计数"))
+        assertTrue(table.contains("0F  W  — — — 000000000005 错误日志项数"))
         assertTrue(table.contains("标题含义说明:"))
         assertTrue(table.contains(" Sta: 状态(G: 良好 | W: 警告 | B: 损坏 | U: 未知)"))
         assertTrue(table.contains(" Cur: 当前值"))
@@ -98,7 +98,7 @@ class SmartDataParserTest {
     }
 
     @Test
-    fun testParseSataSmartJsonAndSynthesizeTable() {
+    fun testParseSataSmartJsonAndShowUnknownRawAtaFields() {
         val json = """
             {
                 "supported": true,
@@ -122,8 +122,11 @@ class SmartDataParserTest {
         assertTrue(info.isSupported)
         assertEquals("SATA SSD", info.diskType)
         val table = info.formattedRawData
-        assertTrue(table.contains("01  G  100 100 _50 000000000000 读取错误率"))
-        assertTrue(table.contains("05  G  100 100 _10 000000000000 重新分配扇区数"))
-        assertTrue(table.contains("E7  G  100 100 _10 000000000062 SSD 剩余寿命"))
+        assertTrue(table.contains("01  U  — — — — 读取错误率"))
+        assertTrue(table.contains("05  G  — — — 000000000000 重新分配扇区数"))
+        assertTrue(table.contains("E7  U  — — — 000000000062 SSD 剩余寿命"))
+        assertTrue(table.contains("C2  U  — — — 000000000020 温度"))
+        assertFalse(table.contains("100"))
+        assertFalse(table.contains("000000000000 通电时间"))
     }
 }
