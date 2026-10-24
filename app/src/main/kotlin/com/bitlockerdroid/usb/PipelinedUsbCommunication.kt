@@ -4,8 +4,6 @@ import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.util.Log
-import me.jahnen.libaums.core.ErrNo
-import me.jahnen.libaums.core.usb.PipeException
 import me.jahnen.libaums.core.usb.UsbCommunication
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -20,7 +18,6 @@ class PipelinedUsbCommunication(
 
     companion object {
         private const val TAG = "PipelinedUsbComm"
-        private const val CHUNK_SIZE = 16 * 1024 // 16 KB matches Linux MAX_USBFS_BUFFER_SIZE
         private const val TRANSFER_TIMEOUT = 5000
 
         init {
@@ -32,6 +29,9 @@ class PipelinedUsbCommunication(
         }
 
         @JvmStatic
+        private external fun nativeBulkTransfer(fd: Int, endpoint: Int, bytes: ByteArray, length: Int, timeoutMs: Int): Int
+
+        @JvmStatic
         private external fun nativeResetDevice(fd: Int): Boolean
 
         @JvmStatic
@@ -41,8 +41,20 @@ class PipelinedUsbCommunication(
     @Volatile
     private var isClosed = false
 
-    private val inTransferBuffer = ByteArray(CHUNK_SIZE)
-    private val outTransferBuffer = ByteArray(CHUNK_SIZE)
+    private var resetStage = 0
+    private val transport = UsbBotTransport(
+        transfer = { input, bytes, length, timeout ->
+            val endpoint = if (input) inEndpoint.address else outEndpoint.address
+            val started = System.nanoTime()
+            val result = nativeBulkTransfer(deviceConnection.fileDescriptor, endpoint, bytes, length, timeout)
+            if (result <= 0) Log.w(TAG, "bulk ${if (input) "IN" else "OUT"}: endpoint=$endpoint requested=$length " +
+                "result=$result errno=${if (result < 0) -result else 0} elapsedMs=${(System.nanoTime() - started) / 1_000_000} timeoutMs=$timeout")
+            result
+        },
+        clearInHalt = { nativeClearHalt(deviceConnection.fileDescriptor, inEndpoint.address) },
+        log = { Log.w(TAG, it) }
+    )
+    internal val isTransportHealthy: Boolean get() = transport.healthy
 
     init {
         val claimed = deviceConnection.claimInterface(usbInterface, true)
@@ -58,6 +70,7 @@ class PipelinedUsbCommunication(
         Log.i(TAG, "Selected BOT interface ${usbInterface.id} alternate ${usbInterface.alternateSetting}")
     }
 
+    @Synchronized
     override fun controlTransfer(
         requestType: Int,
         request: Int,
@@ -67,77 +80,30 @@ class PipelinedUsbCommunication(
         length: Int
     ): Int {
         if (isClosed) throw IOException("Device connection is closed")
-        return deviceConnection.controlTransfer(requestType, request, value, index, buffer, length, TRANSFER_TIMEOUT)
+        val result = deviceConnection.controlTransfer(requestType, request, value, index, buffer, length, TRANSFER_TIMEOUT)
+        if (result == 0) {
+            if (requestType == 0x21 && request == 0xff) resetStage = 1
+            if (requestType == 0x02 && request == 1 && value == 0 && resetStage != 0) {
+                if (index == inEndpoint.address) resetStage = resetStage or 2
+                if (index == outEndpoint.address) resetStage = resetStage or 4
+                if (resetStage == 7) { transport.resetAfterBotRecovery(); resetStage = 0 }
+            }
+        }
+        return result
     }
 
     @Synchronized
     @Throws(IOException::class)
     override fun bulkInTransfer(dest: ByteBuffer): Int {
         if (isClosed) throw IOException("Device connection is closed")
-        if (!dest.hasRemaining()) return 0
-        return transferSingleIn(dest, minOf(dest.remaining(), CHUNK_SIZE))
-    }
-
-    private fun transferSingleIn(dest: ByteBuffer, length: Int): Int {
-        val requested = minOf(length, CHUNK_SIZE)
-        val started = System.nanoTime()
-        val result = deviceConnection.bulkTransfer(
-            inEndpoint,
-            inTransferBuffer,
-            0,
-            requested,
-            TRANSFER_TIMEOUT
-        )
-        val transferred = validateTransferResult("bulk IN", inEndpoint.address, result, requested, started)
-        dest.put(inTransferBuffer, 0, transferred)
-        return transferred
+        return transport.bulkIn(dest)
     }
 
     @Synchronized
     @Throws(IOException::class)
     override fun bulkOutTransfer(src: ByteBuffer): Int {
         if (isClosed) throw IOException("Device connection is closed")
-        if (!src.hasRemaining()) return 0
-        return transferSingleOut(src, minOf(src.remaining(), CHUNK_SIZE))
-    }
-
-    private fun transferSingleOut(src: ByteBuffer, length: Int): Int {
-        val requested = minOf(length, CHUNK_SIZE)
-        src.duplicate().get(outTransferBuffer, 0, requested)
-        val started = System.nanoTime()
-        val result = deviceConnection.bulkTransfer(
-            outEndpoint,
-            outTransferBuffer,
-            0,
-            requested,
-            TRANSFER_TIMEOUT
-        )
-        val transferred = validateTransferResult("bulk OUT", outEndpoint.address, result, requested, started)
-        src.position(src.position() + transferred)
-        return transferred
-    }
-
-    private fun validateTransferResult(direction: String, endpoint: Int, result: Int, requested: Int, started: Long): Int {
-        if (result <= 0 || result > requested) {
-            Log.e(TAG, "$direction failed: endpoint=$endpoint requested=$requested result=$result " +
-                "elapsedMs=${(System.nanoTime() - started) / 1_000_000} timeoutMs=$TRANSFER_TIMEOUT " +
-                "errno=${ErrNo.errno} ${ErrNo.errstr}")
-        }
-        if (result < 0) {
-            when (ErrNo.errno) {
-                32 /* EPIPE */ -> throw PipeException()
-                else -> throw IOException(
-                    "$direction bulkTransfer failed (result=$result, errno=${ErrNo.errno} ${ErrNo.errstr})"
-                )
-            }
-        }
-        if (result == 0) {
-            throw IOException("$direction bulkTransfer made no progress (requested=$requested)")
-        }
-        if (result > requested) {
-            throw IOException("$direction bulkTransfer exceeded request (result=$result, requested=$requested)")
-        }
-        return result
+        return transport.bulkOut(src)
     }
 
     override fun resetDevice() {

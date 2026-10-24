@@ -7,6 +7,28 @@
 
 #define TAG "native_usb_ioctl"
 
+/* Return -errno in the same JNI call as the ioctl. A later errno getter after
+ * Android's bulkTransfer() cannot reliably recover the original failure. */
+JNIEXPORT jint JNICALL
+Java_com_bitlockerdroid_usb_PipelinedUsbCommunication_nativeBulkTransfer(
+        JNIEnv *env, jclass clazz, jint fd, jint endpoint, jbyteArray bytes,
+        jint length, jint timeout_ms) {
+    (void)clazz;
+    if (!bytes || length <= 0 || length > 16384 || timeout_ms <= 0 ||
+            length > (*env)->GetArrayLength(env, bytes)) return -EINVAL;
+    jbyte *data = (*env)->GetByteArrayElements(env, bytes, NULL);
+    if (!data) return -ENOMEM;
+    struct usbdevfs_bulktransfer request = {
+        .ep = (unsigned int)endpoint, .len = (unsigned int)length,
+        .timeout = (unsigned int)timeout_ms, .data = data
+    };
+    int result = ioctl(fd, USBDEVFS_BULK, &request);
+    int saved_errno = errno;
+    (*env)->ReleaseByteArrayElements(env, bytes, data,
+        (endpoint & 0x80) && result > 0 ? 0 : JNI_ABORT);
+    return result < 0 ? -(saved_errno ? saved_errno : EIO) : result;
+}
+
 static jboolean do_reset(int fd) {
     int ret = ioctl(fd, USBDEVFS_RESET);
     if (ret < 0) {
