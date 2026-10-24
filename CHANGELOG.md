@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [v1.2.0] - 2026-10-24
+
 ### 中文
 
 #### 新增
@@ -384,7 +386,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Unlock with passwords or 48-digit recovery keys in root or non-root USB mode.
 - Provide SAF access, virtual mounting, benchmarks, read-only settings, and light/dark themes.
 
-[Unreleased]: https://github.com/Linoleic/BitLockerDroid/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/Linoleic/BitLockerDroid/compare/v1.2.0...HEAD
+[v1.2.0]: https://github.com/Linoleic/BitLockerDroid/compare/v1.1.1...v1.2.0
 [v1.1.1]: https://github.com/Linoleic/BitLockerDroid/compare/v1.1.0...v1.1.1
 [v1.1.0]: https://github.com/Linoleic/BitLockerDroid/compare/v1.0.6...v1.1.0
 [v1.0.6]: https://github.com/Linoleic/BitLockerDroid/compare/v1.0.5...v1.0.6
