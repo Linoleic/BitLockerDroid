@@ -33,6 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - 免 Root 写入实际完成后才返回成功，写盘失败后不再复用异常通道。
 - USB 命令等待原状态响应后才继续；状态超时不再重发整条写命令，异常通道不再反复初始化。
 - 切换模式只同步并关闭卷，保持磁盘在线；安全弹出仍执行停盘保护。
+- 免 Root 停盘命令失败时正确提示，不再误报已停盘、可安全拔出。
 - 卷列表只读取缓存的剩余空间，避免遍历大容量卷时阻塞刷新；尚无缓存时暂不显示剩余空间。
 - 修复 Root 扫描时因分区路径别名变化而误关已解锁卷的问题。
 - 修复已验证 RTL9210 PSSD 从免 Root 切到 Root 时识别超时的问题；安全同步并关闭卷后再交回内核驱动。
@@ -79,6 +80,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Acknowledge non-root writes only after completion and stop reusing a failed I/O channel.
 - Wait for the original USB command status before continuing. Do not replay an entire write after a status timeout or repeatedly initialize a failed channel.
 - Flush and close volumes during mode changes while keeping the disk online. Keep spindown protection for explicit ejects.
+- Report failed non-root spindown commands instead of claiming that the disk has stopped and is safe to unplug.
 - Use cached free space in volume lists to avoid blocking refreshes on large volumes. Leave free space unavailable until cached.
 - Keep unlocked Root volumes open when vold publishes an alias for the same USB partition.
 - Fix detection timeouts when handing a verified RTL9210 PSSD from non-root mode back to the kernel, after safely flushing and closing its volumes.

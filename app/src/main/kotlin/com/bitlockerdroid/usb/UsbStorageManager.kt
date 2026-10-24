@@ -982,6 +982,7 @@ object UsbStorageManager {
                 val stopSuccess = sendScsiCommandNoData(comm, stopCdb, 0x1002)
                 if (!stopSuccess) {
                     Log.w(TAG, "spindownDevice: SCSI START STOP UNIT returned error or unsupported on USB device $devId")
+                    return false
                 }
             }
         } catch (e: Throwable) {
