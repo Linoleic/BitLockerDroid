@@ -3,12 +3,16 @@ package com.bitlockerdroid.service
 import java.util.concurrent.locks.ReentrantReadWriteLock
 
 /** Coordinates session-producing work with exclusive closure and mode transitions. */
-internal class SessionTransitionGate {
-    private val lock = ReentrantReadWriteLock(true)
+internal class SessionTransitionGate(
+    private val lock: ReentrantReadWriteLock = ReentrantReadWriteLock(true)
+) {
     private val prepareLock = Any()
 
     @Volatile
     private var admissionClosed = false
+
+    @Volatile
+    private var admissionEpoch = 0L
 
     sealed class Admission<out T> {
         data class Accepted<T>(val value: T) : Admission<T>()
@@ -16,13 +20,14 @@ internal class SessionTransitionGate {
     }
 
     fun <T> admit(block: () -> T): Admission<T> {
+        val epoch = admissionEpoch
         if (admissionClosed) return Admission.Rejected
         val read = lock.readLock()
         read.lock()
         try {
             // Check again after locking: a transition may have started while this
             // caller was waiting behind the writer.
-            if (admissionClosed) return Admission.Rejected
+            if (admissionClosed || epoch != admissionEpoch) return Admission.Rejected
             return Admission.Accepted(block())
         } finally {
             read.unlock()
@@ -40,6 +45,7 @@ internal class SessionTransitionGate {
         // Publish closure before waiting for current admissions to drain. New
         // callers can now reject immediately instead of joining the drain.
         admissionClosed = true
+        admissionEpoch++
         val write = lock.writeLock()
         write.lock()
         var prepared = false

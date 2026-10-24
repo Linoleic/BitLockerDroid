@@ -9,14 +9,51 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.ReentrantReadWriteLock
 
 class SessionTransitionGateTest {
+    @Test
+    fun queuedUnlockFromBeforeClosureCannotReopenTheDeviceAfterward() {
+        val readWaiting = CountDownLatch(1)
+        val continueRead = CountDownLatch(1)
+        val intercept = AtomicBoolean(true)
+        val rw = object : ReentrantReadWriteLock(true) {
+            private val observedRead = object : ReadLock(this) {
+                override fun lock() {
+                    if (intercept.compareAndSet(true, false)) {
+                        readWaiting.countDown()
+                        check(continueRead.await(5, TimeUnit.SECONDS))
+                    }
+                    super.lock()
+                }
+            }
+            override fun readLock(): ReadLock = observedRead
+        }
+        val gate = SessionTransitionGate(rw)
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val queued = executor.submit(Callable {
+                gate.admit { throw AssertionError("stale unlock must not reopen the device") }
+            })
+            assertTrue(readWaiting.await(5, TimeUnit.SECONDS))
+            gate.withAdmissionsPaused { Unit }
+            continueRead.countDown()
+            assertTrue(queued.get(5, TimeUnit.SECONDS) is SessionTransitionGate.Admission.Rejected)
+            assertTrue(gate.admit { "new manual unlock" } is SessionTransitionGate.Admission.Accepted)
+        } finally {
+            continueRead.countDown()
+            executor.shutdownNow()
+        }
+    }
+
     @Test
     fun temporaryClosureDrainsExistingWorkAndReopensForManualUnlock() {
         val gate = SessionTransitionGate()
         val executor = Executors.newFixedThreadPool(2)
         val admitted = CountDownLatch(1)
         val finishAdmission = CountDownLatch(1)
+        val closureStarted = CountDownLatch(1)
         val closureEntered = CountDownLatch(1)
         val finishClosure = CountDownLatch(1)
         try {
@@ -28,19 +65,14 @@ class SessionTransitionGateTest {
             })
             assertTrue(admitted.await(5, TimeUnit.SECONDS))
             val closure = executor.submit(Callable {
+                closureStarted.countDown()
                 gate.withAdmissionsPaused {
                     closureEntered.countDown()
                     check(finishClosure.await(5, TimeUnit.SECONDS))
                     2
                 }
             })
-            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
-            var rejected = false
-            while (!rejected && System.nanoTime() < deadline) {
-                rejected = gate.admit { Unit } is SessionTransitionGate.Admission.Rejected
-                if (!rejected) Thread.yield()
-            }
-            assertTrue(rejected)
+            assertTrue(closureStarted.await(5, TimeUnit.SECONDS))
             assertFalse(closureEntered.await(100, TimeUnit.MILLISECONDS))
             finishAdmission.countDown()
             active.get(5, TimeUnit.SECONDS)
