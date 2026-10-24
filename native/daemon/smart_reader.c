@@ -186,11 +186,10 @@ static int validate_nvme_smart_log(const unsigned char *page, size_t len) {
 
 typedef struct {
     int temperature_c, has_temperature;
-    int health_percent, has_health;
     uint64_t reallocated_sectors, pending_sectors, uncorrectable_sectors;
-    uint64_t power_cycles, power_hours, total_bytes_written;
+    uint64_t power_cycles, power_hours;
     int has_reallocated, has_pending, has_uncorrectable;
-    int has_power_cycles, has_power_hours, has_total_bytes_written;
+    int has_power_cycles, has_power_hours;
     const char *status;
 } sata_metrics;
 
@@ -209,7 +208,6 @@ static int extract_sata_metrics(const unsigned char *page, size_t len, sata_metr
         const unsigned char *attr = page + 2 + i * 12;
         int id = attr[0];
         if (id == 0) continue;
-        int current = attr[3];
         uint64_t raw = (uint64_t)attr[5] | ((uint64_t)attr[6] << 8) |
                        ((uint64_t)attr[7] << 16) | ((uint64_t)attr[8] << 24) |
                        ((uint64_t)attr[9] << 32) | ((uint64_t)attr[10] << 40);
@@ -219,20 +217,12 @@ static int extract_sata_metrics(const unsigned char *page, size_t len, sata_metr
         else if (id == 0xC2 || id == 0xBE) { m->temperature_c = (int)(raw & 0xff); m->has_temperature = 1; }
         else if (id == 0xC5) { m->pending_sectors = raw; m->has_pending = 1; }
         else if (id == 0xC6) { m->uncorrectable_sectors = raw; m->has_uncorrectable = 1; }
-        else if (id == 0xE7 || id == 0xA9 || id == 0xB1 || id == 0xE8) {
-            if (current > 0 && current <= 100) { m->health_percent = current; m->has_health = 1; }
-            else if (raw > 0 && raw <= 100) { m->health_percent = (int)raw; m->has_health = 1; }
-        } else if (id == 0xF1) {
-            m->total_bytes_written = raw * 512ULL; m->has_total_bytes_written = 1;
-        }
+        /* Vendor-specific E7/A9/B1/E8 and F1 semantics vary by drive. */
     }
     int has_bad = (m->has_reallocated && m->reallocated_sectors > 0) ||
                   (m->has_pending && m->pending_sectors > 0) ||
                   (m->has_uncorrectable && m->uncorrectable_sectors > 0);
-    if (m->has_uncorrectable && m->uncorrectable_sectors > 0) m->status = "CRITICAL";
-    else if (has_bad) m->status = "WARNING";
-    else if (m->has_reallocated && m->has_pending && m->has_uncorrectable) m->status = "HEALTHY";
-    else m->status = "UNCONFIRMED";
+    m->status = has_bad ? "WARNING" : "UNCONFIRMED";
     return 0;
 }
 
@@ -333,21 +323,20 @@ static int format_sata_metrics_json(const unsigned char *page, size_t len,
     sata_metrics metrics;
     sata_metrics *m = &metrics;
     if (!out || out_max == 0 || extract_sata_metrics(page, len, m) != 0) return -1;
-    char temp[24], health[24], reallocated[24], pending[24], uncorrectable[24];
-    char cycles[24], hours[24], written[24];
+    char temp[24], reallocated[24], pending[24], uncorrectable[24];
+    char cycles[24], hours[24];
     const char *temp_s = m->has_temperature ? format_optional_u64((uint64_t)m->temperature_c, 1, temp, sizeof(temp)) : "null";
-    const char *health_s = m->has_health ? format_optional_u64((uint64_t)m->health_percent, 1, health, sizeof(health)) : "null";
     int n = snprintf(out, out_max,
         "\"status\":\"%s\",\"temperature_c\":%s,\"health_percent\":%s,"
         "\"reallocated_sectors\":%s,\"pending_sectors\":%s,\"uncorrectable_sectors\":%s,"
         "\"power_cycles\":%s,\"power_hours\":%s,\"total_bytes_written\":%s",
-        m->status, temp_s, health_s,
+        m->status, temp_s, "null",
         format_optional_u64(m->reallocated_sectors, m->has_reallocated, reallocated, sizeof(reallocated)),
         format_optional_u64(m->pending_sectors, m->has_pending, pending, sizeof(pending)),
         format_optional_u64(m->uncorrectable_sectors, m->has_uncorrectable, uncorrectable, sizeof(uncorrectable)),
         format_optional_u64(m->power_cycles, m->has_power_cycles, cycles, sizeof(cycles)),
         format_optional_u64(m->power_hours, m->has_power_hours, hours, sizeof(hours)),
-        format_optional_u64(m->total_bytes_written, m->has_total_bytes_written, written, sizeof(written)));
+        "null");
     return n >= 0 && (size_t)n < out_max ? n : -1;
 }
 

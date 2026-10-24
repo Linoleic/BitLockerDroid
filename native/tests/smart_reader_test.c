@@ -141,12 +141,16 @@ static void test_sata_missing_and_zero_metrics(void)
 	assert(strstr(fields, "\"reallocated_sectors\":null") != NULL);
 	assert(strstr(fields, "\"power_hours\":null") != NULL);
 
-	/* A vendor health/life remaining value is useful telemetry, but without
-	 * the three risk counters it is not enough to confirm overall health. */
+	/* Vendor attributes have no shared health or byte-count meaning. */
 	set_sata_attr(page, 0, 0xE7, 90, 0);
+	set_sata_attr(page, 1, 0xA9, 80, 0);
+	set_sata_attr(page, 2, 0xB1, 70, 0);
+	set_sata_attr(page, 3, 0xE8, 60, 0);
+	set_sata_attr(page, 4, 0xF1, 100, 1234);
 	assert(smart_test_format_sata_metrics_json(page, sizeof(page), fields, sizeof(fields)) > 0);
 	assert(strstr(fields, "\"status\":\"UNCONFIRMED\"") != NULL);
-	assert(strstr(fields, "\"health_percent\":90") != NULL);
+	assert(strstr(fields, "\"health_percent\":null") != NULL);
+	assert(strstr(fields, "\"total_bytes_written\":null") != NULL);
 
 	memset(page, 0, sizeof(page));
 	page[0] = 1;
@@ -156,11 +160,17 @@ static void test_sata_missing_and_zero_metrics(void)
 	set_sata_attr(page, 3, 0xC6, 100, 0);
 	set_sata_attr(page, 4, 0x09, 100, 0);
 	assert(smart_test_format_sata_metrics_json(page, sizeof(page), fields, sizeof(fields)) > 0);
-	assert(strstr(fields, "\"status\":\"HEALTHY\"") != NULL);
+	assert(strstr(fields, "\"status\":\"UNCONFIRMED\"") != NULL);
 	assert(strstr(fields, "\"temperature_c\":0") != NULL);
 	assert(strstr(fields, "\"health_percent\":null") != NULL);
 	assert(strstr(fields, "\"reallocated_sectors\":0") != NULL);
 	assert(strstr(fields, "\"power_hours\":0") != NULL);
+	assert(strstr(fields, "\"uncorrectable_sectors\":0") != NULL);
+
+	set_sata_attr(page, 3, 0xC6, 100, 1);
+	assert(smart_test_format_sata_metrics_json(page, sizeof(page), fields, sizeof(fields)) > 0);
+	assert(strstr(fields, "\"status\":\"WARNING\"") != NULL);
+	assert(strstr(fields, "\"uncorrectable_sectors\":1") != NULL);
 
 	memset(page, 0xff, sizeof(page));
 	assert(smart_test_format_sata_metrics_json(page, sizeof(page), fields, sizeof(fields)) < 0);
