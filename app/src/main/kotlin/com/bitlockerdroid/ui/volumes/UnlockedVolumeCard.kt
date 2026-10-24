@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,6 +35,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bitlockerdroid.R
 import com.bitlockerdroid.service.UnlockedVolume
+import com.bitlockerdroid.service.UnlockManager
+import com.bitlockerdroid.service.VolumeOperationProgress
+import com.bitlockerdroid.service.VolumeWriteState
 import com.bitlockerdroid.service.VirtualStorageMountManager
 import com.bitlockerdroid.service.VirtualStorageMountManager.VirtualMountInfo
 import com.bitlockerdroid.ui.theme.SuccessGreen
@@ -68,12 +72,17 @@ fun UnlockedVolumeCard(
     onDiagnosticClick: () -> Unit,
     onDisasterClick: () -> Unit,
     isEjecting: Boolean = false,
+    operation: VolumeOperationProgress? = null,
     isCompact: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     var detailsExpanded by remember { mutableStateOf(false) }
+    val pendingWritesFlow = UnlockManager.get(volume.devicePath)?.pendingWrites?.state
+    val pendingWritesState = pendingWritesFlow?.collectAsState()
+        ?: remember(volume.devicePath) { mutableStateOf(VolumeWriteState.Snapshot()) }
+    val pendingWrites by pendingWritesState
 
     val effectivePainters = painters ?: rememberVolumeCardPainters()
     val copyPainter = effectivePainters.copy
@@ -169,6 +178,12 @@ fun UnlockedVolumeCard(
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 )
             }
+
+            operation?.let {
+                Spacer(modifier = Modifier.height(8.dp))
+                VolumeOperationStatus(it)
+            }
+            SafWriteStatus(pendingWrites)
 
             // Full GUID Section with copy button
             if (!volume.guid.isNullOrBlank()) {
@@ -1045,7 +1060,7 @@ fun UnlockedVolumeCard(
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = stringResource(R.string.safe_ejecting),
+                                    text = stringResource(if (operation?.kind == com.bitlockerdroid.service.VolumeOperationKind.CLOSE) R.string.volume_closing else R.string.safe_ejecting),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -1111,7 +1126,7 @@ fun UnlockedVolumeCard(
                                 color = MaterialTheme.colorScheme.primary
                             )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(text = stringResource(R.string.safe_ejecting))
+                            Text(text = stringResource(if (operation?.kind == com.bitlockerdroid.service.VolumeOperationKind.CLOSE) R.string.volume_closing else R.string.safe_ejecting))
                         } else {
                             Icon(
                                 painter = ejectPainter,

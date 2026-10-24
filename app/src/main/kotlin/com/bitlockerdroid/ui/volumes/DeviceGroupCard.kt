@@ -28,6 +28,8 @@ import com.bitlockerdroid.R
 import com.bitlockerdroid.service.DetectedVolume
 import com.bitlockerdroid.service.UnencryptedVolume
 import com.bitlockerdroid.service.UnlockedVolume
+import com.bitlockerdroid.service.VolumeOperationOutcome
+import com.bitlockerdroid.service.VolumeOperationProgress
 import com.bitlockerdroid.service.VirtualStorageMountManager.VirtualMountInfo
 import com.bitlockerdroid.share.LanShareState
 import com.bitlockerdroid.util.DeviceIdentity
@@ -59,12 +61,18 @@ fun DeviceGroupCard(
     onSmartHealthClick: (String) -> Unit,
     onEjectGroup: ((List<String>) -> Unit)? = null,
     onCloseGroup: ((String, List<String>) -> Unit)? = null,
+    operationStates: Map<String, VolumeOperationProgress> = emptyMap(),
     modifier: Modifier = Modifier
 ) {
     var isExpanded by remember { mutableStateOf(true) }
     var showCloseVolumesConfirm by remember(group.deviceKey) { mutableStateOf(false) }
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
     val context = androidx.compose.ui.platform.LocalContext.current
+    val diskOperation = remember(operationStates, group.physicalDiskPath) {
+        operationStates.values
+            .filter { it.diskPath == group.physicalDiskPath && it.outcome == VolumeOperationOutcome.RUNNING }
+            .maxByOrNull { it.id }
+    }
 
     var isSmartSupported by remember(group.deviceKey) {
         mutableStateOf(com.bitlockerdroid.smart.SmartHealthManager.getCachedSupport(group.deviceKey) ?: false)
@@ -190,8 +198,8 @@ fun DeviceGroupCard(
                         // Eject All Action Button (Shown when group contains unlocked volumes)
                         if (group.hasUnlocked && onEjectGroup != null) {
                             val unlockedPaths = remember(group.unlockedVolumes) { group.unlockedVolumes.map { it.devicePath } }
-                            val isAnyEjecting = remember(unlockedPaths, ejectingPaths, group.physicalDiskPath) {
-                                group.physicalDiskPath in ejectingPaths || unlockedPaths.any { ejectingPaths.contains(it) }
+                            val isAnyEjecting = remember(unlockedPaths, ejectingPaths, group.physicalDiskPath, diskOperation) {
+                                diskOperation != null || group.physicalDiskPath in ejectingPaths || unlockedPaths.any { ejectingPaths.contains(it) }
                             }
                             AppButton(
                                 onClick = { onEjectGroup(unlockedPaths) },
@@ -201,7 +209,7 @@ fun DeviceGroupCard(
                                 contentColor = MaterialTheme.colorScheme.onErrorContainer,
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                             ) {
-                                if (isAnyEjecting) {
+                                if (isAnyEjecting && diskOperation?.kind == com.bitlockerdroid.service.VolumeOperationKind.EJECT) {
                                     CircularProgressIndicator(
                                         modifier = Modifier.size(16.dp),
                                         strokeWidth = 2.dp,
@@ -234,7 +242,7 @@ fun DeviceGroupCard(
 
                         if (group.hasUnlocked && onCloseGroup != null) {
                             val unlockedPaths = remember(group.unlockedVolumes) { group.unlockedVolumes.map { it.devicePath } }
-                            val isAnyClosing = group.physicalDiskPath in ejectingPaths || unlockedPaths.any { it in ejectingPaths }
+                            val isAnyClosing = diskOperation != null || group.physicalDiskPath in ejectingPaths || unlockedPaths.any { it in ejectingPaths }
                             AppButton(
                                 onClick = { showCloseVolumesConfirm = true },
                                 enabled = !isAnyClosing,
@@ -243,7 +251,7 @@ fun DeviceGroupCard(
                                 contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                             ) {
-                                if (isAnyClosing) {
+                                if (isAnyClosing && diskOperation?.kind == com.bitlockerdroid.service.VolumeOperationKind.CLOSE) {
                                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(stringResource(R.string.volume_closing), style = MaterialTheme.typography.labelMedium)
@@ -370,8 +378,8 @@ fun DeviceGroupCard(
 
                             if (group.hasUnlocked && onEjectGroup != null) {
                                 val unlockedPaths = remember(group.unlockedVolumes) { group.unlockedVolumes.map { it.devicePath } }
-                                val isAnyEjecting = remember(unlockedPaths, ejectingPaths, group.physicalDiskPath) {
-                                    group.physicalDiskPath in ejectingPaths || unlockedPaths.any { ejectingPaths.contains(it) }
+                                val isAnyEjecting = remember(unlockedPaths, ejectingPaths, group.physicalDiskPath, diskOperation) {
+                                    diskOperation != null || group.physicalDiskPath in ejectingPaths || unlockedPaths.any { ejectingPaths.contains(it) }
                                 }
                                 AppButton(
                                     onClick = { onEjectGroup(unlockedPaths) },
@@ -381,7 +389,7 @@ fun DeviceGroupCard(
                                     contentColor = MaterialTheme.colorScheme.onErrorContainer,
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                                 ) {
-                                    if (isAnyEjecting) {
+                                    if (isAnyEjecting && diskOperation?.kind == com.bitlockerdroid.service.VolumeOperationKind.EJECT) {
                                         CircularProgressIndicator(
                                             modifier = Modifier.size(15.dp),
                                             strokeWidth = 2.dp,
@@ -412,7 +420,7 @@ fun DeviceGroupCard(
 
                             if (group.hasUnlocked && onCloseGroup != null) {
                                 val unlockedPaths = remember(group.unlockedVolumes) { group.unlockedVolumes.map { it.devicePath } }
-                                val isAnyClosing = group.physicalDiskPath in ejectingPaths || unlockedPaths.any { it in ejectingPaths }
+                                val isAnyClosing = diskOperation != null || group.physicalDiskPath in ejectingPaths || unlockedPaths.any { it in ejectingPaths }
                                 AppButton(
                                     onClick = { showCloseVolumesConfirm = true },
                                     enabled = !isAnyClosing,
@@ -421,7 +429,7 @@ fun DeviceGroupCard(
                                     contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                                 ) {
-                                    if (isAnyClosing) {
+                                    if (isAnyClosing && diskOperation?.kind == com.bitlockerdroid.service.VolumeOperationKind.CLOSE) {
                                         CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp)
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(stringResource(R.string.volume_closing), style = MaterialTheme.typography.labelMedium)
@@ -435,6 +443,8 @@ fun DeviceGroupCard(
                 }
             }
         }
+
+        diskOperation?.let { VolumeOperationStatus(it) }
 
         // Child Partitions List
         AnimatedVisibility(visible = isExpanded) {
@@ -514,7 +524,8 @@ fun DeviceGroupCard(
                                 onRepairClick = onRepair,
                                 onDiagnosticClick = onDiagnostic,
                                 onDisasterClick = onDisaster,
-                                isEjecting = ejectingPaths.contains(volume.devicePath),
+                                isEjecting = ejectingPaths.contains(volume.devicePath) || operationStates[volume.devicePath]?.outcome == VolumeOperationOutcome.RUNNING,
+                                operation = operationStates[volume.devicePath]?.takeIf { it.outcome == VolumeOperationOutcome.RUNNING },
                                 isCompact = isCompact
                             )
                         }

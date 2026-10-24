@@ -23,6 +23,8 @@ import com.bitlockerdroid.R
 import com.bitlockerdroid.service.DetectedVolume
 import com.bitlockerdroid.service.UnencryptedVolume
 import com.bitlockerdroid.service.UnlockedVolume
+import com.bitlockerdroid.service.UnlockManager
+import com.bitlockerdroid.service.VolumeOperationOutcome
 import com.bitlockerdroid.service.VirtualStorageMountManager
 import com.bitlockerdroid.ui.dialogs.BenchmarkDialog
 import com.bitlockerdroid.ui.dialogs.DisasterRecoveryDialog
@@ -55,6 +57,15 @@ fun VolumesTabContent(
 ) {
     val activeMounts by VirtualStorageMountManager.activeMountsFlow.collectAsState()
     val shareStates by com.bitlockerdroid.share.LanShareManager.shareStates.collectAsState()
+    val operationStates by UnlockManager.volumeOperations.states.collectAsState()
+    val latestTerminalOperations = remember(operationStates) {
+        operationStates.values
+            .groupBy { it.diskPath }
+            .values
+            .mapNotNull { operations -> operations.maxByOrNull { it.id } }
+            .filter { it.outcome in setOf(VolumeOperationOutcome.FAILED, VolumeOperationOutcome.DISK_BUSY, VolumeOperationOutcome.DISK_STOPPED) }
+            .sortedByDescending { it.id }
+    }
 
     var benchmarkTarget by remember { mutableStateOf<String?>(null) }
     var disasterUnlockedTarget by remember { mutableStateOf<UnlockedVolume?>(null) }
@@ -79,7 +90,7 @@ fun VolumesTabContent(
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
 
-        val hasContent = unlockedVolumes.isNotEmpty() || detectedVolumes.isNotEmpty() || unencryptedVolumes.isNotEmpty()
+        val hasContent = unlockedVolumes.isNotEmpty() || detectedVolumes.isNotEmpty() || unencryptedVolumes.isNotEmpty() || latestTerminalOperations.isNotEmpty()
 
         if (!hasContent) {
             EmptyStateView(
@@ -102,6 +113,11 @@ fun VolumesTabContent(
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                latestTerminalOperations.forEach { operation ->
+                    VolumeOperationStatus(operation, terminal = true) {
+                        UnlockManager.volumeOperations.dismiss(operation.devicePath, operation.id)
+                    }
+                }
                 val deviceGroups = remember(unlockedVolumes, detectedVolumes, unencryptedVolumes) {
                     DeviceGroupBuilder.buildGroups(unlockedVolumes, detectedVolumes, unencryptedVolumes)
                 }
@@ -117,6 +133,7 @@ fun VolumesTabContent(
                             painters = painters,
                             activeMounts = activeMounts,
                             shareStates = shareStates,
+                            operationStates = operationStates,
                             isCompact = isCompact,
                             onMountReadOnlyChange = onMountReadOnlyChange,
                             onOpenVolume = onOpenVolume,
