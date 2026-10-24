@@ -33,8 +33,8 @@
 | app-release.apk | `640a49f443ce495d41c52f4b041d2ec8f1b895b98e6938204b325a117279c67a` |
 | app-debug.apk | `c6d2dc21b80211c8c72b40d44886b806b2e58f2dc2dc88e18a7234f1a68231b2` |
 
-- `checksums.txt` 包含上述两个 APK 的校验值。
-- `release-notes.md` 由 [版本说明](../releases/v1.2.0.md) 复制，包含附件用途、Debug 滚动开销和设备验证范围。
+- 独立的 `checksums.txt` 附件已按用户要求移除；保留上述验证记录，附件摘要使用 GitHub 提供的信息。
+- `release-notes.md` 由 [版本说明](../releases/v1.2.0.md) 复制，更新正文与 Changelog 的 v1.2.0 中英文原文一致，之后附 APK 用途及 Debug 滚动开销说明。
 - 本地证据：`.gradle/verification/release-1.2.0-20261024/`。正式附件与平板测试副本分开保存。
 
 核心双模式读写及弹出验证见 [大文件回归](pssd-large-file-eject.md)，新版详情与空闲查询见 [S.M.A.R.T. 复测](smart-layout-idle-query.md)。本轮未扩大既有硬件支持声明。
