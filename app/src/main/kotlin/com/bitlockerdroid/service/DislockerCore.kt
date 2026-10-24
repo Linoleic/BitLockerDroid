@@ -361,6 +361,7 @@ class DislockerCore private constructor(
 
     /** Returns Pair(totalBytes, freeBytes) queried from native filesystem, or null if unavailable. */
     fun getSpaceInfo(): Pair<Long, Long>? {
+        if (usbSession?.isTransportHealthy == false) return null
         try {
             val sp = writer?.getSpace()
             if (sp != null && sp.first > 0L) {
@@ -374,7 +375,7 @@ class DislockerCore private constructor(
 
     /** Reads space data only from an already-created writer; never mounts one for display. */
     fun getSpaceInfoIfWriterInitialized(): Pair<Long, Long>? = synchronized(this) {
-        if (closed || !writerDelegate.isInitialized()) return@synchronized null
+        if (closed || usbSession?.isTransportHealthy == false || !writerDelegate.isInitialized()) return@synchronized null
         try {
             writerDelegate.value?.getSpace()?.takeIf { it.first > 0L }
         } catch (e: Exception) {
@@ -475,6 +476,7 @@ class DislockerCore private constructor(
     @Synchronized
     fun flush() {
         if (closed) throw java.io.IOException("Volume session is already closed")
+        if (usbSession?.isTransportHealthy == false) throw java.io.IOException("USB transport failed; reconnect required before safe eject")
         if (writerDelegate.isInitialized()) {
             val mountedWriter = writer
             if (mountedWriter?.isMounted == true && !mountedWriter.sync()) {

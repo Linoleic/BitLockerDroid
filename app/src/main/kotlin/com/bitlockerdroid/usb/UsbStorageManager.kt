@@ -66,6 +66,7 @@ object UsbStorageManager {
 
         @Volatile
         var transportHealthy: Boolean = true
+            get() = field && (communication as? PipelinedUsbCommunication)?.isTransportHealthy != false
     }
 
     class UsbSession(
@@ -75,6 +76,7 @@ object UsbStorageManager {
         private val onClose: (() -> Unit)? = null
     ) : AutoCloseable {
         private val isClosed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val isTransportHealthy: Boolean get() = worker.partitionDriver.isTransportHealthy
 
         override fun close() {
             if (!isClosed.compareAndSet(false, true)) return
@@ -842,7 +844,8 @@ object UsbStorageManager {
             scsiDevice = holder.scsiDevice,
             startLba = part.startLba,
             sectorCount = part.sectorCount,
-            sectorSize = part.sectorSize
+            sectorSize = part.sectorSize,
+            transportHealth = { holder.transportHealthy }
         )
 
         val worker = UsbBlockDeviceWorker(driver, workerPfd)
@@ -1040,8 +1043,10 @@ object UsbStorageManager {
         val scsiDevice: ScsiBlockDevice,
         val startLba: Long,
         val sectorCount: Long,
-        val sectorSize: Int = 512
+        val sectorSize: Int = 512,
+        private val transportHealth: () -> Boolean = { true }
     ) {
+        val isTransportHealthy: Boolean get() = transportHealth()
         val sizeBytes: Long = sectorCount * sectorSize
         @Volatile
         var maxChunkBytes = 128 * 1024 // 128KB default (256 sectors); adaptively degrades to 64KB -> 16KB if device rejects
@@ -1081,6 +1086,7 @@ object UsbStorageManager {
                 try {
                     scsiDevice.read(lba, buf)
                 } catch (e: Exception) {
+                    if (!isTransportHealthy) throw e
                     if (buf.remaining() > 16 * 1024) {
                         val newMax = downgradeChunkSize(buf.remaining())
                         try { scsiDevice.init() } catch (_: Exception) {}
@@ -1100,6 +1106,7 @@ object UsbStorageManager {
                 try {
                     scsiDevice.write(lba, buf)
                 } catch (e: Exception) {
+                    if (!isTransportHealthy) throw e
                     if (buf.remaining() > 16 * 1024) {
                         val newMax = downgradeChunkSize(buf.remaining())
                         try { scsiDevice.init() } catch (_: Exception) {}
@@ -1115,6 +1122,7 @@ object UsbStorageManager {
 
         @Synchronized
         fun read(byteOffset: Long, dest: ByteBuffer) {
+            if (!isTransportHealthy) throw java.io.IOException("USB transport failed; reconnect required")
             if (byteOffset >= sizeBytes) return
             val toRead = minOf(dest.remaining().toLong(), sizeBytes - byteOffset).toInt()
             if (toRead <= 0) return
@@ -1179,6 +1187,7 @@ object UsbStorageManager {
 
         @Synchronized
         fun write(byteOffset: Long, src: ByteBuffer) {
+            if (!isTransportHealthy) throw java.io.IOException("USB transport failed; reconnect required")
             if (byteOffset >= sizeBytes) return
             val toWrite = minOf(src.remaining().toLong(), sizeBytes - byteOffset).toInt()
             if (toWrite <= 0) return
