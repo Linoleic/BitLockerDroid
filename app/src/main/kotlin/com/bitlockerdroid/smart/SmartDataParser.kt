@@ -54,7 +54,10 @@ object SmartDataParser {
                 deviceNode = obj.text("device_node"),
                 reason = obj.text("reason") ?: obj.text("error"),
                 rawJson = jsonStr,
-                rawPageHex = obj.text("raw_page_hex")
+                rawPageHex = obj.text("raw_page_hex"),
+                exactCounters = SmartCounter.entries.mapNotNull { counter ->
+                    obj.counter(counter)?.let { counter to it }
+                }.toMap()
             )
         } catch (e: Exception) {
             SmartHealthInfo.unconfirmed(reason = "Invalid telemetry response")
@@ -64,10 +67,26 @@ object SmartDataParser {
     private fun JSONObject.text(key: String): String? =
         (opt(key) as? String)?.takeIf { it.isNotBlank() }
 
+    private fun JSONObject.counter(counter: SmartCounter): java.math.BigInteger? {
+        val value = opt(counter.jsonKey)
+        if (value !is Number && value !is String) return null
+        // Native readers send decimal strings so Android's JSON parser cannot round them through Double.
+        if (value is Double || value is Float) return null
+        return try {
+            java.math.BigDecimal(value.toString()).toBigIntegerExact()
+                .takeIf { it.signum() >= 0 && it <= counter.maxValue }
+        } catch (_: NumberFormatException) {
+            null
+        } catch (_: ArithmeticException) {
+            null
+        }
+    }
+
     /** Reject null, malformed, fractional and overflowing values instead of coercing them to zero. */
     private fun JSONObject.integer(key: String, range: LongRange): Long? {
         val value = opt(key)
         if (value !is Number && value !is String) return null
+        if (value is Double || value is Float) return null
         return try {
             java.math.BigDecimal(value.toString()).longValueExact().takeIf { it in range }
         } catch (_: NumberFormatException) {

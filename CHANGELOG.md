@@ -31,6 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### 修复
 
+- SMART 详情和原始表保留完整大计数，拒绝截断数据页；ATA 缺少真实阈值时不再猜测属性健康状态。
 - Root SMART 完整保留 NVMe 128 位计数及读写总量，修复截断和溢出；统一两种模式的 NVMe 告警规则。
 - SMART 查询失败、响应无效时显示“待确认”，保留重试入口，不再误判为不支持。
 - SMART 缺失指标显示为未知，不再补成满健康度、默认温度或零错误；原始表不再虚构标准化值和阈值。
@@ -84,6 +85,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### Fixed
 
+- Keep full-width counters in SMART details and raw tables, reject truncated pages, and leave ATA attribute health unknown when thresholds are unavailable.
 - Preserve full NVMe 128-bit counters and byte totals in Root SMART results, and align NVMe warning rules across modes.
 - Keep failed or invalid SMART queries unconfirmed and available for retry instead of marking them unsupported.
 - Show missing SMART metrics as unknown instead of full health, default temperatures, or zero errors; stop inventing normalized values and thresholds in the raw table.

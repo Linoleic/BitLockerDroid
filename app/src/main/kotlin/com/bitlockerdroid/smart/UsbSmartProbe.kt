@@ -289,11 +289,9 @@ object UsbSmartProbe {
         if ((criticalWarning and 0xc0) != 0 || (kelvin != 0 && kelvin !in 200..500) ||
             availableSpare !in 0..100 || spareThreshold !in 0..100) return null
 
-        val status = when {
-            criticalWarning != 0 -> SmartOverallStatus.CRITICAL
-            availableSpare <= spareThreshold || percentageUsed >= 100 -> SmartOverallStatus.WARNING
-            else -> SmartOverallStatus.HEALTHY
-        }
+        val status = nvmeHealthStatus(criticalWarning, availableSpare, spareThreshold, percentageUsed)
+        val counters = SmartCounter.entries.associateWith { it.readNvme(data) }
+        fun legacy(counter: SmartCounter): Long? = counters.getValue(counter).takeIf { it <= LONG_MAX }?.toLong()
         return SmartHealthInfo(
             isSupported = true,
             status = status,
@@ -308,30 +306,21 @@ object UsbSmartProbe {
             availableSpare = availableSpare,
             spareThreshold = spareThreshold,
             criticalWarning = criticalWarning,
-            totalBytesRead = nvmeCounterBytes(data, 32),
-            totalBytesWritten = nvmeCounterBytes(data, 48),
-            hostReadCommands = nvmeCounter(data, 64),
-            hostWriteCommands = nvmeCounter(data, 80),
-            controllerBusyMinutes = nvmeCounter(data, 96),
-            powerCycles = nvmeCounter(data, 112),
-            powerHours = nvmeCounter(data, 128),
-            unsafeShutdowns = nvmeCounter(data, 144),
-            mediaErrors = nvmeCounter(data, 160),
-            errorLogEntries = nvmeCounter(data, 176),
+            totalBytesRead = legacy(SmartCounter.TOTAL_BYTES_READ),
+            totalBytesWritten = legacy(SmartCounter.TOTAL_BYTES_WRITTEN),
+            hostReadCommands = legacy(SmartCounter.HOST_READ_COMMANDS),
+            hostWriteCommands = legacy(SmartCounter.HOST_WRITE_COMMANDS),
+            controllerBusyMinutes = legacy(SmartCounter.CONTROLLER_BUSY_MINUTES),
+            powerCycles = legacy(SmartCounter.POWER_CYCLES),
+            powerHours = legacy(SmartCounter.POWER_HOURS),
+            unsafeShutdowns = legacy(SmartCounter.UNSAFE_SHUTDOWNS),
+            mediaErrors = legacy(SmartCounter.MEDIA_ERRORS),
+            errorLogEntries = legacy(SmartCounter.ERROR_LOG_ENTRIES),
             deviceNode = node,
-            rawPageHex = data.joinToString("") { "%02X".format(it.toInt() and 0xff) }
+            rawPageHex = data.joinToString("") { "%02X".format(it.toInt() and 0xff) },
+            exactCounters = counters
         )
     }
-
-    private fun nvmeCounter(data: ByteArray, offset: Int): Long =
-        BigInteger(1, data.copyOfRange(offset, offset + 16).reversedArray()).let {
-            if (it > LONG_MAX) Long.MAX_VALUE else it.toLong()
-        }
-
-    private fun nvmeCounterBytes(data: ByteArray, offset: Int): Long =
-        BigInteger(1, data.copyOfRange(offset, offset + 16).reversedArray())
-            .multiply(BigInteger.valueOf(512_000L))
-            .let { if (it > LONG_MAX) Long.MAX_VALUE else it.toLong() }
 
     private fun readLe16(data: ByteArray, offset: Int): Int =
         (data[offset].toInt() and 0xff) or ((data[offset + 1].toInt() and 0xff) shl 8)

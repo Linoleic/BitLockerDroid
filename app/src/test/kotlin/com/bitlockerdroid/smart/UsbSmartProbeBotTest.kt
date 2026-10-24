@@ -258,6 +258,55 @@ class UsbSmartProbeBotTest {
         assertEquals(1, transport.recoveryCount)
     }
 
+    @Test
+    fun wideCountersReachTheResultWithoutSaturationAndMatchRootDecimalStrings() {
+        val page = validSmartLog()
+        val units = java.math.BigInteger.ONE.shiftLeft(127).add(java.math.BigInteger.ONE)
+        for (counter in SmartCounter.entries) {
+            page.fill(0, counter.offset, counter.offset + 16)
+            page[counter.offset] = 1
+            page[counter.offset + 15] = 0x80.toByte()
+        }
+        val transport = FakeBotTransport { command ->
+            successfulResponse(command, if (command.transferLength == 4096) validIdentifyController() else page)
+        }
+        val usb = UsbSmartProbe.probeSmartWithTransport(0x0bda, 0x9210, transport = transport)
+        val rootJson = org.json.JSONObject().put("supported", true).put("status", "HEALTHY").put("disk_type", "NVMe SSD")
+        for (counter in SmartCounter.entries) {
+            val expected = units.multiply(java.math.BigInteger.valueOf(counter.scale))
+            rootJson.put(counter.jsonKey, expected.toString())
+            assertEquals(expected, usb.counterValue(counter))
+        }
+        val root = SmartDataParser.parseJson(rootJson.toString())
+        for (counter in SmartCounter.entries) assertEquals(root.counterValue(counter), usb.counterValue(counter))
+        assertNull(usb.powerCycles)
+        assertNull(usb.totalBytesRead)
+        assertEquals(2, transport.commands.size)
+        assertEquals(0, transport.recoveryCount)
+    }
+
+    @Test
+    fun usbProbeUsesUnifiedNvmeSeverityAtThresholds() {
+        val cases = listOf(
+            listOf(0, 10, 10, 99, SmartOverallStatus.HEALTHY),
+            listOf(0, 9, 10, 99, SmartOverallStatus.WARNING),
+            listOf(0, 100, 10, 100, SmartOverallStatus.WARNING),
+            listOf(0x20, 100, 10, 0, SmartOverallStatus.CRITICAL)
+        )
+        for (case in cases) {
+            val page = validSmartLog()
+            page[0] = (case[0] as Int).toByte()
+            page[3] = (case[1] as Int).toByte()
+            page[4] = (case[2] as Int).toByte()
+            page[5] = (case[3] as Int).toByte()
+            val transport = FakeBotTransport { command ->
+                successfulResponse(command, if (command.transferLength == 4096) validIdentifyController() else page)
+            }
+            val result = UsbSmartProbe.probeSmartWithTransport(0x0bda, 0x9210, transport = transport)
+            assertEquals(case[4], result.status)
+        }
+    }
+
     private data class Command(
         val tag: Int,
         val transferLength: Int,

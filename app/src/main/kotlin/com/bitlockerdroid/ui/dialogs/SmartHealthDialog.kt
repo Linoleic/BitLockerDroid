@@ -33,6 +33,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.bitlockerdroid.R
+import com.bitlockerdroid.smart.SmartCounter
+import java.math.BigInteger
 import com.bitlockerdroid.smart.SmartHealthInfo
 import com.bitlockerdroid.smart.SmartHealthManager
 import com.bitlockerdroid.smart.SmartOverallStatus
@@ -240,9 +242,8 @@ fun SmartHealthDialog(
                                 ) {
                                     // Temperature
                                     info.temperatureCelsius?.let { temp ->
-                                        val tempColor = if (temp <= 50) SuccessGreen
-                                                        else if (temp <= 65) WarningAmber
-                                                        else MaterialTheme.colorScheme.error
+                                        val tempColor = if ((info.criticalWarning ?: 0) and 0x02 != 0)
+                                            MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                                         SmartMetricCard(
                                             modifier = Modifier.weight(1f),
                                             title = stringResource(R.string.smart_metric_temp),
@@ -257,7 +258,9 @@ fun SmartHealthDialog(
                                             modifier = Modifier.weight(1f),
                                             title = stringResource(R.string.smart_metric_health),
                                             value = "$hp %",
-                                            valueColor = if (hp >= 80) SuccessGreen else if (hp >= 20) WarningAmber else MaterialTheme.colorScheme.error
+                                            valueColor = if (info.diskType.contains("NVMe", ignoreCase = true)) {
+                                                if (hp == 0) WarningAmber else SuccessGreen
+                                            } else MaterialTheme.colorScheme.onSurface
                                         )
                                     }
                                 }
@@ -267,18 +270,18 @@ fun SmartHealthDialog(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     // Power Hours
-                                    info.powerHours?.let { ph ->
-                                        val days = ph / 24
+                                    info.counterValue(SmartCounter.POWER_HOURS)?.let { ph ->
+                                        val days = ph / BigInteger.valueOf(24)
                                         SmartMetricCard(
                                             modifier = Modifier.weight(1f),
                                             title = stringResource(R.string.smart_metric_power_hours),
                                             value = "$ph h",
-                                            subtitle = if (days > 0) "≈ $days d" else null
+                                            subtitle = if (days.signum() > 0) "≈ $days d" else null
                                         )
                                     }
 
                                     // Power Cycles
-                                    info.powerCycles?.let { pc ->
+                                    info.counterValue(SmartCounter.POWER_CYCLES)?.let { pc ->
                                         SmartMetricCard(
                                             modifier = Modifier.weight(1f),
                                             title = stringResource(R.string.smart_metric_power_cycles),
@@ -292,19 +295,20 @@ fun SmartHealthDialog(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     // Unsafe Shutdowns
-                                    info.unsafeShutdowns?.let { us ->
+                                    info.counterValue(SmartCounter.UNSAFE_SHUTDOWNS)?.let { us ->
                                         SmartMetricCard(
                                             modifier = Modifier.weight(1f),
                                             title = stringResource(R.string.smart_metric_unsafe_shutdowns),
                                             value = "$us",
-                                            valueColor = if (us > 50) WarningAmber else MaterialTheme.colorScheme.onSurface
+                                            valueColor = MaterialTheme.colorScheme.onSurface
                                         )
                                     }
 
                                     // Total Host Writes (TBW)
-                                    info.totalTbWritten?.let { tbw ->
+                                    info.counterValue(SmartCounter.TOTAL_BYTES_WRITTEN)?.let { bytes ->
+                                        val tbw = bytes.toDouble() / 1_000_000_000_000.0
                                         val displayStr = if (tbw >= 1.0) "%.2f TB".format(tbw)
-                                                         else "%.1f GB".format(tbw * 1024.0)
+                                                         else "%.1f GB".format(tbw * 1000.0)
                                         SmartMetricCard(
                                             modifier = Modifier.weight(1f),
                                             title = stringResource(R.string.smart_metric_total_writes),
