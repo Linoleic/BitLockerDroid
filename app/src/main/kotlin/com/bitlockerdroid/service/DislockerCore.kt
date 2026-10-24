@@ -359,11 +359,13 @@ class DislockerCore private constructor(
     /** Performs non-destructive integrity diagnostics on filesystem metadata structures. */
     fun diagnose(): com.bitlockerdroid.ntfs.VolumeDiagnostic = reader.diagnose()
 
+    private val spaceCache = VolumeSpaceCache()
+
     /** Returns Pair(totalBytes, freeBytes) queried from native filesystem, or null if unavailable. */
     fun getSpaceInfo(): Pair<Long, Long>? {
         if (usbSession?.isTransportHealthy == false) return null
         try {
-            val sp = writer?.getSpace()
+            val sp = spaceCache.query { writer?.getSpace() }
             if (sp != null && sp.first > 0L) {
                 return sp
             }
@@ -373,16 +375,9 @@ class DislockerCore private constructor(
         return null
     }
 
-    /** Reads space data only from an already-created writer; never mounts one for display. */
-    fun getSpaceInfoIfWriterInitialized(): Pair<Long, Long>? = synchronized(this) {
-        if (closed || usbSession?.isTransportHealthy == false || !writerDelegate.isInitialized()) return@synchronized null
-        try {
-            writerDelegate.value?.getSpace()?.takeIf { it.first > 0L }
-        } catch (e: Exception) {
-            Log.w(TAG, "getSpaceInfoIfWriterInitialized failed", e)
-            null
-        }
-    }
+    /** Space may be unknown. Never initiate expensive f_getfree scans from a UI/provider snapshot. */
+    val cachedSpaceInfo: Pair<Long, Long>?
+        get() = if (closed || usbSession?.isTransportHealthy == false) null else spaceCache.peek()
 
     /** Checks write capability without creating a writer for display. */
     fun canWriteWithoutInitializingWriter(readerSupportsWrite: Boolean): Boolean = synchronized(this) {
@@ -422,6 +417,7 @@ class DislockerCore private constructor(
 
     /** Invalidate all block and filesystem caches after a write/delete/rename operation */
     fun invalidateCache() {
+        spaceCache.invalidate()
         cachedSource.clear()
         createdEntries.clear()
         reader.invalidateCache()

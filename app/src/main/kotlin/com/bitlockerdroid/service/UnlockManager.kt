@@ -149,7 +149,7 @@ object UnlockManager {
                         }
                         val devInfo = com.bitlockerdroid.util.DeviceIdentity.queryDeviceInfo(path)
                         val partInfo = com.bitlockerdroid.util.DeviceIdentity.resolvePartitionInfo(path)
-                        val space = core.getSpaceInfoIfWriterInitialized()
+                        val space = core.cachedSpaceInfo
                         val totalBytes = if (space != null && space.first > 0L) space.first else core.info.volumeSize
                         val freeBytes = space?.second ?: -1L
                         val usedBytes = if (freeBytes >= 0L) (totalBytes - freeBytes).coerceAtLeast(0L) else -1L
