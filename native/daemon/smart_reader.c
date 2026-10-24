@@ -184,6 +184,21 @@ static int validate_nvme_smart_log(const unsigned char *page, size_t len) {
     return 0;
 }
 
+/* Return 0 for a valid ATA SMART page, -1 for an invalid page, and -2 when a
+ * structurally present page fails its 8-bit checksum. */
+static int validate_ata_smart_page(const unsigned char *page, size_t len) {
+    if (!page || len != 512) return -1;
+    int all_zero = 1, all_ff = 1;
+    unsigned int sum = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (page[i] != 0) all_zero = 0;
+        if (page[i] != 0xff) all_ff = 0;
+        sum = (sum + page[i]) & 0xffU;
+    }
+    if (all_zero || all_ff) return -1;
+    return sum == 0 ? 0 : -2;
+}
+
 typedef struct {
     int temperature_c, has_temperature;
     uint64_t reallocated_sectors, pending_sectors, uncorrectable_sectors;
@@ -196,13 +211,7 @@ typedef struct {
 /* Parse only the standard 30 ATA SMART attribute slots. A successful SG_IO
  * alone is not enough to infer temperature, health, or zero-valued counters. */
 static int extract_sata_metrics(const unsigned char *page, size_t len, sata_metrics *m) {
-    if (!page || len != 512 || !m) return -1;
-    int all_zero = 1, all_ff = 1;
-    for (size_t i = 0; i < len; i++) {
-        if (page[i] != 0) all_zero = 0;
-        if (page[i] != 0xff) all_ff = 0;
-    }
-    if (all_zero || all_ff) return -1;
+    if (!page || len != 512 || !m || validate_ata_smart_page(page, len) != 0) return -1;
     memset(m, 0, sizeof(*m));
     for (int i = 0; i < 30; i++) {
         const unsigned char *attr = page + 2 + i * 12;
@@ -357,6 +366,9 @@ int smart_test_parse_nvme_identity(const unsigned char *id, size_t len,
 int smart_test_validate_nvme_smart_log(const unsigned char *page, size_t len) {
     return validate_nvme_smart_log(page, len);
 }
+int smart_test_validate_ata_smart_page(const unsigned char *page, size_t len) {
+    return validate_ata_smart_page(page, len);
+}
 int smart_test_sg_response_ok(int status, int host_status, int driver_status,
                               int resid, int data_len) {
     return sg_response_ok(status, host_status, driver_status, resid, data_len);
@@ -405,12 +417,17 @@ static void escape_json_str(const char *in, char *out, size_t out_max) {
     out[o] = '\0';
 }
 
+static void format_page_hex(const unsigned char *page, size_t len, char *out) {
+    for (size_t i = 0; i < len; i++) snprintf(out + i * 2, 3, "%02X", page[i]);
+    out[len * 2] = '\0';
+}
+
 int read_smart_json(const char *dev_path, char *json, size_t json_max) {
     if (!dev_path || !json || json_max == 0) return -EINVAL;
 
     struct stat st;
     if (stat(dev_path, &st) < 0) {
-        snprintf(json, json_max, "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"reason\":\"Cannot stat device: %s\"}", strerror(errno));
+        snprintf(json, json_max, "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"failure_stage\":\"CONNECTION\",\"reason\":\"Cannot stat device: %s\"}", strerror(errno));
         return -errno;
     }
 
@@ -419,7 +436,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
     unsigned int usb_vendor = 0, usb_product = 0;
     if (resolve_block_topology(dev_path, &st, actual_dev, sizeof(actual_dev),
                                &bridge, &usb_vendor, &usb_product) != 0) {
-        snprintf(json, json_max, "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"reason\":\"Cannot resolve physical block-device USB ancestry safely.\"}");
+        snprintf(json, json_max, "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"failure_stage\":\"CONNECTION\",\"reason\":\"Cannot resolve physical block-device USB ancestry safely.\"}");
         return 0;
     }
 
@@ -428,7 +445,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         fd = open(actual_dev, O_RDONLY | O_LARGEFILE | O_CLOEXEC);
     }
     if (fd < 0) {
-        snprintf(json, json_max, "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"reason\":\"Cannot open %s: %s\"}", actual_dev, strerror(errno));
+        snprintf(json, json_max, "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"failure_stage\":\"CONNECTION\",\"reason\":\"Cannot open %s: %s\"}", actual_dev, strerror(errno));
         return -errno;
     }
 
@@ -459,7 +476,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
     if (bridge == USB_BRIDGE_UNKNOWN) {
         close(fd);
         snprintf(json, json_max,
-            "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"disk_type\":\"USB Storage\",\"reason\":\"SMART passthrough is disabled for unrecognized USB bridges.\"}");
+            "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"failure_stage\":\"UNSUPPORTED_ROUTE\",\"disk_type\":\"USB Storage\",\"reason\":\"SMART passthrough is disabled for unrecognized USB bridges.\"}");
         return 0;
     }
 
@@ -469,12 +486,17 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         build_rtl_e4_cdb(id_cdb, sizeof(identify), 0x06, 0x01);
         memset(sense, 0, sizeof(sense));
         if (do_sg_io(fd, id_cdb, sizeof(id_cdb), identify, sizeof(identify),
-                     SG_DXFER_FROM_DEV, sense, sizeof(sense)) != 0 ||
-            parse_nvme_identity(identify, sizeof(identify), model, sizeof(model),
+                     SG_DXFER_FROM_DEV, sense, sizeof(sense)) != 0) {
+            close(fd);
+            snprintf(json, json_max,
+                "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"failure_stage\":\"READ\",\"reason\":\"RTL9210 NVMe Identify transfer failed; no fallback bridge commands were sent.\"}");
+            return 0;
+        }
+        if (parse_nvme_identity(identify, sizeof(identify), model, sizeof(model),
                                 serial, sizeof(serial), firmware, sizeof(firmware)) != 0) {
             close(fd);
             snprintf(json, json_max,
-                "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"reason\":\"RTL9210 NVMe Identify failed validation; no fallback bridge commands were sent.\"}");
+                "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"data_integrity\":\"INVALID_PAGE\",\"failure_stage\":\"VALIDATION\",\"reason\":\"RTL9210 NVMe Identify returned an invalid page; no fallback bridge commands were sent.\"}");
             return 0;
         }
         unsigned char log_cdb[16];
@@ -484,13 +506,16 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
                      SG_DXFER_FROM_DEV, sense, sizeof(sense)) != 0) {
             close(fd);
             snprintf(json, json_max,
-                "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"reason\":\"RTL9210 NVMe SMART log transfer failed; no fallback bridge commands were sent.\"}");
+                "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"failure_stage\":\"READ\",\"reason\":\"RTL9210 NVMe SMART log transfer failed; no fallback bridge commands were sent.\"}");
             return 0;
         }
         if (validate_nvme_smart_log(nvme_smart, sizeof(nvme_smart)) != 0) {
+            char raw_page_hex[1025];
+            format_page_hex(nvme_smart, sizeof(nvme_smart), raw_page_hex);
             close(fd);
             snprintf(json, json_max,
-                "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"reason\":\"RTL9210 returned an invalid NVMe SMART log; telemetry was not accepted.\"}");
+                "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"disk_type\":\"NVMe SSD\",\"data_integrity\":\"INVALID_PAGE\",\"failure_stage\":\"VALIDATION\",\"reason\":\"RTL9210 returned an invalid NVMe SMART log; telemetry was not accepted.\",\"raw_page_hex\":\"%s\"}",
+                raw_page_hex);
             return 0;
         }
         is_nvme = 1;
@@ -572,6 +597,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         snprintf(json, json_max,
             "{"
             "\"supported\":true,"
+            "\"data_integrity\":\"NVME_VALIDATED\","
             "\"status\":\"%s\","
             "\"disk_type\":\"%s\","
             "\"model\":\"%s\","
@@ -613,8 +639,24 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
     memset(smart_data, 0, sizeof(smart_data));
     memset(sense, 0, sizeof(sense));
     int has_sata_smart = (do_sg_io(fd, smart_cdb, 16, smart_data, 512, SG_DXFER_FROM_DEV, sense, sizeof(sense)) == 0);
+    int sata_validation = has_sata_smart ? validate_ata_smart_page(smart_data, sizeof(smart_data)) : -3;
+    if (has_sata_smart && sata_validation != 0) {
+        char raw_page_hex[1025];
+        format_page_hex(smart_data, sizeof(smart_data), raw_page_hex);
+        const char *integrity = sata_validation == -2 ? "ATA_CHECKSUM_FAILED" : "INVALID_PAGE";
+        const char *reason = sata_validation == -2 ? "ATA SMART page checksum mismatch." :
+                                                     "ATA SMART page has an invalid length or empty contents.";
+        close(fd);
+        snprintf(json, json_max,
+            "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"data_integrity\":\"%s\","
+            "\"failure_stage\":\"VALIDATION\",\"reason\":\"%s\",\"device_node\":\"%s\","
+            "\"raw_page_hex\":\"%s\"}",
+            integrity, reason, actual_dev, raw_page_hex);
+        return 0;
+    }
     char sata_fields[512];
-    int valid_sata_smart = has_sata_smart && format_sata_metrics_json(smart_data, sizeof(smart_data), sata_fields, sizeof(sata_fields)) >= 0;
+    int valid_sata_smart = has_sata_smart && sata_validation == 0 &&
+        format_sata_metrics_json(smart_data, sizeof(smart_data), sata_fields, sizeof(sata_fields)) >= 0;
 
     if (valid_sata_smart) {
         char esc_model[64], esc_serial[64], esc_fw[32], esc_vendor[32], esc_prod[32];
@@ -625,14 +667,12 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         escape_json_str(product, esc_prod, sizeof(esc_prod));
 
         char raw_page_hex[1025];
-        for (int i = 0; i < 512; i++) {
-            snprintf(raw_page_hex + i * 2, 3, "%02X", smart_data[i]);
-        }
-        raw_page_hex[1024] = '\0';
+        format_page_hex(smart_data, sizeof(smart_data), raw_page_hex);
 
         snprintf(json, json_max,
             "{"
             "\"supported\":true,"
+            "\"data_integrity\":\"ATA_CHECKSUM_PASSED\","
             "\"disk_type\":\"%s\","
             "\"model\":\"%s\","
             "\"serial\":\"%s\","
@@ -652,7 +692,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         return 0;
     }
 
-    // 7. A failed command or empty page cannot establish lack of SMART capability.
+    // 7. A failed command cannot establish lack of SMART capability or page integrity.
     char esc_vendor[32], esc_prod[32], esc_rev[16];
     escape_json_str(vendor, esc_vendor, sizeof(esc_vendor));
     escape_json_str(product, esc_prod, sizeof(esc_prod));
@@ -662,6 +702,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         "{"
         "\"supported\":false,"
         "\"status\":\"UNCONFIRMED\","
+        "\"failure_stage\":\"READ\","
         "\"disk_type\":\"Unknown\","
         "\"vendor\":\"%s\","
         "\"product\":\"%s\","
@@ -670,8 +711,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         "\"reason\":\"%s\""
         "}",
         esc_vendor, esc_prod, esc_rev, actual_dev,
-        has_sata_smart ? "The ATA SMART command returned an empty or invalid data page; capability is unconfirmed." :
-                         "The ATA SMART command failed; capability is unconfirmed."
+        "The ATA SMART command failed; capability and page integrity are unconfirmed."
     );
 
     close(fd);

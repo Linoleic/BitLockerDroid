@@ -43,6 +43,8 @@ int smart_test_parse_nvme_identity(const unsigned char *id, size_t len,
                                    char *serial, size_t serial_max,
                                    char *firmware, size_t firmware_max);
 int smart_test_validate_nvme_smart_log(const unsigned char *page, size_t len);
+/* ATA page validator: 0 valid, -1 invalid page, -2 checksum mismatch. */
+int smart_test_validate_ata_smart_page(const unsigned char *page, size_t len);
 int smart_test_sg_response_ok(int status, int host_status, int driver_status,
                               int resid, int data_len);
 int smart_test_format_sata_metrics_json(const unsigned char *page, size_t len,

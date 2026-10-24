@@ -127,6 +127,40 @@ static void set_sata_attr(unsigned char *page, int slot, unsigned char id,
 	attr[0] = id;
 	attr[3] = current;
 	for (int i = 0; i < 6; i++) attr[5 + i] = (unsigned char)(raw >> (i * 8));
+	unsigned int sum = 0;
+	page[511] = 0;
+	for (int i = 0; i < 512; i++) sum = (sum + page[i]) & 0xffU;
+	page[511] = (unsigned char)(0U - sum);
+}
+
+static void fix_sata_checksum(unsigned char *page)
+{
+	unsigned int sum = 0;
+	page[511] = 0;
+	for (int i = 0; i < 512; i++) sum = (sum + page[i]) & 0xffU;
+	page[511] = (unsigned char)(0U - sum);
+}
+
+static void test_ata_smart_page_checksum(void)
+{
+	unsigned char page[512] = {0};
+	page[0] = 1;
+	fix_sata_checksum(page);
+	assert(smart_test_validate_ata_smart_page(page, sizeof(page)) == 0);
+	page[20] ^= 1;
+	assert(smart_test_validate_ata_smart_page(page, sizeof(page)) == -2);
+	fix_sata_checksum(page);
+	assert(smart_test_validate_ata_smart_page(page, sizeof(page)) == 0);
+	page[511] ^= 1;
+	assert(smart_test_validate_ata_smart_page(page, sizeof(page)) == -2);
+
+	memset(page, 0, sizeof(page));
+	assert(smart_test_validate_ata_smart_page(page, sizeof(page)) == -1);
+	memset(page, 0xff, sizeof(page));
+	assert(smart_test_validate_ata_smart_page(page, sizeof(page)) == -1);
+	assert(smart_test_validate_ata_smart_page(page, sizeof(page) - 1) == -1);
+	page[0] = 1; page[511] = 0; /* nonempty page with an incorrect checksum */
+	assert(smart_test_validate_ata_smart_page(page, sizeof(page)) == -2);
 }
 
 static void test_sata_missing_and_zero_metrics(void)
@@ -134,6 +168,7 @@ static void test_sata_missing_and_zero_metrics(void)
 	unsigned char page[512] = {0};
 	char fields[512];
 	page[0] = 1; /* A non-empty attribute page with no relevant attributes. */
+	fix_sata_checksum(page);
 	assert(smart_test_format_sata_metrics_json(page, sizeof(page), fields, sizeof(fields)) > 0);
 	assert(strstr(fields, "\"status\":\"UNCONFIRMED\"") != NULL);
 	assert(strstr(fields, "\"temperature_c\":null") != NULL);
@@ -185,6 +220,7 @@ static void test_missing_device_error_status(void)
 	snprintf(missing, sizeof(missing), "%s/no-device", root);
 	assert(read_smart_json(missing, json, sizeof(json)) < 0);
 	assert(strstr(json, "\"status\":\"UNCONFIRMED\"") != NULL);
+	assert(strstr(json, "\"failure_stage\":\"CONNECTION\"") != NULL);
 	assert(strstr(json, "\"reason\":\"Cannot stat device:") != NULL);
 	assert(rmdir(root) == 0);
 }
@@ -270,6 +306,7 @@ int main(void)
 	test_nvme_temperature_missing_and_zero();
 	test_nvme_full_width_counter_formatting();
 	test_nvme_unified_status_thresholds();
+	test_ata_smart_page_checksum();
 	test_missing_device_error_status();
 	puts("smart_reader_test: all tests passed");
 	return 0;
