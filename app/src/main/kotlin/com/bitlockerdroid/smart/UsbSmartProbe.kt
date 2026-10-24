@@ -59,7 +59,7 @@ object UsbSmartProbe {
             node = node,
             reason = "USB SMART probing is disabled for unrecognized bridge %04x:%04x."
                 .format(vendorId and 0xffff, productId and 0xffff)
-        )
+        ).copy(failureStage = SmartFailureStage.UNSUPPORTED_ROUTE)
 
     private fun probeProfile(
         profile: UsbSmartProfile,
@@ -83,6 +83,7 @@ object UsbSmartProbe {
 
         val identity = parseControllerIdentity(identifyResult.data)
             ?: return unsupportedForProfile(profile, node, "RTL9210 returned an empty or invalid NVMe controller identity.")
+                .copy(failureStage = SmartFailureStage.VALIDATION, dataIntegrity = SmartDataIntegrity.INVALID_PAGE)
 
         val smartCdb = ByteArray(16).apply {
             this[0] = REALTEK_NVME_CDB.toByte()
@@ -97,6 +98,8 @@ object UsbSmartProbe {
 
         return parseSmartLog(identity, smartResult.data, node)
             ?: unsupportedForProfile(profile, node, "RTL9210 returned an invalid NVMe SMART/Health log.")
+                .copy(failureStage = SmartFailureStage.VALIDATION, dataIntegrity = SmartDataIntegrity.INVALID_PAGE,
+                    diskType = "NVMe SSD", rawPageHex = smartResult.data.joinToString("") { "%02X".format(it.toInt() and 0xff) })
     }
 
     private fun unsupportedForProfile(profile: UsbSmartProfile, node: String?, reason: String) =
@@ -105,7 +108,7 @@ object UsbSmartProbe {
             product = profile.name,
             node = node,
             reason = reason
-        )
+        ).copy(failureStage = SmartFailureStage.READ)
 
     private data class CommandResult(val data: ByteArray, val commandFailed: Boolean)
 
@@ -318,7 +321,8 @@ object UsbSmartProbe {
             errorLogEntries = legacy(SmartCounter.ERROR_LOG_ENTRIES),
             deviceNode = node,
             rawPageHex = data.joinToString("") { "%02X".format(it.toInt() and 0xff) },
-            exactCounters = counters
+            exactCounters = counters,
+            dataIntegrity = SmartDataIntegrity.NVME_VALIDATED
         )
     }
 

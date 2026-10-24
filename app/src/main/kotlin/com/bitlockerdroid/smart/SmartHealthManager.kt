@@ -74,7 +74,7 @@ object SmartHealthManager {
         cacheKey: String? = null
     ): SmartHealthInfo = withContext(Dispatchers.IO) {
         val key = cacheKey ?: devicePath
-        val info = querySmartInternal(context, devicePath, usbDeviceId)
+        val info = measuredQuery { querySmartInternal(context, devicePath, usbDeviceId, forceAuthorizationCheck = true) }
         cacheSupport(key, info)
         info
     }
@@ -82,19 +82,24 @@ object SmartHealthManager {
     private suspend fun querySmartInternal(
         context: Context,
         devicePath: String,
-        usbDeviceId: Int? = null
+        usbDeviceId: Int? = null,
+        forceAuthorizationCheck: Boolean = false
     ): SmartHealthInfo = withContext(Dispatchers.IO) {
         if (devicePath.startsWith("usb://") || usbDeviceId != null) {
             val holder = usbHolder(devicePath, usbDeviceId)
                 ?: return@withContext SmartHealthInfo.unconfirmed(node = devicePath,
-                    reason = context.getString(R.string.smart_usb_unavailable))
+                    reason = context.getString(R.string.smart_usb_unavailable)).copy(failureStage = missingUsbStage(context, devicePath, usbDeviceId))
+            val usbManager = context.getSystemService(Context.USB_SERVICE) as android.hardware.usb.UsbManager
+            if (!usbManager.hasPermission(holder.usbDevice)) return@withContext SmartHealthInfo.unconfirmed(
+                node = devicePath, reason = context.getString(R.string.smart_query_failed)
+            ).copy(failureStage = SmartFailureStage.AUTHORIZATION)
             if (UsbSmartProfile.profileFor(holder.usbDevice.vendorId, holder.usbDevice.productId) == null) {
                 return@withContext SmartHealthInfo.unconfirmed(node = devicePath,
-                    reason = context.getString(R.string.smart_usb_unverified))
+                    reason = context.getString(R.string.smart_usb_unverified)).copy(failureStage = SmartFailureStage.UNSUPPORTED_ROUTE)
             }
             if (!holder.transportHealthy) {
                 return@withContext SmartHealthInfo.unconfirmed(node = devicePath,
-                    reason = context.getString(R.string.smart_usb_unavailable))
+                    reason = context.getString(R.string.smart_usb_unavailable)).copy(failureStage = SmartFailureStage.CONNECTION)
             }
             return@withContext UsbStorageManager.withIdleDeviceProbe(holder.usbDevice.deviceId) { current ->
                 try {
@@ -103,17 +108,17 @@ object SmartHealthManager {
                 } catch (e: RecoveredProbeException) {
                     Log.w(TAG, "SMART query failed but BOT recovery completed", e)
                     SmartHealthInfo.unconfirmed(node = devicePath,
-                        reason = context.getString(R.string.smart_query_retry))
+                        reason = context.getString(R.string.smart_query_retry)).copy(failureStage = SmartFailureStage.READ)
                 } catch (e: java.io.IOException) {
                     // There are no open volume sessions here. Refuse new sessions on an
                     // untrusted transport until physical reconnection; never terminate a live volume.
                     current.transportHealthy = false
                     Log.w(TAG, "SMART transport recovery failed for ${current.usbDevice.deviceName}", e)
                     SmartHealthInfo.unconfirmed(node = devicePath,
-                        reason = context.getString(R.string.smart_usb_unavailable))
+                        reason = context.getString(R.string.smart_usb_unavailable)).copy(failureStage = SmartFailureStage.CONNECTION)
                 }
             } ?: SmartHealthInfo.unconfirmed(node = devicePath,
-                reason = context.getString(R.string.smart_usb_close_volumes))
+                reason = context.getString(R.string.smart_usb_close_volumes)).copy(failureStage = SmartFailureStage.BUSY)
         }
 
         queryLocalSmart(
@@ -121,11 +126,12 @@ object SmartHealthManager {
             rootEnabled = PreferenceHelper.useRootAccess,
             failureReason = context.getString(R.string.smart_query_failed),
             rootQuery = {
-                if (!RootAccess.hasSu()) null else {
+                if (!RootAccess.hasSu(forceRefresh = forceAuthorizationCheck)) throw SmartQueryException(SmartFailureStage.AUTHORIZATION) else {
                     RootAccess.ensureDaemonInstalled(context)
                     val escapedPath = devicePath.replace("'", "'\\''")
                     val result = RootAccess.exec("/data/local/tmp/bitlocker_io --smart '$escapedPath'", 12000)
-                    result?.takeIf { it.first == 0 }?.second
+                    if (result == null || result.first != 0) throw SmartQueryException(SmartFailureStage.READ)
+                    result.second
                 }
             },
             directQuery = { NativeBridge.nativeReadDeviceSmart(devicePath) }
@@ -157,16 +163,49 @@ object SmartHealthManager {
             SmartDataParser.parseJson(if (rootEnabled) rootQuery() else directQuery())
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
+        } catch (e: SmartQueryException) {
+            SmartHealthInfo.unconfirmed(reason = failureReason).copy(failureStage = e.stage)
+        } catch (_: SecurityException) {
+            SmartHealthInfo.unconfirmed(reason = failureReason).copy(failureStage = SmartFailureStage.AUTHORIZATION)
         } catch (_: Exception) {
-            SmartHealthInfo.unconfirmed(reason = failureReason)
+            SmartHealthInfo.unconfirmed(reason = failureReason).copy(failureStage = SmartFailureStage.READ)
         } catch (_: LinkageError) {
-            SmartHealthInfo.unconfirmed(reason = failureReason)
+            SmartHealthInfo.unconfirmed(reason = failureReason).copy(failureStage = SmartFailureStage.READ)
         }
         return info.copy(
             deviceNode = info.deviceNode ?: devicePath,
             reason = if (!info.isSupported && info.status == SmartOverallStatus.UNCONFIRMED)
                 info.reason.takeIf { info.rawJson != null } ?: failureReason else info.reason
         )
+    }
+
+    /** Durations use a monotonic clock so a wall-clock correction cannot change elapsed time. */
+    internal suspend fun measuredQuery(
+        nowMillis: () -> Long = System::currentTimeMillis,
+        monotonicNanos: () -> Long = System::nanoTime,
+        query: suspend () -> SmartHealthInfo
+    ): SmartHealthInfo {
+        val started = monotonicNanos()
+        val info = try {
+            SmartPageValidation.validate(query())
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: SecurityException) {
+            SmartHealthInfo.unconfirmed().copy(failureStage = SmartFailureStage.AUTHORIZATION)
+        } catch (_: Exception) {
+            SmartHealthInfo.unconfirmed().copy(failureStage = SmartFailureStage.READ)
+        } catch (_: LinkageError) {
+            SmartHealthInfo.unconfirmed().copy(failureStage = SmartFailureStage.READ)
+        }
+        return info.copy(queryCompletedAtMillis = nowMillis(),
+            queryDurationMillis = ((monotonicNanos() - started) / 1_000_000).coerceAtLeast(0))
+    }
+
+    private fun missingUsbStage(context: Context, path: String, requestedId: Int?): SmartFailureStage {
+        val id = if (path.startsWith("usb://")) path.removePrefix("usb://").substringBefore('/').toIntOrNull() else requestedId
+        val manager = context.getSystemService(Context.USB_SERVICE) as android.hardware.usb.UsbManager
+        val device = manager.deviceList.values.find { it.deviceId == id }
+        return if (device != null && !manager.hasPermission(device)) SmartFailureStage.AUTHORIZATION else SmartFailureStage.CONNECTION
     }
 
     private fun usbHolder(devicePath: String, requestedId: Int?): UsbStorageManager.UsbDeviceConnectionHolder? {

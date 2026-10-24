@@ -55,6 +55,8 @@ class UsbSmartProbeBotTest {
         assertEquals("usb://2004/p6", result.deviceNode)
         assertEquals(2, transport.commands.size)
         assertEquals(0, transport.recoveryCount)
+        assertEquals(SmartDataIntegrity.NVME_VALIDATED, result.dataIntegrity)
+        assertNull(result.failureStage)
 
         val identifyCommand = transport.commands[0]
         assertEquals(4096, identifyCommand.transferLength)
@@ -86,6 +88,8 @@ class UsbSmartProbeBotTest {
         )
 
         assertFalse(result.isSupported)
+        assertEquals(SmartFailureStage.READ, result.failureStage)
+        assertEquals(SmartDataIntegrity.NOT_CHECKED, result.dataIntegrity)
         assertTrue(result.reason.orEmpty().contains("SATA/SAT fallback is not enabled"))
         assertEquals(1, transport.commands.size)
         assertEquals(0x06, transport.commands.single().cdb[3].toInt() and 0xff)

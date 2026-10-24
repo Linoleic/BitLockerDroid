@@ -503,6 +503,7 @@
     <string name="smart_copied">Copied to clipboard</string>
     <string name="smart_unsupported_desc">The storage device controller (e.g. standard USB flash drive) does not implement standard ATA or NVMe S.M.A.R.T. telemetry.</string>
     <string name="smart_loading">Querying device telemetry via SCSI/SAT/NVMe S.M.A.R.T.…</string>
+    <string name="smart_raw_data_untrusted_hint">Validation failed. Received bytes are retained for diagnostics only, without health interpretation.</string>
     <string name="smart_raw_data_source_hint">Source: R = device page, S = summary, D = converted, U = unavailable. Converted values are not raw device bytes.</string>
     <string name="smart_ata_reference_hint">ATA names and summary values follow common conventions and are for reference. This drive model is unverified; remaining life and write units are not inferred.</string>
     <string name="smart_raw_data_title">Raw S.M.A.R.T. Data</string>
@@ -540,6 +541,22 @@
     <string name="smart_query_failed">The health query failed or returned invalid data. Support is unconfirmed; check the connection and authorization, then retry.</string>
     <string name="smart_status_unknown_health">Health status unconfirmed</string>
     <string name="smart_status_unconfirmed">SMART support unconfirmed</string>
+    <string name="smart_query_time">Query time: %1$s</string>
+    <string name="smart_query_duration">Elapsed: %1$.1f seconds</string>
+    <string name="smart_failure_stage">Failure stage: %1$s</string>
+    <string name="smart_failure_authorization">Authorization</string>
+    <string name="smart_failure_connection">Connection</string>
+    <string name="smart_failure_busy">Device busy</string>
+    <string name="smart_failure_unsupported_route">Protocol support</string>
+    <string name="smart_failure_read">Read</string>
+    <string name="smart_failure_validation">Data validation</string>
+    <string name="smart_failure_response">Response parsing</string>
+    <string name="smart_integrity_status">Data integrity: %1$s</string>
+    <string name="smart_integrity_not_checked">Not checked</string>
+    <string name="smart_integrity_ata_passed">ATA checksum passed</string>
+    <string name="smart_integrity_ata_failed">ATA checksum failed</string>
+    <string name="smart_integrity_invalid_page">Invalid data page</string>
+    <string name="smart_integrity_nvme_validated">NVMe log structure checks passed</string>
 
     <string name="connection_authorization_title">Connection &amp; Authorization</string>
     <string name="connection_mode_label">Access mode</string>

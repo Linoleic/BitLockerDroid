@@ -38,9 +38,12 @@ import java.math.BigInteger
 import com.bitlockerdroid.smart.SmartHealthInfo
 import com.bitlockerdroid.smart.SmartHealthManager
 import com.bitlockerdroid.smart.SmartOverallStatus
+import com.bitlockerdroid.smart.SmartFailureStage
+import com.bitlockerdroid.smart.SmartDataIntegrity
 import com.bitlockerdroid.ui.theme.SuccessGreen
 import com.bitlockerdroid.ui.theme.WarningAmber
-import com.bitlockerdroid.ui.volumes.MetaChip
+import java.text.DateFormat
+import java.util.Date
 import kotlinx.coroutines.launch
 
 @Composable
@@ -53,19 +56,20 @@ fun SmartHealthDialog(
     val clipboardManager = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
 
-    var smartInfo by remember { mutableStateOf<SmartHealthInfo?>(null) }
-    var isLoading by remember { mutableStateOf(true) }
-    var showRawData by remember { mutableStateOf(false) }
+    var smartInfo by remember(devicePath, usbDeviceId) { mutableStateOf<SmartHealthInfo?>(null) }
+    var isLoading by remember(devicePath, usbDeviceId) { mutableStateOf(true) }
+    var showRawData by remember(devicePath, usbDeviceId) { mutableStateOf(false) }
 
-    fun refreshTelemetry() {
+    suspend fun refreshTelemetry() {
         isLoading = true
-        scope.launch {
+        try {
             smartInfo = SmartHealthManager.querySmart(context, devicePath, usbDeviceId)
+        } finally {
             isLoading = false
         }
     }
 
-    LaunchedEffect(devicePath) {
+    LaunchedEffect(devicePath, usbDeviceId) {
         refreshTelemetry()
     }
 
@@ -143,6 +147,8 @@ fun SmartHealthDialog(
                             .verticalScroll(scrollState),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                        QueryResultSummary(info)
+
                         // 1. Overall Health Badge Card
                         val (statusText, statusBg, statusFg) = when (info.status) {
                             SmartOverallStatus.HEALTHY -> Triple(
@@ -451,7 +457,8 @@ fun SmartHealthDialog(
                                 }
 
                                 Text(
-                                    text = stringResource(R.string.smart_raw_data_source_hint),
+                                    text = stringResource(if (info.dataIntegrity == SmartDataIntegrity.ATA_CHECKSUM_FAILED || info.dataIntegrity == SmartDataIntegrity.INVALID_PAGE)
+                                        R.string.smart_raw_data_untrusted_hint else R.string.smart_raw_data_source_hint),
                                     modifier = Modifier.padding(top = 6.dp),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -528,7 +535,7 @@ fun SmartHealthDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(
-                        onClick = { refreshTelemetry() },
+                        onClick = { scope.launch { refreshTelemetry() } },
                         enabled = !isLoading
                     ) {
                         Icon(
@@ -551,6 +558,63 @@ fun SmartHealthDialog(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun QueryResultSummary(info: SmartHealthInfo) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        info.queryCompletedAtMillis?.let { completedAt ->
+            Text(
+                text = stringResource(
+                    R.string.smart_query_time,
+                    DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(completedAt))
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        info.queryDurationMillis?.let { duration ->
+            Text(
+                text = stringResource(R.string.smart_query_duration, duration / 1000f),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        info.failureStage?.let { stage ->
+            val stageName = stringResource(
+                when (stage) {
+                    SmartFailureStage.AUTHORIZATION -> R.string.smart_failure_authorization
+                    SmartFailureStage.CONNECTION -> R.string.smart_failure_connection
+                    SmartFailureStage.BUSY -> R.string.smart_failure_busy
+                    SmartFailureStage.UNSUPPORTED_ROUTE -> R.string.smart_failure_unsupported_route
+                    SmartFailureStage.READ -> R.string.smart_failure_read
+                    SmartFailureStage.VALIDATION -> R.string.smart_failure_validation
+                    SmartFailureStage.RESPONSE -> R.string.smart_failure_response
+                }
+            )
+            Text(
+                text = stringResource(R.string.smart_failure_stage, stageName),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+
+        val integrityName = stringResource(
+            when (info.dataIntegrity) {
+                SmartDataIntegrity.NOT_CHECKED -> R.string.smart_integrity_not_checked
+                SmartDataIntegrity.ATA_CHECKSUM_PASSED -> R.string.smart_integrity_ata_passed
+                SmartDataIntegrity.ATA_CHECKSUM_FAILED -> R.string.smart_integrity_ata_failed
+                SmartDataIntegrity.INVALID_PAGE -> R.string.smart_integrity_invalid_page
+                SmartDataIntegrity.NVME_VALIDATED -> R.string.smart_integrity_nvme_validated
+            }
+        )
+        Text(
+            text = stringResource(R.string.smart_integrity_status, integrityName),
+            style = MaterialTheme.typography.bodySmall,
+            color = if (info.dataIntegrity == SmartDataIntegrity.ATA_CHECKSUM_FAILED || info.dataIntegrity == SmartDataIntegrity.INVALID_PAGE)
+                MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

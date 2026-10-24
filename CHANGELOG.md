@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### 新增
 
+- 磁盘健康显示查询时间、耗时、失败阶段与独立的数据校验结果。
 - 主页统一连接与授权入口，支持模式选择、授权检测和 USB 授权。
 
 #### 变更
@@ -69,6 +70,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### Added
 
+- Show query time, elapsed duration, failure stage, and a separate data-validation result in Disk Health.
 - Unify connection and authorization on the home screen, with mode selection, authorization checks, and USB access requests.
 
 #### Changed

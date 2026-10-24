@@ -6,7 +6,7 @@ object SmartDataParser {
 
     fun parseJson(jsonStr: String?): SmartHealthInfo {
         if (jsonStr.isNullOrBlank()) {
-            return SmartHealthInfo.unconfirmed(reason = "Empty telemetry response")
+            return SmartHealthInfo.unconfirmed(reason = "Empty telemetry response").copy(failureStage = SmartFailureStage.RESPONSE)
         }
         return try {
             val obj = JSONObject(jsonStr)
@@ -24,7 +24,7 @@ object SmartDataParser {
                 else -> SmartOverallStatus.UNCONFIRMED
             }
 
-            SmartHealthInfo(
+            val info = SmartHealthInfo(
                 isSupported = supported,
                 status = status,
                 diskType = obj.text("disk_type") ?: "Unknown",
@@ -53,14 +53,19 @@ object SmartDataParser {
                 errorLogEntries = obj.integer("error_log_entries", 0L..Long.MAX_VALUE),
                 deviceNode = obj.text("device_node"),
                 reason = obj.text("reason") ?: obj.text("error"),
+                failureStage = obj.text("failure_stage")?.let { value -> SmartFailureStage.entries.find { it.name == value } }
+                    ?: if (status == SmartOverallStatus.UNCONFIRMED && !supported) SmartFailureStage.RESPONSE else null,
+                dataIntegrity = obj.text("data_integrity")?.let { value -> SmartDataIntegrity.entries.find { it.name == value } }
+                    ?: SmartDataIntegrity.NOT_CHECKED,
                 rawJson = jsonStr,
                 rawPageHex = obj.text("raw_page_hex"),
                 exactCounters = SmartCounter.entries.mapNotNull { counter ->
                     obj.counter(counter)?.let { counter to it }
                 }.toMap()
             )
+            SmartPageValidation.validate(info)
         } catch (e: Exception) {
-            SmartHealthInfo.unconfirmed(reason = "Invalid telemetry response")
+            SmartHealthInfo.unconfirmed(reason = "Invalid telemetry response").copy(failureStage = SmartFailureStage.RESPONSE)
         }
     }
 

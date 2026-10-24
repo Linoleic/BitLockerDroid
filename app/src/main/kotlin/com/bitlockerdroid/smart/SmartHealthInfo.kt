@@ -41,7 +41,11 @@ data class SmartHealthInfo(
     val reason: String? = null,
     val rawJson: String? = null,
     val rawPageHex: String? = null,
-    val exactCounters: Map<SmartCounter, BigInteger> = emptyMap()
+    val exactCounters: Map<SmartCounter, BigInteger> = emptyMap(),
+    val queryCompletedAtMillis: Long? = null,
+    val queryDurationMillis: Long? = null,
+    val failureStage: SmartFailureStage? = null,
+    val dataIntegrity: SmartDataIntegrity = SmartDataIntegrity.NOT_CHECKED
 ) {
     val totalTbWritten: Double?
         get() = counterValue(SmartCounter.TOTAL_BYTES_WRITTEN)?.toDouble()?.div(1_000_000_000_000.0)
@@ -77,6 +81,21 @@ data class SmartHealthInfo(
      * Builds standard CrystalDiskInfo-compatible S.M.A.R.T. telemetry attribute table.
      */
     private fun buildSmartAttributeTable(): String {
+        if (dataIntegrity == SmartDataIntegrity.ATA_CHECKSUM_FAILED || dataIntegrity == SmartDataIntegrity.INVALID_PAGE) {
+            return buildString {
+                appendLine("-- S.M.A.R.T. 诊断数据 ------------------------------------------------------")
+                appendLine("数据校验未通过：仅保留接收数据，不进行健康解读。")
+                reason?.let { appendLine(it) }
+                val hex = rawPageHex
+                if (hex == null) append("没有保留原始字节。") else {
+                    appendLine("以下为未信任的接收数据（最多显示 512 字节）：")
+                    hex.take(1024).chunked(32).forEachIndexed { index, chunk ->
+                        appendLine("%04X: %s".format(index * 16, chunk))
+                    }
+                    if (hex.length > 1024) appendLine("其余数据已省略。")
+                }
+            }.trimEnd()
+        }
         if (!isSupported && status == SmartOverallStatus.UNSUPPORTED) {
             val sb = StringBuilder()
             sb.appendLine("-- S.M.A.R.T. --------------------------------------------------------------")
