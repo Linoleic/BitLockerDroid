@@ -348,11 +348,11 @@
     <!-- Mode Switching Strings -->
     <string name="cancel">Cancel</string>
     <string name="switch_mode_title">Switch Working Mode</string>
-    <string name="switch_mode_msg_with_volumes">Detected %1$d active mounted volume(s). Switching working mode requires safely ejecting all volumes to prevent data loss, and restarting the app to apply the new driver architecture.\n\nDo you want to safely eject all volumes and restart now?</string>
+    <string name="switch_mode_msg_with_volumes">There are %1$d mounted encrypted volume(s). Switching modes will finish writes, flush caches, close all volumes, and restart the app. The disk stays online.\n\nClose all volumes and restart now?</string>
     <string name="switch_mode_msg_idle">Switching working mode requires restarting the app to apply the new driver architecture.\n\nRestart now?</string>
-    <string name="switch_mode_confirm_eject_restart">Eject &amp; Restart</string>
+    <string name="switch_mode_confirm_eject_restart">Close Volumes &amp; Restart</string>
     <string name="switch_mode_confirm_restart">Restart Now</string>
-    <string name="switch_mode_progress">Safely ejecting volumes and restarting…</string>
+    <string name="switch_mode_progress">Flushing and closing volumes before restarting…</string>
 
     <!-- Biometric Credential Vault -->
     <string name="biometric_vault_title">Biometric Credential Vault</string>

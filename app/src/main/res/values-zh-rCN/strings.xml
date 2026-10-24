@@ -348,11 +348,11 @@
     <!-- 模式切换相关文本 -->
     <string name="cancel">取消</string>
     <string name="switch_mode_title">切换工作模式</string>
-    <string name="switch_mode_msg_with_volumes">检测到当前有 %1$d 个已挂载的加密卷。切换工作模式需要先安全弹出所有卷以防止数据损坏，并重启应用以生效新的底层驱动架构。\n\n是否立即安全弹出所有卷并重启应用？</string>
+    <string name="switch_mode_msg_with_volumes">当前有 %1$d 个已挂载的加密卷。切换模式将先完成写入、同步缓存并关闭所有卷，再重启应用。磁盘会保持在线。\n\n是否关闭所有卷并重启应用？</string>
     <string name="switch_mode_msg_idle">切换工作模式需要重启应用以生效新的底层驱动架构。\n\n是否立即重启应用？</string>
-    <string name="switch_mode_confirm_eject_restart">安全弹出并重启</string>
+    <string name="switch_mode_confirm_eject_restart">关闭卷并重启</string>
     <string name="switch_mode_confirm_restart">立即重启</string>
-    <string name="switch_mode_progress">正在安全弹出并重启应用…</string>
+    <string name="switch_mode_progress">正在同步并关闭卷，随后重启应用…</string>
 
     <!-- 生物识别凭据保险箱 -->
     <string name="biometric_vault_title">生物识别凭据保险箱</string>
