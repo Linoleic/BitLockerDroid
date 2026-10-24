@@ -36,6 +36,12 @@
     <string name="copy_log">Copy Log</string>
     <string name="clear_log">Clear Log</string>
     <string name="log_copied">Log copied to clipboard</string>
+    <string name="export_log">Export log</string>
+    <string name="exporting_log">Exporting…</string>
+    <string name="log_export_success">Log exported</string>
+    <string name="log_export_failed">Could not export log: %1$s</string>
+    <string name="log_export_unavailable">Cannot open the system save picker</string>
+    <string name="log_export_privacy_note">The export includes an environment summary, app logs, and recent crash records. Recognized sensitive fields are hidden.</string>
     <string name="log_cleared">Log cleared</string>
     <string name="close">Close</string>
     <string name="mounted">Mounted</string>

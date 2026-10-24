@@ -8,6 +8,7 @@ import android.provider.DocumentsContract
 import android.widget.Toast
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,6 +48,9 @@ import com.bitlockerdroid.ui.theme.BitLockerTheme
 import com.bitlockerdroid.ui.theme.ThemeMode
 import com.bitlockerdroid.ui.volumes.VolumesTabContent
 import com.bitlockerdroid.util.LogFile
+import com.bitlockerdroid.util.LogExportReport
+import com.bitlockerdroid.util.LogExportRedactor
+import com.bitlockerdroid.BuildConfig
 import com.bitlockerdroid.util.DeviceIdentity
 import com.bitlockerdroid.util.PreferenceHelper
 import com.bitlockerdroid.util.RootAccess
@@ -72,6 +76,16 @@ class BitLockerSettingsActivity : FragmentActivity() {
     private var ejectingPathsState = mutableStateOf<Set<String>>(emptySet())
     private var showLogDialogState = mutableStateOf(false)
     private var logContentState = mutableStateOf("")
+    private var isExportingLogState = mutableStateOf(false)
+    private var isLogPickerOpen = false
+    private val logExportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        isLogPickerOpen = false
+        if (uri == null) {
+            isExportingLogState.value = false
+        } else {
+            exportLogTo(uri)
+        }
+    }
     private var rememberedCredentialsState = mutableStateOf<List<PreferenceHelper.SavedCredential>>(emptyList())
     private var vaultProtectedState = mutableStateOf(false)
 
@@ -168,6 +182,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
     private val onOpenLogAction: () -> Unit = { openLogViewer() }
     private val onCloseLogAction: () -> Unit = { showLogDialogState.value = false }
     private val onClearLogAction: () -> Unit = { clearLogFile() }
+    private val onExportLogAction: () -> Unit = { chooseLogExportDestination() }
     private val onDeleteCredentialAction: (String) -> Unit = { id ->
         PreferenceHelper.clearRememberedPassword(this, id)
         refreshRememberedCredentials()
@@ -225,6 +240,8 @@ class BitLockerSettingsActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        isLogPickerOpen = savedInstanceState?.getBoolean("log_export_picker_open") == true
+        isExportingLogState.value = isLogPickerOpen
         // Saved passwords are shown here — block screenshots / screen recording in release builds.
         val isDebuggable = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
         if (!isDebuggable) {
@@ -261,6 +278,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
             val isRefreshing by isRefreshingState
             val showLogDialog by showLogDialogState
             val logContent by logContentState
+            val isExportingLog by isExportingLogState
             val rememberedCredentials by rememberedCredentialsState
             val vaultProtected by vaultProtectedState
             val ejectingPaths by ejectingPathsState
@@ -283,6 +301,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     isRefreshing = isRefreshing,
                     showLogDialog = showLogDialog,
                     logContent = logContent,
+                    isExportingLog = isExportingLog,
                     rememberedCredentials = rememberedCredentials,
                     vaultProtected = vaultProtected,
                     onHomeTabSelected = { vaultProtectedState.value = PreferenceHelper.isBiometricVaultEnabled(this@BitLockerSettingsActivity) },
@@ -316,6 +335,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     onOpenLog = onOpenLogAction,
                     onCloseLog = onCloseLogAction,
                     onClearLog = onClearLogAction,
+                    onExportLog = onExportLogAction,
                     onDeleteCredential = onDeleteCredentialAction,
                     onClearAllCredentials = onClearAllCredentialsAction,
                     onOpenVolume = onOpenVolumeAction,
@@ -750,18 +770,68 @@ class BitLockerSettingsActivity : FragmentActivity() {
         return entries.asReversed().joinToString("\n")
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("log_export_picker_open", isLogPickerOpen)
+        super.onSaveInstanceState(outState)
+    }
+
+    private fun chooseLogExportDestination() {
+        if (isExportingLogState.value) return
+        isExportingLogState.value = true
+        isLogPickerOpen = true
+        try {
+            val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
+            logExportLauncher.launch("BitUnlocker-log-$stamp.txt")
+        } catch (e: Exception) {
+            isLogPickerOpen = false
+            isExportingLogState.value = false
+            Toast.makeText(this, R.string.log_export_unavailable, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun exportLogTo(uri: android.net.Uri) {
+        isExportingLogState.value = true
+        lifecycleScope.launch {
+            var completed = false
+            try {
+                withContext(Dispatchers.IO) {
+                    val environment = LogExportReport.Environment(
+                        version = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                        android = "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
+                        device = "${Build.MANUFACTURER} ${Build.MODEL}",
+                        mode = if (PreferenceHelper.useRootAccess) "Root" else "Non-root (USB Host)",
+                        time = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", java.util.Locale.US).format(java.util.Date())
+                    )
+                    // Capture after the picker returns, without scanning disks or accessing credentials.
+                    val report = LogExportReport.create(environment, LogFile.snapshot())
+                    contentResolver.openOutputStream(uri, "wt")?.use {
+                        it.write(report.toByteArray(Charsets.UTF_8))
+                        it.flush()
+                    } ?: throw java.io.IOException("Cannot open the selected document")
+                    completed = true
+                }
+                Toast.makeText(this@BitLockerSettingsActivity, R.string.log_export_success, Toast.LENGTH_SHORT).show()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                val reason = LogExportRedactor().redact(e.message ?: e.javaClass.simpleName)
+                Toast.makeText(this@BitLockerSettingsActivity, getString(R.string.log_export_failed, reason), Toast.LENGTH_LONG).show()
+            } finally {
+                if (!completed) withContext(NonCancellable + Dispatchers.IO) {
+                    // CreateDocument creates a new document; do not leave a misleading partial report.
+                    try { DocumentsContract.deleteDocument(contentResolver, uri) } catch (_: Exception) {}
+                }
+                isExportingLogState.value = false
+            }
+        }
+    }
+
     private fun openLogViewer() {
         lifecycleScope.launch(Dispatchers.IO) {
-            val appFile = LogFile.appLogFile()
-            val text = if (appFile != null && appFile.exists()) {
-                try {
-                    val raw = appFile.readText(Charsets.UTF_8)
-                    formatLogForDisplay(raw)
-                } catch (e: Exception) {
-                    getString(R.string.read_log_failed, e.message ?: "")
-                }
-            } else {
-                getString(R.string.no_app_log)
+            val text = try {
+                LogFile.readApplication()?.let(::formatLogForDisplay) ?: getString(R.string.no_app_log)
+            } catch (e: Exception) {
+                getString(R.string.read_log_failed, e.message ?: "")
             }
             withContext(Dispatchers.Main) {
                 logContentState.value = text
@@ -772,12 +842,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
 
     private fun clearLogFile() {
         lifecycleScope.launch(Dispatchers.IO) {
-            val appFile = LogFile.appLogFile()
-            if (appFile != null && appFile.exists()) {
-                try {
-                    appFile.writeText("")
-                } catch (_: Exception) {}
-            }
+            try { LogFile.clear() } catch (_: Exception) {}
             withContext(Dispatchers.Main) {
                 logContentState.value = ""
                 Toast.makeText(this@BitLockerSettingsActivity, R.string.log_cleared, Toast.LENGTH_SHORT).show()
@@ -799,6 +864,7 @@ fun MainAppScreen(
     isRefreshing: Boolean,
     showLogDialog: Boolean,
     logContent: String,
+    isExportingLog: Boolean,
     rememberedCredentials: List<PreferenceHelper.SavedCredential>,
     vaultProtected: Boolean = false,
     onHomeTabSelected: () -> Unit = {},
@@ -832,6 +898,7 @@ fun MainAppScreen(
     onOpenLog: () -> Unit,
     onCloseLog: () -> Unit,
     onClearLog: () -> Unit,
+    onExportLog: () -> Unit,
     onDeleteCredential: (String) -> Unit,
     onClearAllCredentials: () -> Unit,
     onOpenVolume: (String) -> Unit,
@@ -1057,6 +1124,8 @@ fun MainAppScreen(
                 logContent = logContent,
                 onClose = onCloseLog,
                 onClear = onClearLog,
+                onExport = onExportLog,
+                isExporting = isExportingLog,
                 onRefresh = onOpenLog
             )
         }

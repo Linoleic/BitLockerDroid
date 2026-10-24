@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - 新增“关闭卷（保持连接）”，支持免 Root 关闭卷后查询磁盘健康；访问卷前需手动重新解锁。
 - 显示 SAF 写入数量及关闭、弹出的实际阶段，失败时保留阶段与原因。
+- 日志窗口支持导出 TXT，附环境摘要及最近崩溃记录，并隐藏已识别的敏感字段。
 
 ### English
 
@@ -21,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Close a device's volumes while keeping it connected, including before a non-root health query. Unlock the volumes manually to access them again.
 - Show SAF write counts and actual close/eject stages, retaining the failed stage and reason.
+- Export logs as TXT with an environment summary, recent crashes and recognized sensitive fields hidden.
 
 ## [v1.2.0] - 2026-10-24
 

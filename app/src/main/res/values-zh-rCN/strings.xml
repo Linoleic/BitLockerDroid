@@ -36,6 +36,12 @@
     <string name="copy_log">复制日志</string>
     <string name="clear_log">清空日志</string>
     <string name="log_copied">日志已复制到剪贴板</string>
+    <string name="export_log">导出日志</string>
+    <string name="exporting_log">正在导出…</string>
+    <string name="log_export_success">日志已导出</string>
+    <string name="log_export_failed">日志导出失败：%1$s</string>
+    <string name="log_export_unavailable">无法打开系统保存界面</string>
+    <string name="log_export_privacy_note">导出内容包含环境摘要、应用日志和最近崩溃记录，已识别的敏感字段会被隐藏。</string>
     <string name="log_cleared">日志已清空</string>
     <string name="close">关闭</string>
     <string name="mounted">已挂载</string>
