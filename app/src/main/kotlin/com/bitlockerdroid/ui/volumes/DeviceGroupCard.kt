@@ -30,6 +30,7 @@ import com.bitlockerdroid.service.VirtualStorageMountManager.VirtualMountInfo
 import com.bitlockerdroid.share.LanShareState
 import com.bitlockerdroid.util.DeviceIdentity
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DeviceGroupCard(
     group: DeviceVolumeGroup,
@@ -308,14 +309,14 @@ fun DeviceGroupCard(
                         }
                     }
 
-                    // Compact secondary row for S.M.A.R.T. and Eject All
+                    // Keep each action at its natural width and wrap when needed.
                     val hasActions = isSmartSupported || (group.hasUnlocked && onEjectGroup != null)
                     if (hasActions) {
                         Spacer(modifier = Modifier.height(10.dp))
-                        Row(
+                        FlowRow(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             if (isSmartSupported) {
                                 AppButton(
