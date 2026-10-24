@@ -30,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### 修复
 
+- 修复短横屏下凭据列表不可见、模式切换说明被裁切的问题，列表和正文可滚动查看。
 - 免 Root 写入实际完成后才返回成功，写盘失败后不再复用异常通道。
 - USB 命令等待原状态响应后才继续；状态超时不再重发整条写命令，异常通道不再反复初始化。
 - 切换模式只同步并关闭卷，保持磁盘在线；安全弹出仍执行停盘保护。
@@ -77,6 +78,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### Fixed
 
+- Keep the credential list visible and mode-switch explanations scrollable in short landscape windows.
 - Acknowledge non-root writes only after completion and stop reusing a failed I/O channel.
 - Wait for the original USB command status before continuing. Do not replay an entire write after a status timeout or repeatedly initialize a failed channel.
 - Flush and close volumes during mode changes while keeping the disk online. Keep spindown protection for explicit ejects.
