@@ -478,8 +478,8 @@
     <string name="settings_hw_badge_disabled">Disabled</string>
 
     <!-- S.M.A.R.T. Health Telemetry -->
-    <string name="smart_dialog_title">Storage Health &amp; S.M.A.R.T. Telemetry</string>
-    <string name="smart_btn_text">Hardware Health &amp; S.M.A.R.T.</string>
+    <string name="smart_dialog_title">Disk Health (SMART)</string>
+    <string name="smart_btn_text">Disk Health</string>
     <string name="smart_status_healthy">Healthy</string>
     <string name="smart_status_warning">Warning</string>
     <string name="smart_status_critical">Critical / Failing</string>
@@ -514,7 +514,7 @@
     <string name="device_group_locked_header">BitLocker Locked Partitions</string>
     <string name="device_group_unlocked_header">Mounted Partitions</string>
     <string name="device_group_unencrypted_header">Native Storage Partitions</string>
-    <string name="device_smart_telemetry_btn">Hardware Health &amp; S.M.A.R.T.</string>
+    <string name="device_smart_telemetry_btn">Disk Health</string>
     <string name="partition_number_format">Partition %1$d</string>
     <string name="partition_number_with_node">Partition %1$d · %2$s</string>
     <string name="authorization_checking">Checking…</string>
