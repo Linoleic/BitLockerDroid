@@ -108,9 +108,9 @@ data class SmartHealthInfo(
 
         val sb = StringBuilder()
         sb.appendLine("-- S.M.A.R.T. --------------------------------------------------------------")
-        sb.appendLine("ID Sta Cur Wor Thr RawValues    AttributeName (标题含义见说明) Src")
 
         if (!isSupported && status == SmartOverallStatus.UNCONFIRMED) {
+            sb.appendLine(formatTableLine("ID", "Sta", "Cur", "Wor", "Thr", "RawValues", "Src", "AttributeName (标题含义见说明)", 32))
             sb.appendLine("状态尚未确认，当前没有可用的原始 S.M.A.R.T. 数据。")
             if (!reason.isNullOrBlank()) sb.appendLine(reason)
             return sb.toString().trimEnd()
@@ -118,19 +118,10 @@ data class SmartHealthInfo(
 
         val isNvme = diskType.contains("NVMe", ignoreCase = true)
         val rows = if (isNvme) buildNvmeRows() else buildSataRows()
-
+        val rawWidth = maxOf(12, rows.maxOfOrNull { it.rawValues.length } ?: 0)
+        sb.appendLine(formatTableLine("ID", "Sta", "Cur", "Wor", "Thr", "RawValues", "Src", "AttributeName (标题含义见说明)", rawWidth))
         for (row in rows) {
-            // Formats: "01  G  __0 __0 __0 000000000000 严重警告标志"
-            sb.appendLine("%s  %s  %s %s %s %s %s %s".format(
-                row.id,
-                row.sta,
-                row.cur,
-                row.wor,
-                row.thr,
-                row.rawValues,
-                row.attributeName,
-                row.source
-            ))
+            sb.appendLine(formatTableLine(row.id, row.sta, row.cur, row.wor, row.thr, row.rawValues, row.source, row.attributeName, rawWidth))
         }
 
         sb.appendLine()
@@ -140,12 +131,30 @@ data class SmartHealthInfo(
         sb.appendLine(" Wor: 历史最差值")
         sb.appendLine(" Thr: 临界值")
         sb.appendLine(" RawValues: 十六进制数值，来源见 Src")
+        sb.appendLine(" 缺失值以 ASCII '-' 显示。")
         sb.appendLine(" AttributeName: 属性名称")
         sb.appendLine(" Src: 数据来源(R: 设备原始页 | S: 摘要直接字段 | D: 摘要换算 | U: 未知)")
         sb.appendLine(" D 表示摘要换算值，不是设备原始页数据。")
         if (!isNvme) sb.append(" SATA 属性名称仅供参考，厂商定义可能不同。")
 
         return sb.toString()
+    }
+
+    private fun formatTableLine(
+        id: String,
+        sta: String,
+        cur: String,
+        wor: String,
+        thr: String,
+        rawValues: String,
+        source: String,
+        attributeName: String,
+        rawWidth: Int
+    ): String {
+        val widths = listOf(2, 3, 3, 3, 3, rawWidth, 3)
+        val cells = listOf(id, sta, cur, wor, thr, rawValues, source)
+        return cells.mapIndexed { index, value -> value.padStart(widths[index]) }
+            .joinToString(" | ") + " | " + attributeName
     }
 
     private data class SmartRow(
@@ -202,7 +211,7 @@ data class SmartHealthInfo(
             sta: String = "U",
             raw: String? = null,
             source: String = if (value == null) "U" else "S"
-        ) = SmartRow(id, sta, "—", "—", "—", raw ?: value?.toString(16)?.uppercase()?.padStart(12, '0') ?: "—", name, source)
+        ) = SmartRow(id, sta, "-", "-", "-", raw ?: value?.toString(16)?.uppercase()?.padStart(12, '0') ?: "-", name, source)
 
         data class CounterRow(val value: BigInteger?, val hex: String?, val source: String)
         fun counterRow(counter: SmartCounter): CounterRow {
@@ -249,13 +258,7 @@ data class SmartHealthInfo(
         val hasHex = isCompleteRawPage(hex)
         val rows = mutableListOf<SmartRow>()
 
-        fun formatCurWor(v: Int): String {
-            return when {
-                v >= 100 -> "%3d".format(v)
-                v >= 10 -> "_%2d".format(v)
-                else -> "__%d".format(v)
-            }
-        }
+        fun formatCurWor(v: Int): String = v.toString()
 
         if (hasHex) {
             for (i in 0 until 30) {
@@ -273,12 +276,12 @@ data class SmartHealthInfo(
                 val name = getSataAttrName(id)
                 val idHex = "%02X".format(id)
 
-                rows.add(SmartRow(idHex, "U", formatCurWor(cur), formatCurWor(wor), "—", rawStr, name, "R"))
+                rows.add(SmartRow(idHex, "U", formatCurWor(cur), formatCurWor(wor), "-", rawStr, name, "R"))
             }
         }
 
         fun field(id: String, value: Long?, name: String, status: String = "U", source: String = if (value == null) "U" else "S") =
-            SmartRow(id, status, "—", "—", "—", value?.let { "%012X".format(it) } ?: "—", name, source)
+            SmartRow(id, status, "-", "-", "-", value?.let { "%012X".format(it) } ?: "-", name, source)
         val summaryFields = listOf(
             field("05", reallocatedSectors, "重新分配扇区数", reallocatedSectors?.let { if (it == 0L) "G" else "W" } ?: "U"),
             field("09", powerHours, "通电时间(小时)"),

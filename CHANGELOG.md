@@ -17,13 +17,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### 变更
 
-- SMART 原始表标明原始页、摘要、换算与未提供的数据来源，复制时保留说明。
-- 精简 SMART 入口为“磁盘健康”，详情标题为“磁盘健康（SMART）”。
+- S.M.A.R.T. 原始表标明原始页、摘要、换算与未提供的数据来源，复制时保留说明。
+- 精简 S.M.A.R.T. 入口为“磁盘健康”，详情标题为“磁盘健康（S.M.A.R.T.）”。
 - Root 环境合入主页“连接与授权”，移除设置中的重复入口；精确过滤系统修复提示在 Root 模式自动启用，不再提供开关。
 - 免 Root USB 读写改为每次最多 16 KB 的同步传输，停用多请求并行传输。
-- SMART 查询按已验证桥接芯片选择协议；RTL9210 需通过控制器标识和日志校验，未知 USB 不发送专用探测命令。
-- 免 Root 主页仅识别可查询设备；安全关闭卷后，才可手动查询 SMART，避免干扰解锁和读写。
-- SMART 区分“尚未确认支持”和“不支持”，避免将设备占用或查询失败误报为硬件不支持。
+- S.M.A.R.T. 查询按已验证桥接芯片选择协议；RTL9210 需通过控制器标识和日志校验，未知 USB 不发送专用探测命令。
+- 免 Root 主页仅识别可查询设备；安全关闭卷后，才可手动查询 S.M.A.R.T.，避免干扰解锁和读写。
+- S.M.A.R.T. 区分“尚未确认支持”和“不支持”，避免将设备占用或查询失败误报为硬件不支持。
 
 #### 安全
 
@@ -33,12 +33,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### 修复
 
-- 校验 ATA SMART 数据页校验和；校验失败时停止健康解读，保留原始数据用于诊断。
+- 修复原始数据表列错位；统一列宽，完整保留长计数，并将属性名放在末列。
+- 校验 ATA S.M.A.R.T. 数据页校验和；校验失败时停止健康解读，保留原始数据用于诊断。
 - SATA 型号未经验证时不再推算寿命和写入字节数，也不以零错误计数断言整体健康。
-- SMART 详情和原始表保留完整大计数，拒绝截断数据页；ATA 缺少真实阈值时不再猜测属性健康状态。
-- Root SMART 完整保留 NVMe 128 位计数及读写总量，修复截断和溢出；统一两种模式的 NVMe 告警规则。
-- SMART 查询失败、响应无效时显示“待确认”，保留重试入口，不再误判为不支持。
-- SMART 缺失指标显示为未知，不再补成满健康度、默认温度或零错误；原始表不再虚构标准化值和阈值。
+- S.M.A.R.T. 详情和原始表保留完整大计数，拒绝截断数据页；ATA 缺少真实阈值时不再猜测属性健康状态。
+- Root S.M.A.R.T. 完整保留 NVMe 128 位计数及读写总量，修复截断和溢出；统一两种模式的 NVMe 告警规则。
+- S.M.A.R.T. 查询失败、响应无效时显示“待确认”，保留重试入口，不再误判为不支持。
+- S.M.A.R.T. 缺失指标显示为未知，不再补成满健康度、默认温度或零错误；原始表不再虚构标准化值和阈值。
 - 修复窄屏主页标题裁切和“全部弹出”按钮挤成竖排的问题。
 - 修复短横屏下凭据列表不可见、模式切换说明被裁切的问题，列表和正文可滚动查看。
 - 免 Root 写入实际完成后才返回成功，写盘失败后不再复用异常通道。
@@ -75,13 +76,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### Changed
 
-- Label SMART table values as device-page, summary, converted, or unavailable data, and retain the source legend when copying.
-- Shorten the SMART entry to “Disk Health” and the dialog title to “Disk Health (SMART)”.
+- Label S.M.A.R.T. table values as device-page, summary, converted, or unavailable data, and retain the source legend when copying.
+- Shorten the S.M.A.R.T. entry to “Disk Health” and the dialog title to “Disk Health (S.M.A.R.T.)”.
 - Move Root environment details into the home connection panel, remove duplicate settings entries, and automatically filter verified repair prompts in Root mode without a toggle.
 - Use synchronous USB transfers of up to 16 KB in non-root mode, replacing multiple queued requests.
-- Select SMART protocols by verified bridge identity. Validate RTL9210 controller identity and logs; do not send vendor probes to unknown USB devices.
-- Offer non-root SMART queries only after volumes are safely closed. Home discovery only identifies candidate devices without issuing probe commands.
-- Distinguish unconfirmed SMART support from unsupported hardware when a device is busy or a query fails.
+- Select S.M.A.R.T. protocols by verified bridge identity. Validate RTL9210 controller identity and logs; do not send vendor probes to unknown USB devices.
+- Offer non-root S.M.A.R.T. queries only after volumes are safely closed. Home discovery only identifies candidate devices without issuing probe commands.
+- Distinguish unconfirmed S.M.A.R.T. support from unsupported hardware when a device is busy or a query fails.
 
 #### Security
 
@@ -91,12 +92,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### Fixed
 
-- Validate ATA SMART page checksums; stop health interpretation on validation failure and retain raw data for diagnostics.
+- Align raw-data columns with consistent widths, preserve full counters, and place attribute names last.
+- Validate ATA S.M.A.R.T. page checksums; stop health interpretation on validation failure and retain raw data for diagnostics.
 - Stop inferring remaining life, write byte totals, or overall good health from generic attributes of unverified SATA models.
-- Keep full-width counters in SMART details and raw tables, reject truncated pages, and leave ATA attribute health unknown when thresholds are unavailable.
-- Preserve full NVMe 128-bit counters and byte totals in Root SMART results, and align NVMe warning rules across modes.
-- Keep failed or invalid SMART queries unconfirmed and available for retry instead of marking them unsupported.
-- Show missing SMART metrics as unknown instead of full health, default temperatures, or zero errors; stop inventing normalized values and thresholds in the raw table.
+- Keep full-width counters in S.M.A.R.T. details and raw tables, reject truncated pages, and leave ATA attribute health unknown when thresholds are unavailable.
+- Preserve full NVMe 128-bit counters and byte totals in Root S.M.A.R.T. results, and align NVMe warning rules across modes.
+- Keep failed or invalid S.M.A.R.T. queries unconfirmed and available for retry instead of marking them unsupported.
+- Show missing S.M.A.R.T. metrics as unknown instead of full health, default temperatures, or zero errors; stop inventing normalized values and thresholds in the raw table.
 - Fix clipped home titles and vertically squeezed eject buttons on narrow screens.
 - Keep the credential list visible and mode-switch explanations scrollable in short landscape windows.
 - Acknowledge non-root writes only after completion and stop reusing a failed I/O channel.

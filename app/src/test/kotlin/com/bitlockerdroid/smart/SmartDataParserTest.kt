@@ -6,6 +6,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SmartDataParserTest {
+    private fun row(table: String, id: String): List<String> = table.lineSequence()
+        .first { it.trimStart().startsWith("$id |") }
+        .split(" | ").map(String::trim)
 
     @Test
     fun testParseNvmeSmartJsonAndBuildAttributeTable() {
@@ -46,17 +49,17 @@ class SmartDataParserTest {
 
         val table = info.formattedRawData
         assertTrue(table.contains("-- S.M.A.R.T. --------------------------------------------------------------"))
-        assertTrue(table.contains("ID Sta Cur Wor Thr RawValues    AttributeName (标题含义见说明) Src"))
-        assertTrue(table.contains("01  G  — — — 000000000000 严重警告标志 S"))
-        assertTrue(table.contains("02  U  — — — 00000000013A 温度 D"))
-        assertTrue(table.contains("03  G  — — — 000000000063 可用备用空间 S"))
-        assertTrue(table.contains("04  G  — — — 000000000001 可用备用空间阈值 S"))
-        assertTrue(table.contains("05  G  — — — 000000000001 已用寿命百分比 D"))
-        assertTrue(table.contains("0B  U  — — — 000000000185 通电次数 S"))
-        assertTrue(table.contains("0C  U  — — — 000000000288 通电时间(小时) S"))
-        assertTrue(table.contains("0D  U  — — — 000000000099 不安全关机计数 S"))
-        assertTrue(table.contains("0E  W  — — — 00000000000E 媒体与数据完整性错误计数 S"))
-        assertTrue(table.contains("0F  W  — — — 000000000005 错误日志项数 S"))
+        assertTrue(table.lines().any { it.contains("ID") && it.contains("RawValues") && it.contains("Src") && it.contains("AttributeName") })
+        assertEquals(listOf("01", "G", "-", "-", "-", "000000000000", "S", "严重警告标志"), row(table, "01"))
+        assertEquals(listOf("02", "U", "-", "-", "-", "00000000013A", "D", "温度"), row(table, "02"))
+        assertEquals(listOf("03", "G", "-", "-", "-", "000000000063", "S", "可用备用空间"), row(table, "03"))
+        assertEquals(listOf("04", "G", "-", "-", "-", "000000000001", "S", "可用备用空间阈值"), row(table, "04"))
+        assertEquals(listOf("05", "G", "-", "-", "-", "000000000001", "D", "已用寿命百分比"), row(table, "05"))
+        assertEquals(listOf("0B", "U", "-", "-", "-", "000000000185", "S", "通电次数"), row(table, "0B"))
+        assertEquals(listOf("0C", "U", "-", "-", "-", "000000000288", "S", "通电时间(小时)"), row(table, "0C"))
+        assertEquals(listOf("0D", "U", "-", "-", "-", "000000000099", "S", "不安全关机计数"), row(table, "0D"))
+        assertEquals(listOf("0E", "W", "-", "-", "-", "00000000000E", "S", "媒体与数据完整性错误计数"), row(table, "0E"))
+        assertEquals(listOf("0F", "W", "-", "-", "-", "000000000005", "S", "错误日志项数"), row(table, "0F"))
         assertTrue(table.contains("标题含义说明:"))
         assertTrue(table.contains(" Sta: 状态(G: 良好 | W: 警告 | B: 严重告警 | U: 未知)"))
         assertTrue(table.contains(" Cur: 当前值"))
@@ -125,9 +128,9 @@ class SmartDataParserTest {
         assertEquals("SATA SSD", info.diskType)
         val table = info.formattedRawData
         assertFalse(table.contains("01  "))
-        assertTrue(table.contains("05  G  — — — 000000000000 重新分配扇区数 S"))
+        assertEquals(listOf("05", "G", "-", "-", "-", "000000000000", "S", "重新分配扇区数"), row(table, "05"))
         assertFalse(table.contains("E7  "))
-        assertTrue(table.contains("C2  U  — — — 000000000020 温度 S"))
+        assertEquals(listOf("C2", "U", "-", "-", "-", "000000000020", "S", "温度"), row(table, "C2"))
         assertTrue(table.contains("SATA 属性名称仅供参考，厂商定义可能不同。"))
         assertFalse(table.contains("F1  "))
         assertFalse(table.contains("100"))

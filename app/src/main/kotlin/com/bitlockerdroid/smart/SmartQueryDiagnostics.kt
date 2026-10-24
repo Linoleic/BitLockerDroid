@@ -48,8 +48,8 @@ internal object SmartPageValidation {
             product = info.product, deviceNode = info.deviceNode, rawJson = info.rawJson,
             rawPageHex = info.rawPageHex, dataIntegrity = integrity, failureStage = SmartFailureStage.VALIDATION,
             reason = info.reason?.takeIf { reported == integrity && info.failureStage == SmartFailureStage.VALIDATION }
-                ?: if (integrity == SmartDataIntegrity.ATA_CHECKSUM_FAILED) "ATA SMART page checksum mismatch."
-                else "SMART data page is invalid.",
+                ?: if (integrity == SmartDataIntegrity.ATA_CHECKSUM_FAILED) "ATA S.M.A.R.T. page checksum mismatch."
+                else "S.M.A.R.T. data page is invalid.",
             queryCompletedAtMillis = info.queryCompletedAtMillis, queryDurationMillis = info.queryDurationMillis
         )
     }

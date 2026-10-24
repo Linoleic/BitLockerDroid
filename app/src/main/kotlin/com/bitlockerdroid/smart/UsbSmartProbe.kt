@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger
 /** BOT failed, recovery succeeded, and a later idle probe may retry safely. */
 class RecoveredProbeException(message: String, cause: IOException) : IOException(message, cause)
 
-/** Read-only SMART access for the explicitly supported Realtek RTL9210 bridge. */
+/** Read-only S.M.A.R.T. access for the explicitly supported Realtek RTL9210 bridge. */
 object UsbSmartProbe {
 
     private const val CBW_SIGNATURE = 0x43425355 // "USBC" on the wire
@@ -57,7 +57,7 @@ object UsbSmartProbe {
     private fun unsupportedUnknownBridge(node: String?, vendorId: Int, productId: Int) =
         SmartHealthInfo.unconfirmed(
             node = node,
-            reason = "USB SMART probing is disabled for unrecognized bridge %04x:%04x."
+            reason = "USB S.M.A.R.T. probing is disabled for unrecognized bridge %04x:%04x."
                 .format(vendorId and 0xffff, productId and 0xffff)
         ).copy(failureStage = SmartFailureStage.UNSUPPORTED_ROUTE)
 
@@ -93,11 +93,11 @@ object UsbSmartProbe {
         }
         val smartResult = executeReadCommand(transport, smartCdb, NVME_SMART_LOG_SIZE)
         if (smartResult.commandFailed) {
-            return unsupportedForProfile(profile, node, "RTL9210 did not provide the NVMe SMART/Health log.")
+            return unsupportedForProfile(profile, node, "RTL9210 did not provide the NVMe S.M.A.R.T./Health log.")
         }
 
         return parseSmartLog(identity, smartResult.data, node)
-            ?: unsupportedForProfile(profile, node, "RTL9210 returned an invalid NVMe SMART/Health log.")
+            ?: unsupportedForProfile(profile, node, "RTL9210 returned an invalid NVMe S.M.A.R.T./Health log.")
                 .copy(failureStage = SmartFailureStage.VALIDATION, dataIntegrity = SmartDataIntegrity.INVALID_PAGE,
                     diskType = "NVMe SSD", rawPageHex = smartResult.data.joinToString("") { "%02X".format(it.toInt() and 0xff) })
     }

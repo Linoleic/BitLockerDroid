@@ -1,12 +1,12 @@
 /*
- * smart_reader.c -- Conservative SMART reader with bridge-specific NVMe support.
+ * smart_reader.c -- Conservative S.M.A.R.T. reader with bridge-specific NVMe support.
  *
  * Implements:
  * 1. Automatic partition-to-disk resolution via sysfs (/sys/dev/block/M:m)
  * 2. Standard SCSI INQUIRY (0x12)
  * 3. USB bridge allowlisting from the physical sysfs ancestry
- * 4. Realtek RTL9210 E4 NVMe Identify + SMART log only
- * 5. ATA SAT SMART on non-USB devices
+ * 4. Realtek RTL9210 E4 NVMe Identify + S.M.A.R.T. log only
+ * 5. ATA SAT S.M.A.R.T. on non-USB devices
  * 6. Standardized JSON output generation
  */
 #define _GNU_SOURCE 1
@@ -173,7 +173,7 @@ static int validate_nvme_smart_log(const unsigned char *page, size_t len) {
         if (page[i] != 0xff) all_ff = 0;
     }
     if (all_zero || all_ff) return -1;
-    /* NVMe SMART/Health Information: bits 6..7 are reserved. */
+    /* NVMe S.M.A.R.T./Health Information: bits 6..7 are reserved. */
     if ((page[0] & 0xc0) != 0) return -1;
     if (page[3] > 100 || page[4] > 100) return -1;
     /* Zero means temperature unavailable. Otherwise require a plausible
@@ -184,7 +184,7 @@ static int validate_nvme_smart_log(const unsigned char *page, size_t len) {
     return 0;
 }
 
-/* Return 0 for a valid ATA SMART page, -1 for an invalid page, and -2 when a
+/* Return 0 for a valid ATA S.M.A.R.T. page, -1 for an invalid page, and -2 when a
  * structurally present page fails its 8-bit checksum. */
 static int validate_ata_smart_page(const unsigned char *page, size_t len) {
     if (!page || len != 512) return -1;
@@ -208,7 +208,7 @@ typedef struct {
     const char *status;
 } sata_metrics;
 
-/* Parse only the standard 30 ATA SMART attribute slots. A successful SG_IO
+/* Parse only the standard 30 ATA S.M.A.R.T. attribute slots. A successful SG_IO
  * alone is not enough to infer temperature, health, or zero-valued counters. */
 static int extract_sata_metrics(const unsigned char *page, size_t len, sata_metrics *m) {
     if (!page || len != 512 || !m || validate_ata_smart_page(page, len) != 0) return -1;
@@ -476,7 +476,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
     if (bridge == USB_BRIDGE_UNKNOWN) {
         close(fd);
         snprintf(json, json_max,
-            "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"failure_stage\":\"UNSUPPORTED_ROUTE\",\"disk_type\":\"USB Storage\",\"reason\":\"SMART passthrough is disabled for unrecognized USB bridges.\"}");
+            "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"failure_stage\":\"UNSUPPORTED_ROUTE\",\"disk_type\":\"USB Storage\",\"reason\":\"S.M.A.R.T. passthrough is disabled for unrecognized USB bridges.\"}");
         return 0;
     }
 
@@ -506,7 +506,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
                      SG_DXFER_FROM_DEV, sense, sizeof(sense)) != 0) {
             close(fd);
             snprintf(json, json_max,
-                "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"failure_stage\":\"READ\",\"reason\":\"RTL9210 NVMe SMART log transfer failed; no fallback bridge commands were sent.\"}");
+                "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"failure_stage\":\"READ\",\"reason\":\"RTL9210 NVMe S.M.A.R.T. log transfer failed; no fallback bridge commands were sent.\"}");
             return 0;
         }
         if (validate_nvme_smart_log(nvme_smart, sizeof(nvme_smart)) != 0) {
@@ -514,7 +514,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
             format_page_hex(nvme_smart, sizeof(nvme_smart), raw_page_hex);
             close(fd);
             snprintf(json, json_max,
-                "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"disk_type\":\"NVMe SSD\",\"data_integrity\":\"INVALID_PAGE\",\"failure_stage\":\"VALIDATION\",\"reason\":\"RTL9210 returned an invalid NVMe SMART log; telemetry was not accepted.\",\"raw_page_hex\":\"%s\"}",
+                "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"disk_type\":\"NVMe SSD\",\"data_integrity\":\"INVALID_PAGE\",\"failure_stage\":\"VALIDATION\",\"reason\":\"RTL9210 returned an invalid NVMe S.M.A.R.T. log; telemetry was not accepted.\",\"raw_page_hex\":\"%s\"}",
                 raw_page_hex);
             return 0;
         }
@@ -624,7 +624,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         return 0;
     }
 
-    // 6. Try SATA ATA SMART READ DATA (0xB0, 0xD0)
+    // 6. Try SATA ATA S.M.A.R.T. READ DATA (0xB0, 0xD0)
     unsigned char smart_cdb[16];
     memset(smart_cdb, 0, sizeof(smart_cdb));
     smart_cdb[0] = 0x85;
@@ -644,8 +644,8 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         char raw_page_hex[1025];
         format_page_hex(smart_data, sizeof(smart_data), raw_page_hex);
         const char *integrity = sata_validation == -2 ? "ATA_CHECKSUM_FAILED" : "INVALID_PAGE";
-        const char *reason = sata_validation == -2 ? "ATA SMART page checksum mismatch." :
-                                                     "ATA SMART page has an invalid length or empty contents.";
+        const char *reason = sata_validation == -2 ? "ATA S.M.A.R.T. page checksum mismatch." :
+                                                     "ATA S.M.A.R.T. page has an invalid length or empty contents.";
         close(fd);
         snprintf(json, json_max,
             "{\"supported\":false,\"status\":\"UNCONFIRMED\",\"data_integrity\":\"%s\","
@@ -692,7 +692,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         return 0;
     }
 
-    // 7. A failed command cannot establish lack of SMART capability or page integrity.
+    // 7. A failed command cannot establish lack of S.M.A.R.T. capability or page integrity.
     char esc_vendor[32], esc_prod[32], esc_rev[16];
     escape_json_str(vendor, esc_vendor, sizeof(esc_vendor));
     escape_json_str(product, esc_prod, sizeof(esc_prod));
@@ -711,7 +711,7 @@ int read_smart_json(const char *dev_path, char *json, size_t json_max) {
         "\"reason\":\"%s\""
         "}",
         esc_vendor, esc_prod, esc_rev, actual_dev,
-        "The ATA SMART command failed; capability and page integrity are unconfirmed."
+        "The ATA S.M.A.R.T. command failed; capability and page integrity are unconfirmed."
     );
 
     close(fd);

@@ -476,7 +476,7 @@
     <string name="settings_hw_badge_disabled">已停用</string>
 
     <!-- S.M.A.R.T. Health Telemetry -->
-    <string name="smart_dialog_title">磁盘健康（SMART）</string>
+    <string name="smart_dialog_title">磁盘健康（S.M.A.R.T.）</string>
     <string name="smart_btn_text">磁盘健康</string>
     <string name="smart_status_healthy">健康良好</string>
     <string name="smart_status_warning">警示预警</string>
@@ -533,12 +533,12 @@
     <string name="authorization_error_help">无法读取 USB 授权状态，请重新检测。</string>
     <string name="authorization_request_failed">无法发起 USB 授权，请重新连接设备后重试。</string>
     <string name="smart_usb_unavailable">USB 连接不可用，请重新插入并授权后重试。</string>
-    <string name="smart_usb_unverified">尚未验证此 USB 桥接芯片的 SMART 查询方式，未发送探测命令。</string>
+    <string name="smart_usb_unverified">尚未验证此 USB 桥接芯片的 S.M.A.R.T. 查询方式，未发送探测命令。</string>
     <string name="smart_usb_close_volumes">请先安全关闭此设备上已解锁的卷，再查询磁盘健康。</string>
-    <string name="smart_query_retry">健康查询失败，USB 连接已恢复。尚未确认 SMART 支持，可重新查询。</string>
+    <string name="smart_query_retry">健康查询失败，USB 连接已恢复。尚未确认 S.M.A.R.T. 支持，可重新查询。</string>
     <string name="smart_query_failed">健康查询失败或返回数据无效，尚未确认支持。请检查连接和授权后重试。</string>
     <string name="smart_status_unknown_health">健康状态待确认</string>
-    <string name="smart_status_unconfirmed">尚未确认 SMART 支持</string>
+    <string name="smart_status_unconfirmed">尚未确认 S.M.A.R.T. 支持</string>
     <string name="smart_query_time">查询时间：%1$s</string>
     <string name="smart_query_duration">耗时：%1$.1f 秒</string>
     <string name="smart_failure_stage">失败阶段：%1$s</string>

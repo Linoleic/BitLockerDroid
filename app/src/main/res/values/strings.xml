@@ -478,7 +478,7 @@
     <string name="settings_hw_badge_disabled">Disabled</string>
 
     <!-- S.M.A.R.T. Health Telemetry -->
-    <string name="smart_dialog_title">Disk Health (SMART)</string>
+    <string name="smart_dialog_title">Disk Health (S.M.A.R.T.)</string>
     <string name="smart_btn_text">Disk Health</string>
     <string name="smart_status_healthy">Healthy</string>
     <string name="smart_status_warning">Warning</string>
@@ -535,12 +535,12 @@
     <string name="authorization_error_help">Unable to read USB authorization status. Try checking again.</string>
     <string name="authorization_request_failed">Unable to request USB access. Reconnect the device and try again.</string>
     <string name="smart_usb_unavailable">USB connection is unavailable. Reconnect and authorize the device, then try again.</string>
-    <string name="smart_usb_unverified">This USB bridge has no verified SMART query route. No probe commands were sent.</string>
+    <string name="smart_usb_unverified">This USB bridge has no verified S.M.A.R.T. query route. No probe commands were sent.</string>
     <string name="smart_usb_close_volumes">Safely close this device’s unlocked volumes before querying its health, then try again.</string>
-    <string name="smart_query_retry">The health query failed, but the USB connection recovered. SMART support is unconfirmed; you can retry.</string>
+    <string name="smart_query_retry">The health query failed, but the USB connection recovered. S.M.A.R.T. support is unconfirmed; you can retry.</string>
     <string name="smart_query_failed">The health query failed or returned invalid data. Support is unconfirmed; check the connection and authorization, then retry.</string>
     <string name="smart_status_unknown_health">Health status unconfirmed</string>
-    <string name="smart_status_unconfirmed">SMART support unconfirmed</string>
+    <string name="smart_status_unconfirmed">S.M.A.R.T. support unconfirmed</string>
     <string name="smart_query_time">Query time: %1$s</string>
     <string name="smart_query_duration">Elapsed: %1$.1f seconds</string>
     <string name="smart_failure_stage">Failure stage: %1$s</string>
