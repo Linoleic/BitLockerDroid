@@ -11,6 +11,43 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DocumentWritePipelineTest {
+    @Test fun syncIsReportedOnlyAfterRealWritesAndTruncateForBothPipelines() {
+        for (buffered in listOf(false, true)) {
+            val state = com.bitlockerdroid.service.VolumeWriteState()
+            val ticket = state.begin("/file")
+            val storage = Writer()
+            val writer = object : VolumeWriter by storage {
+                override fun sync(): Boolean {
+                    assertEquals(513, storage.bytes.size())
+                    assertEquals(513L, storage.truncated)
+                    assertEquals(1, state.state.value.activeCount)
+                    assertEquals(1, state.state.value.syncingCount)
+                    return false
+                }
+            }
+            val failure = assertThrows(IOException::class.java) {
+                DocumentWritePipeline.copy(ByteArrayInputStream(ByteArray(513)), writer, "/file", 0,
+                    true, buffered, bufferSize = 128, beforeSync = { state.syncing(ticket) })
+            }
+            state.finish(ticket, failure)
+            assertEquals(0, state.state.value.activeCount)
+            assertEquals(0, state.state.value.syncingCount)
+            assertNotNull(state.state.value.failure)
+        }
+    }
+
+    @Test fun failedWritesNeverReportCacheSync() {
+        for (buffered in listOf(false, true)) {
+            var reported = false
+            assertThrows(IOException::class.java) {
+                DocumentWritePipeline.copy(ByteArrayInputStream(ByteArray(10)),
+                    Writer().apply { maxWrite = 0 }, "/file", 0, true, buffered,
+                    beforeSync = { reported = true })
+            }
+            assertFalse(reported)
+        }
+    }
+
     private class Writer : VolumeWriter {
         val bytes = ByteArrayOutputStream()
         var maxWrite = Int.MAX_VALUE

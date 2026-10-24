@@ -8,6 +8,33 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VolumeWriteStateTest {
+    @Test fun observableCountsIncludeSyncUntilTheActualTicketFinishes() {
+        val state = VolumeWriteState()
+        val first = state.begin("/first")
+        val second = state.begin("/second")
+        state.syncing(first)
+        assertEquals(VolumeWriteState.Snapshot(2, 1), state.state.value)
+        assertThrows(IOException::class.java) { state.pauseAndDrain(0) }
+        assertEquals(VolumeWriteState.Snapshot(2, 1), state.state.value)
+        state.finish(first, IOException("sync failed"))
+        assertEquals(VolumeWriteState.Snapshot(1, 0, "sync failed"), state.state.value)
+        state.finish(second)
+        assertEquals(VolumeWriteState.Snapshot(0, 0, "sync failed"), state.state.value)
+    }
+
+    @Test fun staleWriteCallbacksCannotChangeNewTicketCountsOrError() {
+        val state = VolumeWriteState()
+        val old = state.begin("/file")
+        state.finish(old, IOException("old failure"))
+        val current = state.begin("/file")
+        state.syncing(current)
+        state.syncing(old)
+        state.finish(old)
+        assertEquals(VolumeWriteState.Snapshot(1, 1, "old failure"), state.state.value)
+        state.finish(current)
+        assertEquals(VolumeWriteState.Snapshot(), state.state.value)
+    }
+
     @Test fun samePathOnDifferentVolumesDoesNotBlockOrDrainTheOtherVolume() {
         val first = VolumeWriteState()
         val second = VolumeWriteState()

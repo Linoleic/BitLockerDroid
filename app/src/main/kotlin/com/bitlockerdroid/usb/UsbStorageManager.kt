@@ -951,7 +951,10 @@ object UsbStorageManager {
     }
 
     /** Flushes and stops the physical disk for an explicit safe eject. */
-    fun spindownDevice(devicePath: String): Boolean {
+    fun spindownDevice(
+        devicePath: String,
+        onStage: (com.bitlockerdroid.service.VolumeOperationStage) -> Unit = {}
+    ): Boolean {
         if (!devicePath.startsWith("usb://")) return false
         val devIdStr = devicePath.removePrefix("usb://").substringBefore('/')
         val devId = devIdStr.toIntOrNull() ?: return false
@@ -971,6 +974,7 @@ object UsbStorageManager {
             val comm = holder.communication
             synchronized(holder.scsiDevice) {
                 // Keep each complete CBW/CSW exchange atomic with partition worker I/O.
+                onStage(com.bitlockerdroid.service.VolumeOperationStage.SYNCING_DEVICE)
                 val syncCdb = byteArrayOf(0x35.toByte(), 0, 0, 0, 0, 0, 0, 0, 0, 0)
                 val syncSuccess = sendScsiCommandNoData(comm, syncCdb, 0x1001)
                 if (!syncSuccess) {
@@ -978,6 +982,7 @@ object UsbStorageManager {
                     return false
                 }
 
+                onStage(com.bitlockerdroid.service.VolumeOperationStage.STOPPING_DEVICE)
                 val stopCdb = byteArrayOf(0x1B.toByte(), 0, 0, 0, 0x00.toByte(), 0)
                 val stopSuccess = sendScsiCommandNoData(comm, stopCdb, 0x1002)
                 if (!stopSuccess) {

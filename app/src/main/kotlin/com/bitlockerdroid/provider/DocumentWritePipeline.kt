@@ -17,7 +17,8 @@ object DocumentWritePipeline {
         truncate: Boolean,
         doubleBuffered: Boolean,
         abortInput: (Throwable) -> Unit = {},
-        bufferSize: Int = 512 * 1024
+        bufferSize: Int = 512 * 1024,
+        beforeSync: () -> Unit = {}
     ): Long {
         require(bufferSize > 0)
         val endOffset = if (doubleBuffered) {
@@ -35,6 +36,7 @@ object DocumentWritePipeline {
             offset
         }
         if (truncate && !writer.truncate(path, endOffset)) throw IOException("Could not finalize file size")
+        beforeSync()
         if (!writer.sync()) throw IOException("Could not flush file data to the drive")
         return endOffset
     }

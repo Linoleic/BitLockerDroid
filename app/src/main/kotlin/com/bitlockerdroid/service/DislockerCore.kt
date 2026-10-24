@@ -488,9 +488,10 @@ class DislockerCore private constructor(
 
     /** A failed preflight flush leaves the session open so the user can retry. */
     @Synchronized
-    fun closeChecked() {
+    fun closeChecked(onFlushed: () -> Unit = {}) {
         if (closed) return
         flush()
+        onFlushed()
         closeInternal(true)
     }
 

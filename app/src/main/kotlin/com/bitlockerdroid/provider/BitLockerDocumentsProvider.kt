@@ -1085,9 +1085,11 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                     DocumentWritePipeline.writeFully(writer, targetPath, offset, buf, n)
                     offset += n
                 }
-                if (!writer.truncate(targetPath, size) || !writer.sync()) {
+                if (!writer.truncate(targetPath, size)) {
                     throw java.io.IOException("Could not finalize the copied file")
                 }
+                targetCore.pendingWrites.syncing(ticket)
+                if (!writer.sync()) throw java.io.IOException("Could not flush the copied file")
             } catch (e: Throwable) {
                 failure = e
                 throw e
@@ -1254,7 +1256,8 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                         val startOffset = if (append) (core.getEntry(record)?.fileSize ?: 0L) else 0L
                         totalWritten = DocumentWritePipeline.copy(
                             input, writer, path, startOffset, truncate, useDoubleBuffer,
-                            abortInput = { error -> readFd.closeWithError(error.message ?: "File write failed") }
+                            abortInput = { error -> readFd.closeWithError(error.message ?: "File write failed") },
+                            beforeSync = { core.pendingWrites.syncing(ticket) }
                         )
                     } catch (e: Throwable) {
                         failure = e
