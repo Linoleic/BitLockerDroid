@@ -153,6 +153,18 @@ fun SmartHealthDialog(
                     ) {
                         QueryResultSummary(info)
 
+                        if (info.failureStage == SmartFailureStage.BUSY) {
+                            OutlinedButton(
+                                onClick = { showCloseVolumesConfirm = true },
+                                enabled = !isLoading && !isClosingVolumes,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                if (isClosingVolumes) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                else Text(stringResource(R.string.smart_close_and_query))
+                            }
+                        }
+
                         // 1. Overall Health Badge Card
                         val (statusText, statusBg, statusFg) = when (info.status) {
                             SmartOverallStatus.HEALTHY -> Triple(
@@ -537,17 +549,6 @@ fun SmartHealthDialog(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (smartInfo?.failureStage == SmartFailureStage.BUSY) {
-                        OutlinedButton(
-                            onClick = { showCloseVolumesConfirm = true },
-                            enabled = !isLoading && !isClosingVolumes,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            if (isClosingVolumes) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            else Text(stringResource(R.string.smart_close_and_query))
-                        }
-                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End,
