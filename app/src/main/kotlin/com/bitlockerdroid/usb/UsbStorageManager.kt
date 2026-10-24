@@ -91,6 +91,8 @@ object UsbStorageManager {
 
     /** Cache of active USB device connections by deviceId */
     private val activeDevices = ConcurrentHashMap<Int, UsbDeviceConnectionHolder>()
+    /** Do not wake an explicitly stopped attachment on the next scan. */
+    private val ejectedDeviceIds = ConcurrentHashMap.newKeySet<Int>()
 
     fun getActiveHolder(deviceId: Int): UsbDeviceConnectionHolder? = activeDevices[deviceId]
     fun findHolderForDevice(usbDevice: UsbDevice): UsbDeviceConnectionHolder? = activeDevices[usbDevice.deviceId]
@@ -324,6 +326,7 @@ object UsbStorageManager {
         val results = mutableListOf<UsbPartitionInfo>()
         val currentKeys = deviceList.values.filter { isMassStorageDevice(it) }.map { "${it.vendorId}:${it.productId}" }.toSet()
         val currentDeviceIds = deviceList.values.filter { isMassStorageDevice(it) }.map { it.deviceId }.toSet()
+        ejectedDeviceIds.retainAll(currentDeviceIds)
 
         // Clean up detached devices
         for ((devId, _) in activeDevices) {
@@ -337,6 +340,7 @@ object UsbStorageManager {
 
         for (device in deviceList.values) {
             if (!isMassStorageDevice(device)) continue
+            if (device.deviceId in ejectedDeviceIds) continue
 
             val devKey = "${device.vendorId}:${device.productId}"
 
@@ -885,21 +889,19 @@ object UsbStorageManager {
             }
             cbw.flip()
 
-            comm.bulkOutTransfer(cbw)
+            val cbwBytesSent = comm.bulkOutTransfer(cbw)
+            if (cbwBytesSent != 31) {
+                Log.w(TAG, "SCSI BOT command block was not fully sent ($cbwBytesSent/31 bytes)")
+                return false
+            }
 
             val csw = ByteBuffer.allocate(13).order(ByteOrder.LITTLE_ENDIAN)
-            comm.bulkInTransfer(csw)
-            csw.flip()
-
-            if (csw.remaining() >= 13) {
-                val sig = csw.getInt()
-                val cswTag = csw.getInt()
-                val residue = csw.getInt()
-                val status = csw.get().toInt() and 0xFF
-                status == 0
-            } else {
-                false
+            val cswBytesReceived = comm.bulkInTransfer(csw)
+            if (cswBytesReceived != 13 || csw.position() != 13) {
+                Log.w(TAG, "SCSI BOT status block was not exactly 13 bytes ($cswBytesReceived bytes)")
+                return false
             }
+            BotCommandStatus.isSuccessful(csw.array(), tag)
         } catch (e: Exception) {
             Log.w(TAG, "sendScsiCommandNoData error: ${e.message}")
             false
@@ -955,48 +957,54 @@ object UsbStorageManager {
         devicePath: String,
         onStage: (com.bitlockerdroid.service.VolumeOperationStage) -> Unit = {}
     ): Boolean {
-        if (!devicePath.startsWith("usb://")) return false
-        val devIdStr = devicePath.removePrefix("usb://").substringBefore('/')
-        val devId = devIdStr.toIntOrNull() ?: return false
-        val holder = activeDevices[devId] ?: return false
+        synchronized(scanLock) {
+            synchronized(activeSessionLock) {
+                if (!devicePath.startsWith("usb://")) return false
+                val devIdStr = devicePath.removePrefix("usb://").substringBefore('/')
+                val devId = devIdStr.toIntOrNull() ?: return false
+                val holder = activeDevices[devId] ?: return false
+                if (!holder.transportHealthy) return false
 
-        // Check if any other sessions on this physical device are still active
-        val hasOtherActiveSessions = activeSessions.keys.any { otherPath ->
-            otherPath != devicePath && otherPath.startsWith("usb://$devId/")
-        }
-        if (hasOtherActiveSessions) {
-            Log.i(TAG, "spindownDevice: skipping physical spindown for $devicePath as other sessions are active on device $devId")
-            return false
-        }
-
-        Log.i(TAG, "spindownDevice: issuing SCSI cache sync and START STOP UNIT to USB device $devId")
-        try {
-            val comm = holder.communication
-            synchronized(holder.scsiDevice) {
-                // Keep each complete CBW/CSW exchange atomic with partition worker I/O.
-                onStage(com.bitlockerdroid.service.VolumeOperationStage.SYNCING_DEVICE)
-                val syncCdb = byteArrayOf(0x35.toByte(), 0, 0, 0, 0, 0, 0, 0, 0, 0)
-                val syncSuccess = sendScsiCommandNoData(comm, syncCdb, 0x1001)
-                if (!syncSuccess) {
-                    Log.w(TAG, "spindownDevice: SCSI SYNCHRONIZE CACHE returned failure on USB device $devId. Aborting spindown.")
+                // Check if any other sessions on this physical device are still active
+                val hasOtherActiveSessions = activeSessions.keys.any { otherPath ->
+                    otherPath.startsWith("usb://$devId/")
+                }
+                if (hasOtherActiveSessions) {
+                    Log.i(TAG, "spindownDevice: skipping physical spindown for $devicePath as other sessions are active on device $devId")
                     return false
                 }
 
-                onStage(com.bitlockerdroid.service.VolumeOperationStage.STOPPING_DEVICE)
-                val stopCdb = byteArrayOf(0x1B.toByte(), 0, 0, 0, 0x00.toByte(), 0)
-                val stopSuccess = sendScsiCommandNoData(comm, stopCdb, 0x1002)
-                if (!stopSuccess) {
-                    Log.w(TAG, "spindownDevice: SCSI START STOP UNIT returned error or unsupported on USB device $devId")
+                Log.i(TAG, "spindownDevice: issuing SCSI cache sync and START STOP UNIT to USB device $devId")
+                try {
+                    val comm = holder.communication
+                    synchronized(holder.scsiDevice) {
+                        // Keep each complete CBW/CSW exchange atomic with partition worker I/O.
+                        onStage(com.bitlockerdroid.service.VolumeOperationStage.SYNCING_DEVICE)
+                        val syncCdb = byteArrayOf(0x35.toByte(), 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                        val syncSuccess = sendScsiCommandNoData(comm, syncCdb, 0x1001)
+                        if (!syncSuccess) {
+                            Log.w(TAG, "spindownDevice: SCSI SYNCHRONIZE CACHE returned failure on USB device $devId. Aborting spindown.")
+                            return false
+                        }
+
+                        onStage(com.bitlockerdroid.service.VolumeOperationStage.STOPPING_DEVICE)
+                        val stopCdb = byteArrayOf(0x1B.toByte(), 0, 0, 0, 0x00.toByte(), 0)
+                        val stopSuccess = sendScsiCommandNoData(comm, stopCdb, 0x1002)
+                        if (!stopSuccess) {
+                            Log.w(TAG, "spindownDevice: SCSI START STOP UNIT returned error or unsupported on USB device $devId")
+                            return false
+                        }
+                    }
+                } catch (e: Throwable) {
+                    Log.w(TAG, "spindownDevice error during SCSI commands", e)
                     return false
                 }
+
+                ejectedDeviceIds.add(devId)
+                closeDevice(devId)
+                return true
             }
-        } catch (e: Throwable) {
-            Log.w(TAG, "spindownDevice error during SCSI commands", e)
-            return false
         }
-
-        closeDevice(devId)
-        return true
     }
 
     /**
@@ -1007,6 +1015,7 @@ object UsbStorageManager {
         LogFile.write("app", "UsbStorageManager: onDeviceDetached $devKey (${device.deviceName})")
         nonBitLockerDeviceKeys.remove(devKey)
         deniedDeviceKeys.remove(devKey)
+        ejectedDeviceIds.remove(device.deviceId)
         closeDevice(device.deviceId)
     }
 

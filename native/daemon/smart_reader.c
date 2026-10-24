@@ -803,7 +803,11 @@ int scsi_spindown_device(const char *dev_path) {
         return -errno != 0 ? -errno : -ENODEV;
     }
 
-    ioctl(fd, BLKFLSBUF, 0);
+    if (ioctl(fd, BLKFLSBUF, 0) != 0) {
+        int error = errno;
+        close(fd);
+        return error ? -error : -EIO;
+    }
 
     unsigned char sense[32];
 
@@ -813,12 +817,9 @@ int scsi_spindown_device(const char *dev_path) {
     memset(sense, 0, sizeof(sense));
     int sync_ret = do_sg_io(fd, sync_cdb, 10, NULL, 0, SG_DXFER_NONE, sense, sizeof(sense));
     if (sync_ret != 0) {
-        int sense_key = (sense[0] & 0x7E) ? (sense[2] & 0x0F) : -1;
-        // 0x05 is ILLEGAL REQUEST (e.g. simple thumb drive without volatile cache)
-        if (sense_key != 0x05) {
-            close(fd);
-            return -EIO;
-        }
+        // Unsupported commands are not confirmation of a completed cache flush.
+        close(fd);
+        return -EIO;
     }
 
     // Step 3: SCSI START STOP UNIT (0x1B) with START=0 (Stop unit / spindown)
@@ -828,11 +829,7 @@ int scsi_spindown_device(const char *dev_path) {
     close(fd);
 
     if (stop_ret != 0) {
-        int sense_key = (sense[0] & 0x7E) ? (sense[2] & 0x0F) : -1;
-        // If not ILLEGAL REQUEST, abort offlining
-        if (sense_key != 0x05) {
-            return -EIO;
-        }
+        return -EIO;
     }
 
     // Step 4: Configure sysfs manage_start_stop = 1 if present
@@ -847,8 +844,14 @@ int scsi_spindown_device(const char *dev_path) {
             snprintf(mss_path, sizeof(mss_path), "%s/%s/manage_start_stop", scsi_disk_dir, de->d_name);
             int mss_fd = open(mss_path, O_WRONLY);
             if (mss_fd >= 0) {
-                write(mss_fd, "1\n", 2);
-                close(mss_fd);
+                int written = write(mss_fd, "1\n", 2);
+                int error = written == 2 ? 0 : (errno ? errno : EIO);
+                if (close(mss_fd) != 0 && !error) error = errno ? errno : EIO;
+                if (error) { closedir(d); return -error; }
+            } else if (errno != ENOENT) {
+                int error = errno;
+                closedir(d);
+                return -error;
             }
         }
         closedir(d);
@@ -858,39 +861,14 @@ int scsi_spindown_device(const char *dev_path) {
     char delete_path[256];
     snprintf(delete_path, sizeof(delete_path), "/sys/block/%s/device/delete", parent_disk_name);
     int del_fd = open(delete_path, O_WRONLY);
-    if (del_fd >= 0) {
-        write(del_fd, "1\n", 2);
-        close(del_fd);
-    }
-
-    // Step 6: Walk up parent sysfs directory to set USB power/control to auto
-    char cur_path[PATH_MAX];
-    strncpy(cur_path, real_sys, sizeof(cur_path) - 1);
-    cur_path[sizeof(cur_path) - 1] = '\0';
-    for (int i = 0; i < 8; i++) {
-        char *slash = strrchr(cur_path, '/');
-        if (!slash) break;
-        *slash = '\0';
-        char busnum_path[PATH_MAX];
-        snprintf(busnum_path, sizeof(busnum_path), "%s/busnum", cur_path);
-        if (access(busnum_path, F_OK) == 0) {
-            char pwr_ctrl[PATH_MAX];
-            snprintf(pwr_ctrl, sizeof(pwr_ctrl), "%s/power/control", cur_path);
-            int pwr_fd = open(pwr_ctrl, O_WRONLY);
-            if (pwr_fd >= 0) {
-                write(pwr_fd, "auto\n", 5);
-                close(pwr_fd);
-            }
-            char delay_path[PATH_MAX];
-            snprintf(delay_path, sizeof(delay_path), "%s/power/autosuspend_delay_ms", cur_path);
-            int delay_fd = open(delay_path, O_WRONLY);
-            if (delay_fd >= 0) {
-                write(delay_fd, "0\n", 2);
-                close(delay_fd);
-            }
-            break;
-        }
-    }
-
+    if (del_fd < 0) return errno ? -errno : -EIO;
+    int deleted = write(del_fd, "1\n", 2);
+    int delete_error = deleted == 2 ? 0 : (errno ? errno : EIO);
+    if (close(del_fd) != 0 && !delete_error) delete_error = errno ? errno : EIO;
+    if (delete_error) return -delete_error;
+    if (access(sys_block, F_OK) == 0) return -EBUSY;
+    if (errno != ENOENT && errno != ENOTDIR) return errno ? -errno : -EIO;
+    // Do not alter USB runtime-power policy: STOP acknowledgement and SCSI
+    // removal do not establish a bridge-specific NVMe shutdown notification.
     return 0;
 }
