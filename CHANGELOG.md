@@ -31,6 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### 修复
 
+- SMART 查询失败、响应无效时显示“待确认”，保留重试入口，不再误判为不支持。
 - 修复窄屏主页标题裁切和“全部弹出”按钮挤成竖排的问题。
 - 修复短横屏下凭据列表不可见、模式切换说明被裁切的问题，列表和正文可滚动查看。
 - 免 Root 写入实际完成后才返回成功，写盘失败后不再复用异常通道。
@@ -81,6 +82,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### Fixed
 
+- Keep failed or invalid SMART queries unconfirmed and available for retry instead of marking them unsupported.
 - Fix clipped home titles and vertically squeezed eject buttons on narrow screens.
 - Keep the credential list visible and mode-switch explanations scrollable in short landscape windows.
 - Acknowledge non-root writes only after completion and stop reusing a failed I/O channel.

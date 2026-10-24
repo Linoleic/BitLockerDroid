@@ -533,6 +533,8 @@
     <string name="smart_usb_unverified">尚未验证此 USB 桥接芯片的 SMART 查询方式，未发送探测命令。</string>
     <string name="smart_usb_close_volumes">请先安全关闭此设备上已解锁的卷，再查询磁盘健康。</string>
     <string name="smart_query_retry">健康查询失败，USB 连接已恢复。尚未确认 SMART 支持，可重新查询。</string>
+    <string name="smart_query_failed">健康查询失败或返回数据无效，尚未确认支持。请检查连接和授权后重试。</string>
+    <string name="smart_status_unknown_health">健康状态待确认</string>
     <string name="smart_status_unconfirmed">尚未确认 SMART 支持</string>
 
     <string name="connection_authorization_title">连接与授权</string>

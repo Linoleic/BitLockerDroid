@@ -132,7 +132,7 @@ fun SmartHealthDialog(
                         }
                     }
                 } else {
-                    val info = smartInfo ?: SmartHealthInfo.unsupported()
+                    val info = smartInfo ?: SmartHealthInfo.unconfirmed()
                     val scrollState = rememberScrollState()
 
                     Column(
@@ -164,7 +164,7 @@ fun SmartHealthDialog(
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             SmartOverallStatus.UNCONFIRMED -> Triple(
-                                stringResource(R.string.smart_status_unconfirmed),
+                                stringResource(if (info.isSupported) R.string.smart_status_unknown_health else R.string.smart_status_unconfirmed),
                                 MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -225,7 +225,7 @@ fun SmartHealthDialog(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = info.reason ?: stringResource(R.string.smart_unsupported_desc),
+                                        text = info.reason ?: stringResource(if (info.status == SmartOverallStatus.UNCONFIRMED) R.string.smart_query_failed else R.string.smart_unsupported_desc),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )

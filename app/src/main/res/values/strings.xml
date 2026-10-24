@@ -535,6 +535,8 @@
     <string name="smart_usb_unverified">This USB bridge has no verified SMART query route. No probe commands were sent.</string>
     <string name="smart_usb_close_volumes">Safely close this device’s unlocked volumes before querying its health, then try again.</string>
     <string name="smart_query_retry">The health query failed, but the USB connection recovered. SMART support is unconfirmed; you can retry.</string>
+    <string name="smart_query_failed">The health query failed or returned invalid data. Support is unconfirmed; check the connection and authorization, then retry.</string>
+    <string name="smart_status_unknown_health">Health status unconfirmed</string>
     <string name="smart_status_unconfirmed">SMART support unconfirmed</string>
 
     <string name="connection_authorization_title">Connection &amp; Authorization</string>

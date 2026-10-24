@@ -6,54 +6,75 @@ object SmartDataParser {
 
     fun parseJson(jsonStr: String?): SmartHealthInfo {
         if (jsonStr.isNullOrBlank()) {
-            return SmartHealthInfo.unsupported(reason = "Empty telemetry response")
+            return SmartHealthInfo.unconfirmed(reason = "Empty telemetry response")
         }
         return try {
             val obj = JSONObject(jsonStr)
-            val supported = obj.optBoolean("supported", false)
-            val statusStr = obj.optString("status", if (supported) "HEALTHY" else "UNSUPPORTED")
-            val status = when (statusStr.uppercase()) {
-                "HEALTHY" -> SmartOverallStatus.HEALTHY
-                "WARNING" -> SmartOverallStatus.WARNING
-                "CRITICAL" -> SmartOverallStatus.CRITICAL
-                "UNCONFIRMED" -> SmartOverallStatus.UNCONFIRMED
-                else -> SmartOverallStatus.UNSUPPORTED
+            // Only an explicit capability result can establish lack of support.
+            // Error responses from older daemons may contain supported:false alone.
+            val supportedClaim = obj.opt("supported") as? Boolean
+            val supported = supportedClaim == true
+            val statusText = obj.text("status")?.uppercase(java.util.Locale.ROOT)
+            val status = when {
+                obj.text("error") != null || supportedClaim == null -> SmartOverallStatus.UNCONFIRMED
+                supported && statusText == "HEALTHY" -> SmartOverallStatus.HEALTHY
+                supported && statusText == "WARNING" -> SmartOverallStatus.WARNING
+                supported && statusText == "CRITICAL" -> SmartOverallStatus.CRITICAL
+                !supported && (statusText == null || statusText == "UNSUPPORTED") -> SmartOverallStatus.UNSUPPORTED
+                else -> SmartOverallStatus.UNCONFIRMED
             }
 
             SmartHealthInfo(
                 isSupported = supported,
                 status = status,
-                diskType = obj.optString("disk_type", "Unknown"),
-                model = obj.optString("model").takeIf { it.isNotBlank() },
-                serial = obj.optString("serial").takeIf { it.isNotBlank() },
-                firmware = obj.optString("firmware").takeIf { it.isNotBlank() },
-                vendor = obj.optString("vendor").takeIf { it.isNotBlank() },
-                product = obj.optString("product").takeIf { it.isNotBlank() },
-                temperatureCelsius = if (obj.has("temperature_c")) obj.optInt("temperature_c") else null,
-                healthPercentage = if (obj.has("health_percent")) obj.optInt("health_percent") else null,
-                availableSpare = if (obj.has("available_spare")) obj.optInt("available_spare") else null,
-                spareThreshold = if (obj.has("spare_threshold")) obj.optInt("spare_threshold") else null,
-                criticalWarning = if (obj.has("critical_warning")) obj.optInt("critical_warning") else null,
-                powerCycles = if (obj.has("power_cycles")) obj.optLong("power_cycles") else null,
-                powerHours = if (obj.has("power_hours")) obj.optLong("power_hours") else null,
-                unsafeShutdowns = if (obj.has("unsafe_shutdowns")) obj.optLong("unsafe_shutdowns") else null,
-                totalBytesRead = if (obj.has("total_bytes_read")) obj.optLong("total_bytes_read") else null,
-                totalBytesWritten = if (obj.has("total_bytes_written")) obj.optLong("total_bytes_written") else null,
-                reallocatedSectors = if (obj.has("reallocated_sectors")) obj.optLong("reallocated_sectors") else null,
-                pendingSectors = if (obj.has("pending_sectors")) obj.optLong("pending_sectors") else null,
-                uncorrectableSectors = if (obj.has("uncorrectable_sectors")) obj.optLong("uncorrectable_sectors") else null,
-                hostReadCommands = if (obj.has("host_read_commands")) obj.optLong("host_read_commands") else null,
-                hostWriteCommands = if (obj.has("host_write_commands")) obj.optLong("host_write_commands") else null,
-                controllerBusyMinutes = if (obj.has("controller_busy_time")) obj.optLong("controller_busy_time") else null,
-                mediaErrors = if (obj.has("media_errors")) obj.optLong("media_errors") else null,
-                errorLogEntries = if (obj.has("error_log_entries")) obj.optLong("error_log_entries") else null,
-                deviceNode = obj.optString("device_node").takeIf { it.isNotBlank() },
-                reason = obj.optString("reason").takeIf { it.isNotBlank() },
+                diskType = obj.text("disk_type") ?: "Unknown",
+                model = obj.text("model"),
+                serial = obj.text("serial"),
+                firmware = obj.text("firmware"),
+                vendor = obj.text("vendor"),
+                product = obj.text("product"),
+                temperatureCelsius = obj.integer("temperature_c", Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong())?.toInt(),
+                healthPercentage = obj.integer("health_percent", 0L..100L)?.toInt(),
+                availableSpare = obj.integer("available_spare", 0L..100L)?.toInt(),
+                spareThreshold = obj.integer("spare_threshold", 0L..100L)?.toInt(),
+                criticalWarning = obj.integer("critical_warning", 0L..255L)?.toInt(),
+                powerCycles = obj.integer("power_cycles", 0L..Long.MAX_VALUE),
+                powerHours = obj.integer("power_hours", 0L..Long.MAX_VALUE),
+                unsafeShutdowns = obj.integer("unsafe_shutdowns", 0L..Long.MAX_VALUE),
+                totalBytesRead = obj.integer("total_bytes_read", 0L..Long.MAX_VALUE),
+                totalBytesWritten = obj.integer("total_bytes_written", 0L..Long.MAX_VALUE),
+                reallocatedSectors = obj.integer("reallocated_sectors", 0L..Long.MAX_VALUE),
+                pendingSectors = obj.integer("pending_sectors", 0L..Long.MAX_VALUE),
+                uncorrectableSectors = obj.integer("uncorrectable_sectors", 0L..Long.MAX_VALUE),
+                hostReadCommands = obj.integer("host_read_commands", 0L..Long.MAX_VALUE),
+                hostWriteCommands = obj.integer("host_write_commands", 0L..Long.MAX_VALUE),
+                controllerBusyMinutes = obj.integer("controller_busy_time", 0L..Long.MAX_VALUE),
+                mediaErrors = obj.integer("media_errors", 0L..Long.MAX_VALUE),
+                errorLogEntries = obj.integer("error_log_entries", 0L..Long.MAX_VALUE),
+                deviceNode = obj.text("device_node"),
+                reason = obj.text("reason") ?: obj.text("error"),
                 rawJson = jsonStr,
-                rawPageHex = obj.optString("raw_page_hex").takeIf { it.isNotBlank() }
+                rawPageHex = obj.text("raw_page_hex")
             )
         } catch (e: Exception) {
-            SmartHealthInfo.unsupported(reason = "JSON parse error: ${e.message}")
+            SmartHealthInfo.unconfirmed(reason = "Invalid telemetry response")
         }
     }
+
+    private fun JSONObject.text(key: String): String? =
+        (opt(key) as? String)?.takeIf { it.isNotBlank() }
+
+    /** Reject null, malformed, fractional and overflowing values instead of coercing them to zero. */
+    private fun JSONObject.integer(key: String, range: LongRange): Long? {
+        val value = opt(key)
+        if (value !is Number && value !is String) return null
+        return try {
+            java.math.BigDecimal(value.toString()).longValueExact().takeIf { it in range }
+        } catch (_: NumberFormatException) {
+            null
+        } catch (_: ArithmeticException) {
+            null
+        }
+    }
+
 }

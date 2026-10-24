@@ -19,7 +19,6 @@ object SmartHealthManager {
     private const val TAG = "SmartHealthManager"
 
     private val smartSupportCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
-    private val smartInfoCache = java.util.concurrent.ConcurrentHashMap<String, SmartHealthInfo>()
 
     fun getCachedSupport(key: String): Boolean? {
         if (key.isBlank() || key.startsWith("storage:")) return false
@@ -29,14 +28,12 @@ object SmartHealthManager {
     fun clearCache(key: String? = null) {
         if (key != null) {
             smartSupportCache.remove(key)
-            smartInfoCache.remove(key)
         } else {
             smartSupportCache.clear()
-            smartInfoCache.clear()
         }
     }
 
-    /** USB results only indicate a known query route; hardware support is confirmed on explicit query. */
+    /** Query-entry eligibility: USB requires a known route; inconclusive local results remain retryable. */
     suspend fun isDeviceSmartSupported(
         context: Context,
         devicePath: String,
@@ -59,15 +56,12 @@ object SmartHealthManager {
             isUsbUri = isUsbUri,
             query = {
                 val info = querySmartInternal(context, devicePath)
-                smartSupportCache[key] = info.isSupported
-                if (info.isSupported) {
-                    smartInfoCache[key] = info
-                }
-                info.isSupported
+                cacheSupport(key, info)
+                // An inconclusive query must remain reachable for a manual retry.
+                info.status != SmartOverallStatus.UNSUPPORTED
             },
             unsupported = {
                 smartSupportCache[key] = false
-                smartInfoCache.remove(key)
                 false
             }
         )
@@ -81,12 +75,7 @@ object SmartHealthManager {
     ): SmartHealthInfo = withContext(Dispatchers.IO) {
         val key = cacheKey ?: devicePath
         val info = querySmartInternal(context, devicePath, usbDeviceId)
-        smartSupportCache[key] = info.isSupported
-        if (info.isSupported) {
-            smartInfoCache[key] = info
-        } else {
-            smartInfoCache.remove(key)
-        }
+        cacheSupport(key, info)
         info
     }
 
@@ -127,40 +116,56 @@ object SmartHealthManager {
                 reason = context.getString(R.string.smart_usb_close_volumes))
         }
 
-        val useRoot = PreferenceHelper.useRootAccess && RootAccess.hasSu()
-
-        if (useRoot) {
-            try {
-                RootAccess.ensureDaemonInstalled(context)
-                val daemonPath = "/data/local/tmp/bitlocker_io"
-                val res = RootAccess.exec("$daemonPath --smart '$devicePath'", 12000)
-                if (res != null && res.first == 0 && res.second.isNotBlank()) {
-                    val info = SmartDataParser.parseJson(res.second)
-                    // The root daemon executes SCSI, SAT, and NVMe queries.
-                    // If it returns a valid response (whether supported or unsupported),
-                    // that is the authoritative hardware result for this block device.
-                    return@withContext info
+        queryLocalSmart(
+            devicePath = devicePath,
+            rootEnabled = PreferenceHelper.useRootAccess,
+            failureReason = context.getString(R.string.smart_query_failed),
+            rootQuery = {
+                if (!RootAccess.hasSu()) null else {
+                    RootAccess.ensureDaemonInstalled(context)
+                    val escapedPath = devicePath.replace("'", "'\\''")
+                    val result = RootAccess.exec("/data/local/tmp/bitlocker_io --smart '$escapedPath'", 12000)
+                    result?.takeIf { it.first == 0 }?.second
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "Root SMART query error for $devicePath", e)
-            }
+            },
+            directQuery = { NativeBridge.nativeReadDeviceSmart(devicePath) }
+        )
+    }
+
+    private fun cacheSupport(key: String, info: SmartHealthInfo) {
+        when (val evidence = supportEvidence(info)) {
+            null -> smartSupportCache.remove(key)
+            else -> smartSupportCache[key] = evidence
         }
+    }
 
-        // Try direct JNI if device node is accessible directly
-        try {
-            val jniJson = NativeBridge.nativeReadDeviceSmart(devicePath)
-            if (!jniJson.isNullOrBlank()) {
-                val info = SmartDataParser.parseJson(jniJson)
-                if (info.isSupported) {
-                    return@withContext info
-                }
-            }
-        } catch (_: Throwable) {}
+    internal fun supportEvidence(info: SmartHealthInfo): Boolean? = when {
+        info.isSupported -> true
+        info.status == SmartOverallStatus.UNSUPPORTED -> false
+        else -> null
+    }
 
-        SmartHealthInfo.unsupported(
-            node = devicePath,
-            reason = if (useRoot) "该介质（普通 U 盘 / 存储卡）未内置标准 ATA/NVMe S.M.A.R.T. 硬件监控传感器"
-                     else "当前运行模式或外设主控未提供标准 S.M.A.R.T. 传感器数据"
+    /** A failed Root attempt is inconclusive; do not issue a second probe through JNI. */
+    internal fun queryLocalSmart(
+        devicePath: String,
+        rootEnabled: Boolean,
+        failureReason: String,
+        rootQuery: () -> String?,
+        directQuery: () -> String?
+    ): SmartHealthInfo {
+        val info = try {
+            SmartDataParser.parseJson(if (rootEnabled) rootQuery() else directQuery())
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            SmartHealthInfo.unconfirmed(reason = failureReason)
+        } catch (_: LinkageError) {
+            SmartHealthInfo.unconfirmed(reason = failureReason)
+        }
+        return info.copy(
+            deviceNode = info.deviceNode ?: devicePath,
+            reason = if (!info.isSupported && info.status == SmartOverallStatus.UNCONFIRMED)
+                info.reason.takeIf { info.rawJson != null } ?: failureReason else info.reason
         )
     }
 
