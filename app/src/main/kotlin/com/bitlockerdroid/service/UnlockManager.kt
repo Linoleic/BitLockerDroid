@@ -828,6 +828,27 @@ object UnlockManager {
         return results
     }
 
+    /** Flushes and closes this device's volumes without stopping or releasing the device. */
+    fun closeDeviceVolumes(devicePath: String): Result<Int> = try {
+        val count = ProcessSessionTransition.gate.withAdmissionsPaused {
+            val parentDisk = com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(devicePath)
+            synchronized(getParentDiskLock(parentDisk)) {
+                DeviceVolumeClosure.close(
+                    devicePath = devicePath,
+                    sessionPaths = synchronized(lock) { sessions.keys.toList() },
+                    parentDisk = com.bitlockerdroid.util.DeviceIdentity::resolveParentDiskNode,
+                    closeVolume = { path ->
+                        closeVolume(path, stopPhysicalDisk = false, postEjectNotification = false).getOrThrow()
+                    }
+                )
+            }
+        }
+        Result.success(count)
+    } catch (e: Exception) {
+        Log.w(TAG, "Device volume closure failed for $devicePath", e)
+        Result.failure(e)
+    }
+
     /** Already inside the transition gate: no new scan or worker can enter here. */
     private fun prepareUsbKernelHandoff(deviceId: Int) {
         com.bitlockerdroid.usb.UsbStorageManager.validateKernelHandoffTarget(deviceId)

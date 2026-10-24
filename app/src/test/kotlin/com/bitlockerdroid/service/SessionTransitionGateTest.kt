@@ -12,6 +12,79 @@ import java.util.concurrent.TimeUnit
 
 class SessionTransitionGateTest {
     @Test
+    fun temporaryClosureDrainsExistingWorkAndReopensForManualUnlock() {
+        val gate = SessionTransitionGate()
+        val executor = Executors.newFixedThreadPool(2)
+        val admitted = CountDownLatch(1)
+        val finishAdmission = CountDownLatch(1)
+        val closureEntered = CountDownLatch(1)
+        val finishClosure = CountDownLatch(1)
+        try {
+            val active = executor.submit(Callable {
+                gate.admit {
+                    admitted.countDown()
+                    check(finishAdmission.await(5, TimeUnit.SECONDS))
+                }
+            })
+            assertTrue(admitted.await(5, TimeUnit.SECONDS))
+            val closure = executor.submit(Callable {
+                gate.withAdmissionsPaused {
+                    closureEntered.countDown()
+                    check(finishClosure.await(5, TimeUnit.SECONDS))
+                    2
+                }
+            })
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+            var rejected = false
+            while (!rejected && System.nanoTime() < deadline) {
+                rejected = gate.admit { Unit } is SessionTransitionGate.Admission.Rejected
+                if (!rejected) Thread.yield()
+            }
+            assertTrue(rejected)
+            assertFalse(closureEntered.await(100, TimeUnit.MILLISECONDS))
+            finishAdmission.countDown()
+            active.get(5, TimeUnit.SECONDS)
+            assertTrue(closureEntered.await(5, TimeUnit.SECONDS))
+            assertTrue(gate.admit { "automatic unlock" } is SessionTransitionGate.Admission.Rejected)
+            finishClosure.countDown()
+            assertEquals(2, closure.get(5, TimeUnit.SECONDS))
+            assertEquals("manual unlock", (gate.admit { "manual unlock" } as SessionTransitionGate.Admission.Accepted).value)
+            assertEquals(0, gate.withAdmissionsPaused { 0 })
+        } finally {
+            finishAdmission.countDown()
+            finishClosure.countDown()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun failedTemporaryClosureRestoresAdmissionAndAllowsRetry() {
+        val gate = SessionTransitionGate()
+        try {
+            gate.withAdmissionsPaused<Unit> { throw IOException("write still active") }
+            throw AssertionError("closure should fail")
+        } catch (_: IOException) {
+            assertTrue(gate.admit { Unit } is SessionTransitionGate.Admission.Accepted)
+        }
+        gate.withAdmissionsPaused {
+            assertTrue(gate.admit { Unit } is SessionTransitionGate.Admission.Rejected)
+        }
+        assertTrue(gate.admit { Unit } is SessionTransitionGate.Admission.Accepted)
+    }
+
+    @Test
+    fun temporaryClosureCannotReopenAPreparedModeTransition() {
+        val gate = SessionTransitionGate()
+        gate.prepare { Unit }
+        try {
+            gate.withAdmissionsPaused { throw AssertionError("must not run after mode preparation") }
+            throw AssertionError("prepared transition should reject closure")
+        } catch (_: IllegalStateException) {
+            assertTrue(gate.admit { Unit } is SessionTransitionGate.Admission.Rejected)
+        }
+    }
+
+    @Test
     fun prepareClosesAdmissionImmediatelyAndWaitsForExistingWork() {
         val gate = SessionTransitionGate()
         val executor = Executors.newFixedThreadPool(2)

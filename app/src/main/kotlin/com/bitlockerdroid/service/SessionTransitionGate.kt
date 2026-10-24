@@ -2,7 +2,7 @@ package com.bitlockerdroid.service
 
 import java.util.concurrent.locks.ReentrantReadWriteLock
 
-/** Coordinates session-producing work with a one-way process mode transition. */
+/** Coordinates session-producing work with exclusive closure and mode transitions. */
 internal class SessionTransitionGate {
     private val lock = ReentrantReadWriteLock(true)
     private val prepareLock = Any()
@@ -30,19 +30,23 @@ internal class SessionTransitionGate {
     }
 
     /** On success, admissions stay closed for the rest of this process. */
-    fun <T> prepare(block: () -> T): T = synchronized(prepareLock) {
+    fun <T> prepare(block: () -> T): T = exclusively(keepClosed = true, block)
+
+    /** Drains admitted work, excludes new sessions, and reopens on success or failure. */
+    fun <T> withAdmissionsPaused(block: () -> T): T = exclusively(keepClosed = false, block)
+
+    private fun <T> exclusively(keepClosed: Boolean, block: () -> T): T = synchronized(prepareLock) {
         check(!admissionClosed) { "A mode transition is already prepared" }
         // Publish closure before waiting for current admissions to drain. New
         // callers can now reject immediately instead of joining the drain.
         admissionClosed = true
         val write = lock.writeLock()
         write.lock()
+        var prepared = false
         try {
-            block()
-        } catch (failure: Throwable) {
-            admissionClosed = false
-            throw failure
+            block().also { prepared = keepClosed }
         } finally {
+            if (!prepared) admissionClosed = false
             write.unlock()
         }
     }
