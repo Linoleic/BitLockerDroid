@@ -210,6 +210,14 @@ fun SmartHealthDialog(
                             }
                         }
 
+                        if (info.isSupported && !info.diskType.contains("NVMe", ignoreCase = true)) {
+                            Text(
+                                text = stringResource(R.string.smart_ata_reference_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
                         // 2. Unsupported Telemetry Banner
                         if (!info.isSupported) {
                             Box(
@@ -441,6 +449,13 @@ fun SmartHealthDialog(
                                         )
                                     }
                                 }
+
+                                Text(
+                                    text = stringResource(R.string.smart_raw_data_source_hint),
+                                    modifier = Modifier.padding(top = 6.dp),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
 
                                 AnimatedVisibility(visible = showRawData) {
                                     Column(modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {

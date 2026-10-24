@@ -501,6 +501,8 @@
     <string name="smart_copied">已复制到剪贴板</string>
     <string name="smart_unsupported_desc">当前存储介质（如普通 U 盘 / 读卡器）未内置标准 ATA/NVMe S.M.A.R.T. 硬件监控传感器。</string>
     <string name="smart_loading">正在通过 SCSI / SAT / NVMe 通道读取设备硬件数据…</string>
+    <string name="smart_raw_data_source_hint">来源：R 原始页，S 摘要，D 换算，U 未提供。换算值不是设备原始字节。</string>
+    <string name="smart_ata_reference_hint">ATA 属性名称和摘要按常见约定解释，仅供参考；该型号尚未验证，暂不推算寿命和写入单位。</string>
     <string name="smart_raw_data_title">S.M.A.R.T. 原始数据</string>
     <string name="smart_raw_data_view">查看原始数据</string>
     <string name="smart_raw_data_hide">收起原始数据</string>

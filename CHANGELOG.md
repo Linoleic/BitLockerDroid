@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### 变更
 
+- SMART 原始表标明原始页、摘要、换算与未提供的数据来源，复制时保留说明。
 - 精简 SMART 入口为“磁盘健康”，详情标题为“磁盘健康（SMART）”。
 - Root 环境合入主页“连接与授权”，移除设置中的重复入口；精确过滤系统修复提示在 Root 模式自动启用，不再提供开关。
 - 免 Root USB 读写改为每次最多 16 KB 的同步传输，停用多请求并行传输。
@@ -71,6 +72,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### Changed
 
+- Label SMART table values as device-page, summary, converted, or unavailable data, and retain the source legend when copying.
 - Shorten the SMART entry to “Disk Health” and the dialog title to “Disk Health (SMART)”.
 - Move Root environment details into the home connection panel, remove duplicate settings entries, and automatically filter verified repair prompts in Root mode without a toggle.
 - Use synchronous USB transfers of up to 16 KB in non-root mode, replacing multiple queued requests.

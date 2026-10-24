@@ -503,6 +503,8 @@
     <string name="smart_copied">Copied to clipboard</string>
     <string name="smart_unsupported_desc">The storage device controller (e.g. standard USB flash drive) does not implement standard ATA or NVMe S.M.A.R.T. telemetry.</string>
     <string name="smart_loading">Querying device telemetry via SCSI/SAT/NVMe S.M.A.R.T.…</string>
+    <string name="smart_raw_data_source_hint">Source: R = device page, S = summary, D = converted, U = unavailable. Converted values are not raw device bytes.</string>
+    <string name="smart_ata_reference_hint">ATA names and summary values follow common conventions and are for reference. This drive model is unverified; remaining life and write units are not inferred.</string>
     <string name="smart_raw_data_title">Raw S.M.A.R.T. Data</string>
     <string name="smart_raw_data_view">View Raw Data</string>
     <string name="smart_raw_data_hide">Hide Raw Data</string>

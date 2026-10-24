@@ -89,7 +89,7 @@ data class SmartHealthInfo(
 
         val sb = StringBuilder()
         sb.appendLine("-- S.M.A.R.T. --------------------------------------------------------------")
-        sb.appendLine("ID Sta Cur Wor Thr RawValues    AttributeName (标题含义见说明)")
+        sb.appendLine("ID Sta Cur Wor Thr RawValues    AttributeName (标题含义见说明) Src")
 
         if (!isSupported && status == SmartOverallStatus.UNCONFIRMED) {
             sb.appendLine("状态尚未确认，当前没有可用的原始 S.M.A.R.T. 数据。")
@@ -102,14 +102,15 @@ data class SmartHealthInfo(
 
         for (row in rows) {
             // Formats: "01  G  __0 __0 __0 000000000000 严重警告标志"
-            sb.appendLine("%s  %s  %s %s %s %s %s".format(
+            sb.appendLine("%s  %s  %s %s %s %s %s %s".format(
                 row.id,
                 row.sta,
                 row.cur,
                 row.wor,
                 row.thr,
                 row.rawValues,
-                row.attributeName
+                row.attributeName,
+                row.source
             ))
         }
 
@@ -119,8 +120,11 @@ data class SmartHealthInfo(
         sb.appendLine(" Cur: 当前值")
         sb.appendLine(" Wor: 历史最差值")
         sb.appendLine(" Thr: 临界值")
-        sb.appendLine(" RawValues: 原始数据")
-        sb.append(" AttributeName: 属性名称")
+        sb.appendLine(" RawValues: 十六进制数值，来源见 Src")
+        sb.appendLine(" AttributeName: 属性名称")
+        sb.appendLine(" Src: 数据来源(R: 设备原始页 | S: 摘要直接字段 | D: 摘要换算 | U: 未知)")
+        sb.appendLine(" D 表示摘要换算值，不是设备原始页数据。")
+        if (!isNvme) sb.append(" SATA 属性名称仅供参考，厂商定义可能不同。")
 
         return sb.toString()
     }
@@ -132,7 +136,8 @@ data class SmartHealthInfo(
         val wor: String,
         val thr: String,
         val rawValues: String,
-        val attributeName: String
+        val attributeName: String,
+        val source: String
     )
 
     private fun isCompleteRawPage(hex: String): Boolean =
@@ -150,44 +155,73 @@ data class SmartHealthInfo(
             BigInteger(1, bytes.reversedArray())
         } else null
 
-        val critWarn = getU8(0) ?: criticalWarning
+        val rawCriticalWarning = getU8(0)
+        val critWarn = rawCriticalWarning ?: criticalWarning
         val rawKelvin = getU16Le(1)?.takeIf { it != 0 }
-        val kelvin = rawKelvin ?: temperatureCelsius?.plus(273)
-        val availSpare = getU8(3) ?: availableSpare
-        val spareThresh = getU8(4) ?: spareThreshold
-        val percentUsed = getU8(5) ?: healthPercentage?.let { 100 - it }
-
-        fun row(id: String, value: BigInteger?, name: String, sta: String = "U", raw: String? = null) =
-            SmartRow(id, sta, "—", "—", "—", raw ?: value?.toString(16)?.uppercase()?.padStart(12, '0') ?: "—", name)
-        fun counter(counter: SmartCounter): BigInteger? {
-            val rawValue = getU128Le(counter)
-            if (rawValue != null) return rawValue
-            val value = counterValue(counter) ?: return null
-            return if (counter.scale > 1L) value.divide(BigInteger.valueOf(counter.scale)) else value
+        val kelvin = when {
+            rawKelvin != null -> rawKelvin
+            hasHex -> null
+            temperatureCelsius != null -> temperatureCelsius + 273
+            else -> null
         }
-        fun counterHex(counter: SmartCounter): String? = getU128Le(counter)?.toString(16)?.uppercase()?.padStart(32, '0')
-            ?: counter(counter)?.toString(16)?.uppercase()?.padStart(12, '0')
-        val mediaErrors = counter(SmartCounter.MEDIA_ERRORS)
-        val errorLogEntries = counter(SmartCounter.ERROR_LOG_ENTRIES)
+        val kelvinSource = when {
+            rawKelvin != null -> "R"
+            hasHex || temperatureCelsius == null -> "U"
+            else -> "D"
+        }
+        val rawSpare = getU8(3)
+        val rawSpareThreshold = getU8(4)
+        val rawPercentUsed = getU8(5)
+        val availSpare = rawSpare ?: availableSpare
+        val spareThresh = rawSpareThreshold ?: spareThreshold
+        val percentUsed = rawPercentUsed ?: healthPercentage?.takeIf { it in 1..100 }?.let { 100 - it }
+
+        fun row(
+            id: String,
+            value: BigInteger?,
+            name: String,
+            sta: String = "U",
+            raw: String? = null,
+            source: String = if (value == null) "U" else "S"
+        ) = SmartRow(id, sta, "—", "—", "—", raw ?: value?.toString(16)?.uppercase()?.padStart(12, '0') ?: "—", name, source)
+
+        data class CounterRow(val value: BigInteger?, val hex: String?, val source: String)
+        fun counterRow(counter: SmartCounter): CounterRow {
+            val rawValue = getU128Le(counter)
+            if (rawValue != null) return CounterRow(rawValue, rawValue.toString(16).uppercase().padStart(32, '0'), "R")
+            val value = counterValue(counter) ?: return CounterRow(null, null, "U")
+            if (counter.scale > 1L) {
+                val scale = BigInteger.valueOf(counter.scale)
+                if (value.remainder(scale) != BigInteger.ZERO) return CounterRow(null, null, "U")
+                val units = value.divide(scale)
+                return CounterRow(units, units.toString(16).uppercase().padStart(12, '0'), "D")
+            }
+            return CounterRow(value, value.toString(16).uppercase().padStart(12, '0'), "S")
+        }
+        fun countRow(id: String, counter: SmartCounter, name: String, errorCount: Boolean = false): SmartRow {
+            val value = counterRow(counter)
+            val sta = if (!errorCount || value.value == null) "U" else if (value.value == BigInteger.ZERO) "G" else "W"
+            return row(id, value.value, name, sta, value.hex, value.source)
+        }
 
         return listOf(
-            row("01", critWarn?.let { BigInteger.valueOf(it.toLong()) }, "严重警告标志", critWarn?.let { if (it == 0) "G" else "B" } ?: "U"),
-            row("02", kelvin?.let { BigInteger.valueOf(it.toLong()) }, "温度", if ((critWarn ?: 0) and 0x02 != 0) "B" else "U", kelvin?.let { "%012X".format(it) }),
+            row("01", critWarn?.let { BigInteger.valueOf(it.toLong()) }, "严重警告标志", critWarn?.let { if (it == 0) "G" else "B" } ?: "U", source = when { rawCriticalWarning != null -> "R"; criticalWarning == null -> "U"; else -> "S" }),
+            row("02", kelvin?.let { BigInteger.valueOf(it.toLong()) }, "温度", if ((critWarn ?: 0) and 0x02 != 0) "B" else "U", kelvin?.let { "%012X".format(it) }, kelvinSource),
             row("03", availSpare?.let { BigInteger.valueOf(it.toLong()) }, "可用备用空间", if (availSpare != null && spareThresh != null) {
                 when { (critWarn ?: 0) and 0x01 != 0 -> "B"; availSpare < spareThresh -> "W"; else -> "G" }
-            } else "U"),
-            row("04", spareThresh?.let { BigInteger.valueOf(it.toLong()) }, "可用备用空间阈值", if (spareThresh == null) "U" else "G"),
-            row("05", percentUsed?.let { BigInteger.valueOf(it.toLong()) }, "已用寿命百分比", percentUsed?.let { if (it >= 100) "W" else "G" } ?: "U"),
-            row("06", counter(SmartCounter.TOTAL_BYTES_READ), "主机总计读取", raw = counterHex(SmartCounter.TOTAL_BYTES_READ)),
-            row("07", counter(SmartCounter.TOTAL_BYTES_WRITTEN), "主机总计写入", raw = counterHex(SmartCounter.TOTAL_BYTES_WRITTEN)),
-            row("08", counter(SmartCounter.HOST_READ_COMMANDS), "主机读命令计数", raw = counterHex(SmartCounter.HOST_READ_COMMANDS)),
-            row("09", counter(SmartCounter.HOST_WRITE_COMMANDS), "主机写命令计数", raw = counterHex(SmartCounter.HOST_WRITE_COMMANDS)),
-            row("0A", counter(SmartCounter.CONTROLLER_BUSY_MINUTES), "控制器忙状态时间", raw = counterHex(SmartCounter.CONTROLLER_BUSY_MINUTES)),
-            row("0B", counter(SmartCounter.POWER_CYCLES), "通电次数", raw = counterHex(SmartCounter.POWER_CYCLES)),
-            row("0C", counter(SmartCounter.POWER_HOURS), "通电时间(小时)", raw = counterHex(SmartCounter.POWER_HOURS)),
-            row("0D", counter(SmartCounter.UNSAFE_SHUTDOWNS), "不安全关机计数", raw = counterHex(SmartCounter.UNSAFE_SHUTDOWNS)),
-            row("0E", mediaErrors, "媒体与数据完整性错误计数", sta = mediaErrors?.let { if (it == BigInteger.ZERO) "G" else "W" } ?: "U", raw = counterHex(SmartCounter.MEDIA_ERRORS)),
-            row("0F", errorLogEntries, "错误日志项数", sta = errorLogEntries?.let { if (it == BigInteger.ZERO) "G" else "W" } ?: "U", raw = counterHex(SmartCounter.ERROR_LOG_ENTRIES))
+            } else "U", source = when { rawSpare != null -> "R"; availSpare == null -> "U"; else -> "S" }),
+            row("04", spareThresh?.let { BigInteger.valueOf(it.toLong()) }, "可用备用空间阈值", if (spareThresh == null) "U" else "G", source = when { rawSpareThreshold != null -> "R"; spareThresh == null -> "U"; else -> "S" }),
+            row("05", percentUsed?.let { BigInteger.valueOf(it.toLong()) }, "已用寿命百分比", percentUsed?.let { if (it >= 100) "W" else "G" } ?: "U", source = when { rawPercentUsed != null -> "R"; percentUsed == null -> "U"; else -> "D" }),
+            countRow("06", SmartCounter.TOTAL_BYTES_READ, "主机总计读取"),
+            countRow("07", SmartCounter.TOTAL_BYTES_WRITTEN, "主机总计写入"),
+            countRow("08", SmartCounter.HOST_READ_COMMANDS, "主机读命令计数"),
+            countRow("09", SmartCounter.HOST_WRITE_COMMANDS, "主机写命令计数"),
+            countRow("0A", SmartCounter.CONTROLLER_BUSY_MINUTES, "控制器忙状态时间"),
+            countRow("0B", SmartCounter.POWER_CYCLES, "通电次数"),
+            countRow("0C", SmartCounter.POWER_HOURS, "通电时间(小时)"),
+            countRow("0D", SmartCounter.UNSAFE_SHUTDOWNS, "不安全关机计数"),
+            countRow("0E", SmartCounter.MEDIA_ERRORS, "媒体与数据完整性错误计数", errorCount = true),
+            countRow("0F", SmartCounter.ERROR_LOG_ENTRIES, "错误日志项数", errorCount = true)
         )
     }
 
@@ -220,26 +254,23 @@ data class SmartHealthInfo(
                 val name = getSataAttrName(id)
                 val idHex = "%02X".format(id)
 
-                rows.add(SmartRow(idHex, "U", formatCurWor(cur), formatCurWor(wor), "—", rawStr, name))
+                rows.add(SmartRow(idHex, "U", formatCurWor(cur), formatCurWor(wor), "—", rawStr, name, "R"))
             }
         }
 
-        // Structured counters are useful raw values, but do not contain normalized ATA values or thresholds.
-        fun field(id: String, value: Long?, name: String, status: String = "U") =
-            SmartRow(id, status, "—", "—", "—", value?.let { "%012X".format(it) } ?: "—", name)
-        val knownFields = listOf(
-            field("01", null, "读取错误率"),
+        fun field(id: String, value: Long?, name: String, status: String = "U", source: String = if (value == null) "U" else "S") =
+            SmartRow(id, status, "—", "—", "—", value?.let { "%012X".format(it) } ?: "—", name, source)
+        val summaryFields = listOf(
             field("05", reallocatedSectors, "重新分配扇区数", reallocatedSectors?.let { if (it == 0L) "G" else "W" } ?: "U"),
             field("09", powerHours, "通电时间(小时)"),
             field("0C", powerCycles, "通电周期计数"),
             field("C2", temperatureCelsius?.toLong(), "温度"),
             field("C5", pendingSectors, "当前待映射扇区数", pendingSectors?.let { if (it == 0L) "G" else "W" } ?: "U"),
-            field("C6", uncorrectableSectors, "脱机无法纠正扇区数", uncorrectableSectors?.let { if (it == 0L) "G" else "W" } ?: "U"),
-            field("E7", healthPercentage?.toLong(), "SSD 剩余寿命"),
-            field("F1", totalBytesWritten?.div(512L), "主机总计写入")
+            field("C6", uncorrectableSectors, "脱机无法纠正扇区数", uncorrectableSectors?.let { if (it == 0L) "G" else "W" } ?: "U")
         )
         val existingIds = rows.mapTo(mutableSetOf()) { it.id }
-        rows.addAll(knownFields.filterNot { it.id in existingIds })
+        val missingFields = summaryFields.filterNot { it.id in existingIds }.map { field(it.id, null, it.attributeName) }
+        rows.addAll(if (hasHex) missingFields else summaryFields.filterNot { it.id in existingIds })
 
         return rows
     }
@@ -259,9 +290,7 @@ data class SmartHealthInfo(
             0xC5 -> "当前待映射扇区数"
             0xC6 -> "脱机无法纠正扇区数"
             0xC7 -> "UltraDMA CRC 错误计数"
-            0xE7 -> "SSD 剩余寿命"
-            0xF1 -> "主机总计写入"
-            0xF2 -> "主机总计读取"
+            0xE7, 0xF1, 0xF2 -> "厂商属性 0x%02X（含义未验证）".format(id)
             else -> "厂商专属属性 0x%02X".format(id)
         }
     }
