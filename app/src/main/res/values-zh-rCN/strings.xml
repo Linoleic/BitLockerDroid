@@ -99,7 +99,7 @@
     <string name="eject_device">弹出设备</string>
     <string name="closed_device_eject_hint">设备仍保持连接。拔盘前请先点击“弹出设备”。</string>
     <string name="safe_ejecting">正在安全同步与弹出…</string>
-    <string name="safe_eject_success">【%1$s】缓存同步和停盘命令已完成。</string>
+    <string name="safe_eject_success">【%1$s】写入同步与停盘已完成。</string>
     <string name="safe_eject_part_success">【%1$s】已安全关闭。同盘仍有其他分区在使用，请勿拔出设备</string>
     <string name="safe_eject_spindown_warning">【%1$s】卷已关闭，但缓存同步或停盘未确认成功。请暂勿拔出，重试弹出设备。</string>
     <string name="safe_eject_failed">安全弹出失败，请暂勿拔出设备：%1$s</string>
@@ -120,7 +120,7 @@
     <string name="volume_operation_result_title">%1$s · %2$s</string>
     <string name="volume_operation_result_volume_closed">卷已关闭；设备未停机</string>
     <string name="volume_operation_result_disk_busy">卷已关闭；磁盘仍在使用</string>
-    <string name="volume_operation_result_disk_stopped">同步与停盘命令已完成</string>
+    <string name="volume_operation_result_disk_stopped">写入同步与停盘已完成</string>
     <string name="volume_operation_result_failed">操作失败</string>
     <string name="volume_operation_result_stop_failed">卷已关闭；未能确认设备停盘</string>
     <string name="volume_operation_error">详情：%1$s</string>
@@ -141,7 +141,7 @@
     <string name="saf_write_syncing_count">同步中项：%1$d</string>
     <string name="saf_write_error">SAF 写入错误：%1$s</string>
     <string name="safe_to_unplug_title">【%1$s】已完成设备弹出</string>
-    <string name="safe_to_unplug_desc">缓存同步和停盘命令已完成。NVMe 异常断电计数仍取决于桥接器及磁盘固件。</string>
+    <string name="safe_to_unplug_desc">写入同步与停盘已完成。NVMe 异常断电计数仍取决于桥接器及磁盘固件。</string>
     <string name="volume_closed_title">【%1$s】卷已安全关闭</string>
     <string name="volume_closed_disk_busy_desc">卷已安全关闭。同盘仍有其他分区正在使用，请勿拔出设备</string>
     <string name="volume_closed_spindown_failed_desc">卷已关闭，但缓存同步或停盘未确认成功。请暂勿拔出，重试弹出设备。</string>

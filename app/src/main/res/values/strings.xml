@@ -99,7 +99,7 @@
     <string name="closed_device_eject_hint">The device remains connected. Use Eject device before unplugging.</string>
     <string name="safe_eject">Safe Eject</string>
     <string name="safe_ejecting">Ejecting…</string>
-    <string name="safe_eject_success">Drive \"%1$s\" cache sync and stop commands completed.</string>
+    <string name="safe_eject_success">Drive \"%1$s\" write synchronization and stop completed.</string>
     <string name="safe_eject_part_success">Volume \"%1$s\" safely closed. Other partitions on this drive remain active; do not unplug the device yet.</string>
     <string name="safe_eject_spindown_warning">Volume \"%1$s\" closed, but cache sync or stopping was not confirmed. Do not unplug yet; retry device eject.</string>
     <string name="safe_eject_failed">Safe eject failed. Do not unplug yet: %1$s</string>
@@ -120,7 +120,7 @@
     <string name="volume_operation_result_title">%1$s · %2$s</string>
     <string name="volume_operation_result_volume_closed">Volumes closed; device not stopped</string>
     <string name="volume_operation_result_disk_busy">Volume closed; disk is still in use</string>
-    <string name="volume_operation_result_disk_stopped">Cache sync and stop commands completed</string>
+    <string name="volume_operation_result_disk_stopped">Write synchronization and stop completed</string>
     <string name="volume_operation_result_failed">Operation failed</string>
     <string name="volume_operation_result_stop_failed">Volume closed; device stop was not confirmed</string>
     <string name="volume_operation_error">Details: %1$s</string>
@@ -141,7 +141,7 @@
     <string name="saf_write_syncing_count">Syncing: %1$d</string>
     <string name="saf_write_error">SAF write error: %1$s</string>
     <string name="safe_to_unplug_title">【%1$s】Device eject completed</string>
-    <string name="safe_to_unplug_desc">Cache sync and stop commands completed. The NVMe unsafe shutdown counter still depends on bridge and drive firmware.</string>
+    <string name="safe_to_unplug_desc">Write synchronization and stop completed. The NVMe unsafe shutdown counter still depends on bridge and drive firmware.</string>
     <string name="volume_closed_title">【%1$s】Volume Closed</string>
     <string name="volume_closed_disk_busy_desc">Volume safely closed. Other partitions on this drive remain active; do not unplug the device.</string>
     <string name="volume_closed_spindown_failed_desc">Volume closed, but cache sync or stopping was not confirmed. Do not unplug yet; retry device eject.</string>

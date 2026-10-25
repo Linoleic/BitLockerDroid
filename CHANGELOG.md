@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 #### 修复
 
 - 关闭全部卷后仍可弹出设备；严格检查缓存同步、停盘和下线结果，失败时保留重试入口。
+- 修复已关闭写缓存、但不支持缓存同步命令的 U 盘无法弹出的问题。
 
 ### English
 
@@ -31,6 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 #### Fixed
 
 - Keep device eject available after all volumes are closed; validate cache sync, stop and offline results and retain retry on failure.
+- Fix ejecting USB drives that report write caching disabled but do not support the cache synchronization command.
 
 ## [v1.2.0] - 2026-10-24
 

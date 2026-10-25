@@ -17,6 +17,7 @@ internal class UsbBotTransport(
     private var opcode = 0
     private var expected = 0L
     private var remaining = 0L
+    private var dataInCommand = false
     @Volatile private var failure: IOException? = null
     val healthy: Boolean get() = failure == null
     private val input = ByteArray(16 * 1024)
@@ -47,6 +48,7 @@ internal class UsbBotTransport(
             tag = header.int
             expected = header.int.toLong() and 0xffffffffL
             opcode = output[15].toInt() and 255
+            dataInCommand = (output[12].toInt() and 128) != 0
         }
         val result = transfer(false, output, length, 5000)
         if (result <= 0 || result > length || (cbw && result != 31)) fail("OUT requested=$length result=$result")
@@ -77,11 +79,13 @@ internal class UsbBotTransport(
             val residue = header.int.toLong() and 0xffffffffL
             val commandStatus = header.get().toInt() and 255
             if (residue > expected || commandStatus !in 0..1 ||
-                (commandStatus == 0 && (remaining != 0L || residue != 0L))) fail("invalid CSW status/residue")
+                (commandStatus == 0 && (residue != remaining || (!dataInCommand && remaining != 0L)))) fail("invalid CSW status/residue")
             phase = Phase.CBW
         } else {
             remaining -= result
-            if (remaining == 0L) phase = Phase.CSW
+            // A short IN packet ends a variable-length response (e.g. REQUEST SENSE).
+            // The following CSW must account for every missing byte through residue.
+            if (remaining == 0L || result < length) phase = Phase.CSW
         }
         dest.put(input, 0, result)
         return result

@@ -111,4 +111,19 @@ class UsbBotTransportTest {
         assertThrows(IOException::class.java) { b.bot.bulkOut(cbw()) }
         assertEquals(2, b.outputs.size)
     }
+
+    @Test fun shortInputRequiresExactResidueBeforeAnotherCommand() {
+        for (residue in listOf(10, 9, 0)) {
+            val b = Backend(); b.bot.bulkOut(cbw(18, input = true))
+            b.inputResults.add(8 to ByteArray(8)); b.inputResults.add(13 to csw(residue = residue))
+            assertEquals(8, b.bot.bulkIn(ByteBuffer.allocate(18)))
+            if (residue == 10) {
+                assertEquals(13, b.bot.bulkIn(ByteBuffer.allocate(13))); assertTrue(b.bot.healthy)
+                b.bot.bulkOut(cbw(0, tag = 8))
+            } else {
+                assertThrows(IOException::class.java) { b.bot.bulkIn(ByteBuffer.allocate(13)) }
+                assertFalse(b.bot.healthy)
+            }
+        }
+    }
 }

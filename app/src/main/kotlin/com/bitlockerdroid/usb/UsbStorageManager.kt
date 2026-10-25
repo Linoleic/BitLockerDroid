@@ -980,8 +980,9 @@ object UsbStorageManager {
                     synchronized(holder.scsiDevice) {
                         // Keep each complete CBW/CSW exchange atomic with partition worker I/O.
                         onStage(com.bitlockerdroid.service.VolumeOperationStage.SYNCING_DEVICE)
-                        val syncCdb = byteArrayOf(0x35.toByte(), 0, 0, 0, 0, 0, 0, 0, 0, 0)
-                        val syncSuccess = sendScsiCommandNoData(comm, syncCdb, 0x1001)
+                        val syncSuccess = ScsiCacheSync(comm::bulkOutTransfer, comm::bulkInTransfer) {
+                            LogFile.write("app", "USB eject: $it")
+                        }.synchronize()
                         if (!syncSuccess) {
                             Log.w(TAG, "spindownDevice: SCSI SYNCHRONIZE CACHE returned failure on USB device $devId. Aborting spindown.")
                             return false
