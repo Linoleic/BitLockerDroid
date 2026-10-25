@@ -86,6 +86,9 @@ app/build/outputs/apk/release/app-release.apk
 ```
 
 #### Signing Configuration
+
+For each release, update `versionName` and increment `versionCode` in `app/build.gradle.kts`. The version code is explicit and does not depend on Git history.
+
 - **Debug Fallback**: If no custom release keystore is provided, the Gradle build script automatically falls back to Debug signing. Developers can clone and build ready-to-test APKs immediately without extra setup.
 - **Custom Release Keystore Configuration**:
   1. Copy the keystore template:

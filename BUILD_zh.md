@@ -86,6 +86,9 @@ app/build/outputs/apk/release/app-release.apk
 ```
 
 #### 签名机制说明
+
+每次发版时，在 `app/build.gradle.kts` 中更新 `versionName` 并递增 `versionCode`；版本代码显式维护，不依赖 Git 历史。
+
 - **默认开发回退**：若未配置独立的 Release 签名秘钥，Gradle 构建脚本将自动回退至 Debug 签名，确保开发者克隆项目后无需繁琐配置即可直接编译并生成可安装的 APK。
 - **正式发布签名配置**：
   1. 复制签名模板：
