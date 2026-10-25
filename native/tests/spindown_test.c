@@ -61,6 +61,26 @@ enum fail_mode {
     FAIL_NONE,
     FAIL_BLOCK_FLUSH,
     FAIL_SYNC_CACHE_ILLEGAL,
+    SYNC_DRIVER_SENSE,
+    SYNC_UNSUPPORTED_DESCRIPTOR,
+    SYNC_INVALID_FIELD,
+    SYNC_UNKNOWN_SENSE,
+    SYNC_BAD_SENSE,
+    SYNC_TRUNCATED_SENSE,
+    SYNC_DEFERRED_SENSE,
+    SYNC_INVALID_FIELD_DESCRIPTOR,
+    SYNC_GOOD_BAD_DRIVER,
+    SYNC_BAD_DRIVER_STATUS,
+    SYNC_BAD_HOST_STATUS,
+    SYNC_NONZERO_RESID,
+    SYNC_TRANSPORT_ERROR,
+    MODE_WCE_ON,
+    MODE_ZERO_PAGE,
+    MODE_TRUNCATED_HEADER,
+    MODE_TRUNCATED_PAGE,
+    MODE_MISSING_PAGE,
+    MODE_BAD_PAGE_LENGTH,
+    MODE_BLOCK_DESCRIPTOR,
     FAIL_STOP_ILLEGAL,
     FAIL_DELETE_WRITE,
     FAIL_DELETE_OPEN,
@@ -73,6 +93,7 @@ static char g_events[64];
 static size_t g_event_count;
 static int g_sg_sync_count;
 static int g_sg_stop_count;
+static int g_mode_sense_count;
 static int g_delete_write_count;
 static int g_open_device_count;
 static int g_open_delete_count;
@@ -96,6 +117,7 @@ static void reset_fake(enum fail_mode mode) {
     g_event_count = 0;
     g_sg_sync_count = 0;
     g_sg_stop_count = 0;
+    g_mode_sense_count = 0;
     g_delete_write_count = 0;
     g_open_device_count = 0;
     g_open_delete_count = 0;
@@ -186,11 +208,53 @@ static int fake_ioctl(int fd, unsigned long request, ...) {
         assert(hdr->cmd_len == 10);
         g_sg_sync_count++;
         event('C');
-        if (g_mode == FAIL_SYNC_CACHE_ILLEGAL) {
+        if (g_mode == SYNC_TRANSPORT_ERROR) {
+            errno = EIO;
+            return -1;
+        }
+        if (g_mode == SYNC_GOOD_BAD_DRIVER) {
+            hdr->driver_status = 8;
+            return 0;
+        }
+        if (g_mode == FAIL_SYNC_CACHE_ILLEGAL ||
+            g_mode == SYNC_DRIVER_SENSE ||
+            g_mode == SYNC_UNSUPPORTED_DESCRIPTOR ||
+            g_mode == SYNC_INVALID_FIELD || g_mode == SYNC_UNKNOWN_SENSE ||
+            g_mode == SYNC_BAD_SENSE || g_mode == SYNC_TRUNCATED_SENSE ||
+            g_mode == SYNC_DEFERRED_SENSE ||
+            g_mode == SYNC_INVALID_FIELD_DESCRIPTOR ||
+            g_mode == SYNC_BAD_DRIVER_STATUS || g_mode == SYNC_BAD_HOST_STATUS ||
+            g_mode == SYNC_NONZERO_RESID ||
+            g_mode == MODE_WCE_ON || g_mode == MODE_TRUNCATED_HEADER ||
+            g_mode == MODE_ZERO_PAGE || g_mode == MODE_TRUNCATED_PAGE ||
+            g_mode == MODE_MISSING_PAGE ||
+            g_mode == MODE_BAD_PAGE_LENGTH || g_mode == MODE_BLOCK_DESCRIPTOR) {
             hdr->status = 2;
+            if (g_mode == SYNC_DRIVER_SENSE) hdr->driver_status = 8;
+            if (g_mode == SYNC_BAD_DRIVER_STATUS) hdr->driver_status = 4;
+            if (g_mode == SYNC_BAD_HOST_STATUS) hdr->host_status = 1;
+            if (g_mode == SYNC_NONZERO_RESID) hdr->resid = 1;
             if (hdr->sbp && hdr->mx_sb_len >= 3) {
-                ((unsigned char *)hdr->sbp)[0] = 0x70;
-                ((unsigned char *)hdr->sbp)[2] = 0x05;
+                unsigned char *sense = (unsigned char *)hdr->sbp;
+                if (g_mode == SYNC_UNSUPPORTED_DESCRIPTOR ||
+                    g_mode == SYNC_INVALID_FIELD_DESCRIPTOR) {
+                    sense[0] = 0x72;
+                    sense[1] = 0x05;
+                    sense[2] = g_mode == SYNC_INVALID_FIELD_DESCRIPTOR ? 0x24 : 0x20;
+                    sense[3] = 0;
+                    sense[7] = 0;
+                    hdr->sb_len_wr = 8;
+                } else {
+                    sense[0] = g_mode == SYNC_BAD_SENSE ? 0x7f :
+                               g_mode == SYNC_DEFERRED_SENSE ? 0x71 : 0x70;
+                    if (g_mode == SYNC_DRIVER_SENSE) sense[0] = 0xf0;
+                    sense[2] = 0x05;
+                    sense[7] = 10;
+                    sense[12] = g_mode == SYNC_INVALID_FIELD ? 0x24 :
+                                g_mode == SYNC_UNKNOWN_SENSE ? 0x21 : 0x20;
+                    sense[13] = 0;
+                    hdr->sb_len_wr = g_mode == SYNC_TRUNCATED_SENSE ? 14 : 18;
+                }
             }
         }
     } else if (hdr->cmdp[0] == 0x1b) {
@@ -202,7 +266,36 @@ static int fake_ioctl(int fd, unsigned long request, ...) {
             if (hdr->sbp && hdr->mx_sb_len >= 3) {
                 ((unsigned char *)hdr->sbp)[0] = 0x70;
                 ((unsigned char *)hdr->sbp)[2] = 0x05;
+                ((unsigned char *)hdr->sbp)[7] = 10;
+                ((unsigned char *)hdr->sbp)[12] = 0x20;
+                ((unsigned char *)hdr->sbp)[13] = 0;
+                hdr->sb_len_wr = 18;
             }
+        }
+    } else if (hdr->cmdp[0] == 0x1a) {
+        assert(hdr->cmd_len == 6);
+        assert(hdr->cmdp[1] == 0x08 && hdr->cmdp[2] == 0x08);
+        assert(hdr->dxferp != NULL);
+        g_mode_sense_count++;
+        event('M');
+        unsigned char *data = (unsigned char *)hdr->dxferp;
+        if (hdr->dxfer_len == 4) {
+            data[0] = 23;
+            data[1] = 0;
+            data[2] = 0;
+            data[3] = g_mode == MODE_BLOCK_DESCRIPTOR ? 1 : 0;
+            if (g_mode == MODE_TRUNCATED_HEADER) hdr->resid = 1;
+            if (g_mode == MODE_MISSING_PAGE) data[0] = 3;
+        } else {
+            assert(hdr->dxfer_len == 24 && hdr->cmdp[4] == 24);
+            data[0] = 23;
+            data[3] = g_mode == MODE_BLOCK_DESCRIPTOR ? 1 : 0;
+            if (g_mode != MODE_ZERO_PAGE) {
+                data[4] = g_mode == MODE_MISSING_PAGE ? 0 : 0x08;
+                data[5] = g_mode == MODE_BAD_PAGE_LENGTH ? 0x13 : 0x12;
+                data[6] = g_mode == MODE_WCE_ON ? 0x04 : 0;
+            }
+            if (g_mode == MODE_TRUNCATED_PAGE) hdr->resid = 1;
         }
     } else {
         assert(0 && "unexpected SCSI command");
@@ -271,12 +364,12 @@ static void test_flush_failure_stops_before_scsi(void) {
     assert(g_close_device_count == 1 && g_open_delete_count == 0);
 }
 
-static void test_sync_illegal_request_does_not_stop_or_delete(void) {
+static void test_sync_illegal_request_allowed_with_write_cache_disabled(void) {
     reset_fake(FAIL_SYNC_CACHE_ILLEGAL);
-    assert(scsi_spindown_device("/dev/block/sda") < 0);
-    assert(strcmp(g_events, "sBC") == 0);
-    assert(g_sg_stop_count == 0 && g_delete_write_count == 0);
-    assert(g_close_device_count == 1 && g_open_delete_count == 0);
+    assert(scsi_spindown_device("/dev/block/sda") == 0);
+    assert(strcmp(g_events, "sBCMMTD") == 0);
+    assert(g_mode_sense_count == 2);
+    assert(g_sg_stop_count == 1 && g_delete_write_count == 1);
 }
 
 static void test_stop_illegal_request_does_not_delete(void) {
@@ -321,15 +414,59 @@ static void test_internal_ufs_is_refused_without_writes(void) {
     assert(g_open_delete_count == 0 && g_partition_access_count == 1);
 }
 
+static void test_sync_unsupported_allowed_only_with_verified_write_cache_disabled(void) {
+    const enum fail_mode compatible_modes[] = {
+        SYNC_DRIVER_SENSE,
+        SYNC_UNSUPPORTED_DESCRIPTOR,
+        SYNC_INVALID_FIELD,
+        SYNC_INVALID_FIELD_DESCRIPTOR
+    };
+    for (size_t i = 0; i < sizeof(compatible_modes) / sizeof(compatible_modes[0]); i++) {
+        reset_fake(compatible_modes[i]);
+        assert(scsi_spindown_device("/dev/block/sda") == 0);
+        assert(strcmp(g_events, "sBCMMTD") == 0);
+        assert(g_mode_sense_count == 2);
+        assert(g_sg_stop_count == 1 && g_delete_write_count == 1);
+    }
+}
+
+static void test_sync_or_mode_sense_uncertainty_refuses_stop(void) {
+    const enum fail_mode reject_modes[] = {
+        SYNC_UNKNOWN_SENSE,
+        SYNC_BAD_SENSE,
+        SYNC_TRUNCATED_SENSE,
+        SYNC_DEFERRED_SENSE,
+        SYNC_GOOD_BAD_DRIVER,
+        SYNC_BAD_DRIVER_STATUS,
+        SYNC_BAD_HOST_STATUS,
+        SYNC_NONZERO_RESID,
+        SYNC_TRANSPORT_ERROR,
+        MODE_ZERO_PAGE,
+        MODE_WCE_ON,
+        MODE_TRUNCATED_HEADER,
+        MODE_TRUNCATED_PAGE,
+        MODE_MISSING_PAGE,
+        MODE_BAD_PAGE_LENGTH,
+        MODE_BLOCK_DESCRIPTOR
+    };
+    for (size_t i = 0; i < sizeof(reject_modes) / sizeof(reject_modes[0]); i++) {
+        reset_fake(reject_modes[i]);
+        assert(scsi_spindown_device("/dev/block/sda") < 0);
+        assert(g_sg_stop_count == 0 && g_delete_write_count == 0);
+    }
+}
+
 int main(void) {
     test_success_order();
     test_flush_failure_stops_before_scsi();
-    test_sync_illegal_request_does_not_stop_or_delete();
+    test_sync_illegal_request_allowed_with_write_cache_disabled();
     test_stop_illegal_request_does_not_delete();
     test_delete_write_failure_is_not_success();
     test_missing_delete_node_is_not_success();
     test_device_still_present_after_delete_is_not_success();
     test_internal_ufs_is_refused_without_writes();
+    test_sync_unsupported_allowed_only_with_verified_write_cache_disabled();
+    test_sync_or_mode_sense_uncertainty_refuses_stop();
     puts("spindown_test: all cases passed");
     return 0;
 }

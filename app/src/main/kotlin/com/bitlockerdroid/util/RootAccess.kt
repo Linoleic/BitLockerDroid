@@ -515,10 +515,12 @@ object RootAccess {
                 return true
             }
             Log.e(TAG, "daemon spindown failed for $devicePath (code=${daemonRes.first}, out=${daemonRes.second}). Aborting to prevent data loss.")
+            LogFile.write("app", "Root eject failed: code=${daemonRes.first}, result=${daemonRes.second.trim().take(1024)}")
             return false
         }
 
         Log.e(TAG, "bitlocker_io spindown command unavailable for $devicePath; refusing to report STOP/offline success")
+        LogFile.write("app", "Root eject failed: spindown command unavailable for $devicePath")
         return false
     }
 }

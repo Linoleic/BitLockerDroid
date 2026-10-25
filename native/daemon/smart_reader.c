@@ -56,6 +56,99 @@ static int do_sg_io(int fd, const unsigned char *cdb, int cdb_len,
     return 0;
 }
 
+enum spindown_sg_result {
+    SPINDOWN_SG_ERROR = -1,
+    SPINDOWN_SG_GOOD = 0,
+    SPINDOWN_SG_CHECK_CONDITION = 1
+};
+
+/* Keep the SMART reader's strict GOOD-only helper unchanged. Spindown needs
+ * to distinguish a real, well-formed CHECK CONDITION from transport errors. */
+static int do_spindown_sg_io(int fd, const unsigned char *cdb, int cdb_len,
+                             unsigned char *data, int data_len, int dxfer_dir,
+                             unsigned char *sense, int sense_len,
+                             int *sense_written) {
+    struct sg_io_hdr io_hdr;
+    memset(&io_hdr, 0, sizeof(io_hdr));
+    io_hdr.interface_id = 'S';
+    io_hdr.cmd_len = cdb_len;
+    io_hdr.cmdp = (unsigned char *)cdb;
+    io_hdr.dxfer_direction = dxfer_dir;
+    io_hdr.dxfer_len = data_len;
+    io_hdr.dxferp = data;
+    io_hdr.sbp = sense;
+    io_hdr.mx_sb_len = sense_len;
+    io_hdr.timeout = 5000;
+
+    if (sense_written) *sense_written = 0;
+    if (ioctl(fd, SG_IO, &io_hdr) < 0) return SPINDOWN_SG_ERROR;
+    if (sense_written) *sense_written = io_hdr.sb_len_wr;
+    if (io_hdr.sb_len_wr > sense_len) return SPINDOWN_SG_ERROR;
+    if (io_hdr.host_status != 0 || io_hdr.resid != 0)
+        return SPINDOWN_SG_ERROR;
+    if (io_hdr.status == 0)
+        return io_hdr.driver_status == 0 ? SPINDOWN_SG_GOOD : SPINDOWN_SG_ERROR;
+    if (io_hdr.status == 0x02 && data_len == 0 &&
+        (io_hdr.driver_status == 0 || io_hdr.driver_status == 0x08))
+        return SPINDOWN_SG_CHECK_CONDITION;
+    return SPINDOWN_SG_ERROR;
+}
+
+static int is_sync_cache_unsupported_sense(const unsigned char *sense, int sense_len) {
+    if (!sense || sense_len < 8) return 0;
+    unsigned int response = sense[0];
+    unsigned int key, asc, ascq;
+    unsigned int declared_len = 8U + sense[7];
+    if (declared_len > (unsigned int)sense_len) return 0;
+
+    if ((response & 0x7f) == 0x70) {
+        if (declared_len < 14 || sense_len < 14) return 0;
+        key = sense[2] & 0x0f;
+        asc = sense[12];
+        ascq = sense[13];
+    } else if (response == 0x72) {
+        if (declared_len < 8) return 0;
+        key = sense[1] & 0x0f;
+        asc = sense[2];
+        ascq = sense[3];
+    } else {
+        return 0;
+    }
+
+    return key == 0x05 && ascq == 0 && (asc == 0x20 || asc == 0x24);
+}
+
+/* MODE SENSE(6), DBD=1, current Caching mode page. Only an exact, complete
+ * page with WCE clear can establish that skipping SYNCHRONIZE CACHE is safe. */
+static int write_cache_is_disabled(int fd, unsigned char *sense, int sense_len) {
+    unsigned char cdb[6] = { 0x1a, 0x08, 0x08, 0, 4, 0 };
+    unsigned char mode_data[255];
+    memset(mode_data, 0, sizeof(mode_data));
+    int sense_written = 0;
+    int result = do_spindown_sg_io(fd, cdb, sizeof(cdb), mode_data, 4,
+                                   SG_DXFER_FROM_DEV, sense, sense_len,
+                                   &sense_written);
+    if (result != SPINDOWN_SG_GOOD) return 0;
+
+    unsigned int total_len = (unsigned int)mode_data[0] + 1U;
+    if (total_len < 6 || total_len > sizeof(mode_data) || mode_data[3] != 0)
+        return 0;
+
+    cdb[4] = (unsigned char)total_len;
+    memset(mode_data, 0, sizeof(mode_data));
+    result = do_spindown_sg_io(fd, cdb, sizeof(cdb), mode_data, (int)total_len,
+                               SG_DXFER_FROM_DEV, sense, sense_len,
+                               &sense_written);
+    if (result != SPINDOWN_SG_GOOD || (unsigned int)mode_data[0] + 1U != total_len ||
+        mode_data[3] != 0 || (mode_data[4] & 0x40) != 0 ||
+        (mode_data[4] & 0x3f) != 0x08)
+        return 0;
+
+    unsigned int page_len = mode_data[5];
+    if (page_len < 0x12 || 6U + page_len != total_len) return 0;
+    return (mode_data[6] & 0x04) == 0;
+}
+
 enum usb_bridge_kind { USB_BRIDGE_NONE = 0, USB_BRIDGE_UNKNOWN = 1, USB_BRIDGE_RTL9210 = 2 };
 static void trim_trailing(char *s);
 
@@ -815,20 +908,26 @@ int scsi_spindown_device(const char *dev_path) {
     // Synchronize disk internal write cache before spindown or offline
     unsigned char sync_cdb[10] = { 0x35, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
     memset(sense, 0, sizeof(sense));
-    int sync_ret = do_sg_io(fd, sync_cdb, 10, NULL, 0, SG_DXFER_NONE, sense, sizeof(sense));
-    if (sync_ret != 0) {
-        // Unsupported commands are not confirmation of a completed cache flush.
-        close(fd);
-        return -EIO;
+    int sense_written = 0;
+    int sync_ret = do_spindown_sg_io(fd, sync_cdb, 10, NULL, 0, SG_DXFER_NONE,
+                                     sense, sizeof(sense), &sense_written);
+    if (sync_ret != SPINDOWN_SG_GOOD) {
+        if (sync_ret != SPINDOWN_SG_CHECK_CONDITION ||
+            !is_sync_cache_unsupported_sense(sense, sense_written) ||
+            !write_cache_is_disabled(fd, sense, sizeof(sense))) {
+            close(fd);
+            return -EIO;
+        }
     }
 
     // Step 3: SCSI START STOP UNIT (0x1B) with START=0 (Stop unit / spindown)
     unsigned char stop_cdb[6] = { 0x1B, 0, 0, 0, 0x00, 0 };
     memset(sense, 0, sizeof(sense));
-    int stop_ret = do_sg_io(fd, stop_cdb, 6, NULL, 0, SG_DXFER_NONE, sense, sizeof(sense));
+    int stop_ret = do_spindown_sg_io(fd, stop_cdb, 6, NULL, 0, SG_DXFER_NONE,
+                                     sense, sizeof(sense), NULL);
     close(fd);
 
-    if (stop_ret != 0) {
+    if (stop_ret != SPINDOWN_SG_GOOD) {
         return -EIO;
     }
 
