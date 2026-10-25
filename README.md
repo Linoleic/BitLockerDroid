@@ -254,7 +254,8 @@ User-space SCSI/BOT Stack (UsbMassStorageDriver)         Direct I/O High-Perform
 4. **Access & Safe Eject**:
    - Tap **Open** to manage files directly in the Android system "Files" app.
    - In Root mode, tap **Virtual mount to real directory** to access files at `/storage/XXXX-XXXX` using third-party apps.
-   - Always tap **Safe Eject** and wait for confirmation before physically unplugging the drive.
+   - **Close volume** closes only that volume; **Close all volumes** in the device header closes all its volumes. Both keep the device connected.
+   - Before unplugging, tap **Eject device** in the device header and wait for completion. It closes all that device's volumes automatically.
 
 ---
 
@@ -274,8 +275,8 @@ For full environment prerequisites, NDK CMake builds, host verification tools, a
 
 ## FAQ & Technical Notes
 
-- **Q: Why should I always tap "Safe Eject" before unplugging?**  
-  **A**: Safe eject triggers a two-level cache flush to storage and clears the filesystem Dirty Bit. Directly pulling the drive leaves the Dirty Bit active, causing Windows to display "There is a problem with this drive, scan and fix now" upon reconnection.
+- **Q: How do "Close volume" and "Eject device" differ?**
+  **A**: Close volume and Close all volumes wait for writes to finish, sync and close the selected volumes, and keep the device connected. Before unplugging, use Eject device: it closes all that device's volumes, checks for other users, and synchronizes and stops the device. Do not unplug if the operation fails or the device is still in use.
 - **Q: What is the Recovery Key ID used for?**  
   **A**: An encrypted drive may have multiple historical recovery keys. The unlock dialog displays the Recovery Key ID so you can verify it matches the key listed in your Microsoft account ([account.microsoft.com/devices/recoverykey](https://account.microsoft.com/devices/recoverykey)) before entering the 48 digits.
 - **Q: Why do some apps not see `/storage/XXXX-XXXX` after virtual mount?**  
