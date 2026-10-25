@@ -5,6 +5,7 @@ ROADMAP.md
 backup.txt
 local.properties
 tools/
+/docs/
 
 # ============================================================
 # 证书与密钥配置
