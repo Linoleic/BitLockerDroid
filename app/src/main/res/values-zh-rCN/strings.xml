@@ -103,11 +103,12 @@
     <string name="safe_eject_part_success">【%1$s】已安全关闭。同盘仍有其他分区在使用，请勿拔出设备</string>
     <string name="safe_eject_spindown_warning">【%1$s】卷已关闭，但缓存同步或停盘未确认成功。请暂勿拔出，重试弹出设备。</string>
     <string name="safe_eject_failed">安全弹出失败，请暂勿拔出设备：%1$s</string>
-    <string name="volume_close_button">关闭卷（保持连接）</string>
+    <string name="volume_close_single_button">关闭卷</string>
+    <string name="volume_close_button">关闭全部卷</string>
     <string name="volume_closing">正在关闭卷…</string>
-    <string name="volume_close_confirm_title">关闭已解锁的卷？</string>
+    <string name="volume_close_confirm_title">关闭此设备的全部卷？</string>
     <string name="volume_close_confirm_message">此操作会同步待写入数据、停止共享和虚拟挂载，并关闭已解锁的卷。此操作不会主动断开磁盘；再次访问需要手动重新解锁。本操作不表示设备可以拔出。</string>
-    <string name="volume_close_confirm_action">关闭卷</string>
+    <string name="volume_close_confirm_action">关闭全部卷</string>
     <string name="volume_close_success">已关闭 %1$d 个卷，设备仍连接。拔盘前请先点击“弹出设备”；访问卷需重新解锁。</string>
     <string name="volume_close_none">没有仍处于打开状态的卷。拔盘前请先点击“弹出设备”。</string>
     <string name="volume_close_failed">关闭卷失败：%1$s</string>

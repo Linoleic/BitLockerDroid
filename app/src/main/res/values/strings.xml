@@ -103,11 +103,12 @@
     <string name="safe_eject_part_success">Volume \"%1$s\" safely closed. Other partitions on this drive remain active; do not unplug the device yet.</string>
     <string name="safe_eject_spindown_warning">Volume \"%1$s\" closed, but cache sync or stopping was not confirmed. Do not unplug yet; retry device eject.</string>
     <string name="safe_eject_failed">Safe eject failed. Do not unplug yet: %1$s</string>
-    <string name="volume_close_button">Close volumes</string>
-    <string name="volume_closing">Closing volumes…</string>
-    <string name="volume_close_confirm_title">Close unlocked volumes?</string>
+    <string name="volume_close_single_button">Close volume</string>
+    <string name="volume_close_button">Close all volumes</string>
+    <string name="volume_closing">Closing…</string>
+    <string name="volume_close_confirm_title">Close all volumes on this device?</string>
     <string name="volume_close_confirm_message">This syncs pending writes, stops sharing and virtual mounts, and closes the unlocked volumes. This action does not request a device disconnect; you must unlock the volumes again to access them. This does not make the device safe to unplug.</string>
-    <string name="volume_close_confirm_action">Close volumes</string>
+    <string name="volume_close_confirm_action">Close all volumes</string>
     <string name="volume_close_success">Closed %1$d volume(s); the device remains connected. Use Eject device before unplugging, or unlock again to access files.</string>
     <string name="volume_close_none">No open volumes remained. Use Eject device before unplugging.</string>
     <string name="volume_close_failed">Could not close volumes: %1$s</string>

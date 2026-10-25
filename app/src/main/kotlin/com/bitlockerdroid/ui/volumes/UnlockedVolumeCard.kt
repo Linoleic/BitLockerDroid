@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
@@ -65,7 +66,7 @@ fun UnlockedVolumeCard(
     painters: VolumeCardPainters? = null,
     onMountReadOnlyChange: (Boolean) -> Unit,
     onOpen: () -> Unit,
-    onLock: () -> Unit,
+    onClose: () -> Unit,
     onBenchmarkClick: () -> Unit,
     onLanShareClick: () -> Unit,
     onRepairClick: () -> Unit,
@@ -86,7 +87,6 @@ fun UnlockedVolumeCard(
 
     val effectivePainters = painters ?: rememberVolumeCardPainters()
     val copyPainter = effectivePainters.copy
-    val ejectPainter = effectivePainters.eject
     val lanSharePainter = effectivePainters.lanShare
     val repairPainter = effectivePainters.repair
     val shieldCheckPainter = effectivePainters.shieldCheck
@@ -1044,7 +1044,7 @@ fun UnlockedVolumeCard(
                         }
 
                         AppButton(
-                            onClick = onLock,
+                            onClick = onClose,
                             enabled = !isEjecting,
                             shape = RoundedCornerShape(12.dp),
                             containerColor = Color.Transparent,
@@ -1060,19 +1060,19 @@ fun UnlockedVolumeCard(
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = stringResource(if (operation?.kind == com.bitlockerdroid.service.VolumeOperationKind.CLOSE) R.string.volume_closing else R.string.safe_ejecting),
+                                    text = stringResource(if (operation?.kind == com.bitlockerdroid.service.VolumeOperationKind.EJECT) R.string.safe_ejecting else R.string.volume_closing),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             } else {
                                 Icon(
-                                    painter = ejectPainter,
+                                    imageVector = Icons.Default.Close,
                                     contentDescription = null,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = stringResource(R.string.safe_eject),
+                                    text = stringResource(R.string.volume_close_single_button),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -1112,7 +1112,7 @@ fun UnlockedVolumeCard(
                     }
 
                     AppButton(
-                        onClick = onLock,
+                        onClick = onClose,
                         enabled = !isEjecting,
                         shape = RoundedCornerShape(12.dp),
                         containerColor = Color.Transparent,
@@ -1126,15 +1126,15 @@ fun UnlockedVolumeCard(
                                 color = MaterialTheme.colorScheme.primary
                             )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(text = stringResource(if (operation?.kind == com.bitlockerdroid.service.VolumeOperationKind.CLOSE) R.string.volume_closing else R.string.safe_ejecting))
+                            Text(text = stringResource(if (operation?.kind == com.bitlockerdroid.service.VolumeOperationKind.EJECT) R.string.safe_ejecting else R.string.volume_closing))
                         } else {
                             Icon(
-                                painter = ejectPainter,
+                                imageVector = Icons.Default.Close,
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(text = stringResource(R.string.safe_eject))
+                            Text(text = stringResource(R.string.volume_close_single_button))
                         }
                     }
 

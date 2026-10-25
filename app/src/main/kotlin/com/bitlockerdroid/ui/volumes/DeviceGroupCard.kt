@@ -48,7 +48,7 @@ fun DeviceGroupCard(
     isCompact: Boolean = false,
     onMountReadOnlyChange: (Boolean) -> Unit,
     onOpenVolume: (String) -> Unit,
-    onLockVolume: (String) -> Unit,
+    onCloseVolume: (String) -> Unit,
     onUnlockDetected: (String) -> Unit,
     onBiometricUnlockDetected: ((String) -> Unit)? = null,
     onOpenUnencrypted: (UnencryptedVolume) -> Unit,
@@ -65,7 +65,7 @@ fun DeviceGroupCard(
     modifier: Modifier = Modifier
 ) {
     val canEjectDevice = (group.hasUnlocked || group.hasDetected) && !group.physicalDiskPath.startsWith("storage:")
-    val ejectLabel = stringResource(if (group.hasUnlocked) R.string.notification_eject_all else R.string.eject_device)
+    val ejectLabel = stringResource(R.string.eject_device)
     var isExpanded by remember { mutableStateOf(true) }
     var showCloseVolumesConfirm by remember(group.deviceKey) { mutableStateOf(false) }
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
@@ -510,7 +510,7 @@ fun DeviceGroupCard(
                             val effectiveShareGuid = volume.guid ?: volume.devicePath
                             val shareState = shareStates[effectiveShareGuid]
                             val onOpen = remember(volume.devicePath, onOpenVolume) { { onOpenVolume(volume.devicePath) } }
-                            val onLock = remember(volume.devicePath, onLockVolume) { { onLockVolume(volume.devicePath) } }
+                            val onClose = remember(volume.devicePath, onCloseVolume) { { onCloseVolume(volume.devicePath) } }
                             val onBenchmark = remember(volume.devicePath) { { onBenchmarkClick(volume.devicePath) } }
                             val onLanShare = remember(volume.devicePath) { { onLanShareClick(volume) } }
                             val onRepair = remember(volume.devicePath) { { onRepairClick(volume) } }
@@ -525,7 +525,7 @@ fun DeviceGroupCard(
                                 isVirtualMountSupported = isVirtualMountSupported,
                                 onMountReadOnlyChange = onMountReadOnlyChange,
                                 onOpen = onOpen,
-                                onLock = onLock,
+                                onClose = onClose,
                                 onBenchmarkClick = onBenchmark,
                                 onLanShareClick = onLanShare,
                                 onRepairClick = onRepair,

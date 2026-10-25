@@ -195,7 +195,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
     }
     private val onOpenVolumeAction: (String) -> Unit = { path -> openVolumeInFiles(path) }
     private val onOpenUnencryptedAction: (UnencryptedVolume) -> Unit = { vol -> openUnencryptedVolumeInFiles(vol) }
-    private val onLockVolumeAction: (String) -> Unit = { path -> lockVolume(path) }
+    private val onCloseVolumeAction: (String) -> Unit = { path -> closeVolume(path) }
     private val onUnlockDetectedAction: (String) -> Unit = { path -> promptUnlock(path) }
     private val onBiometricUnlockDetectedAction: (String) -> Unit = { path -> biometricUnlock(path) }
     private val onEjectVolumesAction: (String, List<String>) -> Unit = { device, paths -> ejectVolumes(device, paths) }
@@ -340,7 +340,7 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     onClearAllCredentials = onClearAllCredentialsAction,
                     onOpenVolume = onOpenVolumeAction,
                     onOpenUnencrypted = onOpenUnencryptedAction,
-                    onLockVolume = onLockVolumeAction,
+                    onCloseVolume = onCloseVolumeAction,
                     onUnlockDetected = onUnlockDetectedAction,
                     onBiometricUnlockDetected = onBiometricUnlockDetectedAction,
                     onEjectVolumes = onEjectVolumesAction,
@@ -567,41 +567,22 @@ class BitLockerSettingsActivity : FragmentActivity() {
         )
     }
 
-    private fun lockVolume(devicePath: String) {
-        if (ejectingPathsState.value.contains(devicePath)) return
-        ejectingPathsState.value = ejectingPathsState.value + devicePath
-        LogFile.write("app", "safe eject requested for $devicePath")
-        lifecycleScope.launch(Dispatchers.IO) {
-            val result = UnlockManager.safeEject(devicePath)
-            withContext(Dispatchers.Main) {
-                ejectingPathsState.value = ejectingPathsState.value - devicePath
-                if (result.isSuccess) {
-                    val ejectRes = result.getOrNull()
-                    val label = ejectRes?.label ?: ""
-                    val msg = when (ejectRes?.status) {
-                        EjectStatus.DISK_SPUN_DOWN -> getString(R.string.safe_eject_success, label)
-                        EjectStatus.VOLUME_CLOSED_DISK_BUSY -> getString(R.string.safe_eject_part_success, label)
-                        EjectStatus.VOLUME_CLOSED_SPINDOWN_FAILED, null -> getString(R.string.safe_eject_spindown_warning, label)
-                    }
-                    Toast.makeText(
-                        this@BitLockerSettingsActivity,
-                        msg,
-                        Toast.LENGTH_LONG
-                    ).show()
-                } else {
-                    val err = result.exceptionOrNull()?.message ?: ""
-                    Toast.makeText(
-                        this@BitLockerSettingsActivity,
-                        getString(R.string.safe_eject_failed, err),
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-                refreshData()
-            }
+    private fun closeVolume(devicePath: String) {
+        LogFile.write("app", "close volume requested for $devicePath")
+        lifecycleScope.launch {
+            val result = closeDeviceVolumesTracked(devicePath, listOf(devicePath), singleVolume = true)
+            val message = if (result.isSuccess) getString(R.string.volume_close_success, 1)
+                else getString(R.string.volume_close_failed, result.exceptionOrNull()?.message.orEmpty())
+            Toast.makeText(this@BitLockerSettingsActivity, message, Toast.LENGTH_LONG).show()
+            refreshData()
         }
     }
 
-    private suspend fun closeDeviceVolumesTracked(devicePath: String, affectedPaths: List<String>): Result<Int> {
+    private suspend fun closeDeviceVolumesTracked(
+        devicePath: String,
+        affectedPaths: List<String>,
+        singleVolume: Boolean = false
+    ): Result<Int> {
         val parentDisk = runCatching { DeviceIdentity.resolveParentDiskNode(devicePath) }.getOrDefault(devicePath)
         val sameDiskVolumePaths = unlockedVolumesState.value.filter { volume ->
             runCatching { DeviceIdentity.resolveParentDiskNode(volume.devicePath) }.getOrDefault(volume.devicePath) == parentDisk
@@ -616,7 +597,10 @@ class BitLockerSettingsActivity : FragmentActivity() {
         }
         if (!claimed) return Result.failure(IllegalStateException(getString(R.string.volume_close_in_progress)))
         return try {
-            withContext(Dispatchers.IO) { UnlockManager.closeDeviceVolumes(devicePath) }
+            withContext(Dispatchers.IO) {
+                if (singleVolume) UnlockManager.closeUnlockedVolume(devicePath).map { 1 }
+                else UnlockManager.closeDeviceVolumes(devicePath)
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
@@ -877,7 +861,7 @@ fun MainAppScreen(
     onClearAllCredentials: () -> Unit,
     onOpenVolume: (String) -> Unit,
     onOpenUnencrypted: (UnencryptedVolume) -> Unit = {},
-    onLockVolume: (String) -> Unit,
+    onCloseVolume: (String) -> Unit,
     onUnlockDetected: (String) -> Unit,
     onBiometricUnlockDetected: ((String) -> Unit)? = null,
     onEjectVolumes: ((String, List<String>) -> Unit)? = null,
@@ -1020,7 +1004,7 @@ fun MainAppScreen(
                     onRefreshAndScan = onRefreshAndScan,
                     onOpenVolume = onOpenVolume,
                     onOpenUnencrypted = onOpenUnencrypted,
-                    onLockVolume = onLockVolume,
+                    onCloseVolume = onCloseVolume,
                     onUnlockDetected = onUnlockDetected,
                     onBiometricUnlockDetected = onBiometricUnlockDetected,
                     onEjectGroup = onEjectVolumes,

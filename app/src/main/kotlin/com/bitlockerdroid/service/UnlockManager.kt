@@ -875,6 +875,14 @@ object UnlockManager {
         return results
     }
 
+    /** Closes only the selected volume, including the last one, without stopping its device. */
+    fun closeUnlockedVolume(devicePath: String): Result<Unit> = try {
+        ProcessSessionTransition.gate.withAdmissionsPaused {
+            closeVolume(devicePath, stopPhysicalDisk = false, postEjectNotification = false)
+                .map { Unit }
+        }
+    } catch (e: Exception) { Result.failure(e) }
+
     /** Flushes and closes this device's volumes without stopping or releasing the device. */
     fun closeDeviceVolumes(devicePath: String): Result<Int> = try {
         val count = ProcessSessionTransition.gate.withAdmissionsPaused {
