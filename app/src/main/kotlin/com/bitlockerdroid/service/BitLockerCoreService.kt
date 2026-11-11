@@ -10,10 +10,9 @@ import com.bitlockerdroid.util.LogFile
 import com.bitlockerdroid.util.PreferenceHelper
 
 /**
- * Lifecycle service that holds the application context used by the singletons.
- *
- * Detection is user-driven: the Settings screen's Scan button runs the block
- * scan; there is no periodic scan or insertion notification.
+ * Lifecycle service that holds the application context used by the singletons
+ * and listens for USB/media attach and detach broadcasts to trigger background
+ * volume detection and safe teardown.
  */
 class BitLockerCoreService : Service() {
 
