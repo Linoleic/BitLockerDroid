@@ -17,8 +17,8 @@ android {
         minSdk = 33
         targetSdk = 34
         // Increment for each release; Git history can be rewritten independently.
-        versionCode = 184
-        versionName = "1.2.1"
+        versionCode = 185
+        versionName = "1.2.2"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
