@@ -365,8 +365,7 @@ object PreferenceHelper {
             } catch (_: Exception) {}
         }
 
-    fun isUseHardwareAes(context: Context): Boolean =
-        prefs(context).getBoolean("use_hardware_aes", true)
+    fun isUseHardwareAes(context: Context): Boolean = true
 
     fun setUseHardwareAes(context: Context, enabled: Boolean): Boolean {
         val ret = prefs(context).edit().putBoolean("use_hardware_aes", enabled).commit()
@@ -375,7 +374,7 @@ object PreferenceHelper {
     }
 
     var useHardwareAes: Boolean
-        get() = try { prefs(ContextProvider.app).getBoolean("use_hardware_aes", true) } catch (_: Exception) { true }
+        get() = true
         set(v) {
             try {
                 prefs(ContextProvider.app).edit().putBoolean("use_hardware_aes", v).commit()
@@ -383,8 +382,7 @@ object PreferenceHelper {
             } catch (_: Exception) {}
         }
 
-    fun isUseHardwareSha2(context: Context): Boolean =
-        prefs(context).getBoolean("use_hardware_sha2", true)
+    fun isUseHardwareSha2(context: Context): Boolean = true
 
     fun setUseHardwareSha2(context: Context, enabled: Boolean): Boolean {
         val ret = prefs(context).edit().putBoolean("use_hardware_sha2", enabled).commit()
@@ -393,7 +391,7 @@ object PreferenceHelper {
     }
 
     var useHardwareSha2: Boolean
-        get() = try { prefs(ContextProvider.app).getBoolean("use_hardware_sha2", true) } catch (_: Exception) { true }
+        get() = true
         set(v) {
             try {
                 prefs(ContextProvider.app).edit().putBoolean("use_hardware_sha2", v).commit()
@@ -401,8 +399,7 @@ object PreferenceHelper {
             } catch (_: Exception) {}
         }
 
-    fun isUseHardwareCrypto(context: Context): Boolean =
-        prefs(context).getBoolean("use_hardware_crypto", true)
+    fun isUseHardwareCrypto(context: Context): Boolean = true
 
     fun setUseHardwareCrypto(context: Context, enabled: Boolean): Boolean {
         val ret = prefs(context).edit()
@@ -415,7 +412,7 @@ object PreferenceHelper {
     }
 
     var useHardwareCrypto: Boolean
-        get() = try { prefs(ContextProvider.app).getBoolean("use_hardware_crypto", true) } catch (_: Exception) { true }
+        get() = true
         set(v) {
             try {
                 prefs(ContextProvider.app).edit()
@@ -427,15 +424,14 @@ object PreferenceHelper {
             } catch (_: Exception) {}
         }
 
-    fun isUseSafDoubleBuffer(context: Context): Boolean =
-        prefs(context).getBoolean("use_saf_double_buffer", true)
+    fun isUseSafDoubleBuffer(context: Context): Boolean = true
 
     fun setUseSafDoubleBuffer(context: Context, enabled: Boolean): Boolean {
         return prefs(context).edit().putBoolean("use_saf_double_buffer", enabled).commit()
     }
 
     var useSafDoubleBuffer: Boolean
-        get() = try { prefs(ContextProvider.app).getBoolean("use_saf_double_buffer", true) } catch (_: Exception) { true }
+        get() = true
         set(v) {
             try {
                 prefs(ContextProvider.app).edit().putBoolean("use_saf_double_buffer", v).commit()

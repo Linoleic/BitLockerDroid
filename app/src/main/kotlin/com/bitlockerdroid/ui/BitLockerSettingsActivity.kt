@@ -36,8 +36,6 @@ import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.service.UnlockedVolume
 import com.bitlockerdroid.service.VirtualStorageMountManager
 import com.bitlockerdroid.ui.dialogs.ConnectionAuthorizationDialog
-import com.bitlockerdroid.ui.dialogs.HardwareAccelerationDialog
-import com.bitlockerdroid.ui.dialogs.PerformanceOptimizationDialog
 import com.bitlockerdroid.ui.dialogs.SystemDiagnosticsDialog
 import com.bitlockerdroid.ui.dialogs.SwitchModeConfirmDialog
 import com.bitlockerdroid.ui.dialogs.CredentialsManagerDialog
@@ -91,10 +89,6 @@ class BitLockerSettingsActivity : FragmentActivity() {
 
     private var mountReadOnlyState = mutableStateOf(false)
     private var useRootAccessState = mutableStateOf(true)
-    private var useHardwareAesState = mutableStateOf(PreferenceHelper.useHardwareAes)
-    private var useHardwareSha2State = mutableStateOf(PreferenceHelper.useHardwareSha2)
-    private var useSafDoubleBufferState = mutableStateOf(PreferenceHelper.useSafDoubleBuffer)
-    private var showHardwareAccelerationDialogState = mutableStateOf(false)
     private var virtualMountState = mutableStateOf(false)
     private var rootSolutionState = mutableStateOf(RootAccess.RootSolutionInfo(hasRoot = false, isDeviceRooted = false, solutionName = "", version = null, summary = ""))
     private var showSystemDiagnosticsDialogState = mutableStateOf(false)
@@ -109,26 +103,6 @@ class BitLockerSettingsActivity : FragmentActivity() {
     private val onThemeModeChangeAction: (ThemeMode) -> Unit = { newMode ->
         themeModeState.value = newMode
         PreferenceHelper.themeMode = newMode.name.lowercase()
-    }
-    private val onUseHardwareAesChangeAction: (Boolean) -> Unit = { enabled ->
-        useHardwareAesState.value = enabled
-        PreferenceHelper.useHardwareAes = enabled
-        PreferenceHelper.useHardwareCrypto = enabled && useHardwareSha2State.value
-    }
-    private val onUseHardwareSha2ChangeAction: (Boolean) -> Unit = { enabled ->
-        useHardwareSha2State.value = enabled
-        PreferenceHelper.useHardwareSha2 = enabled
-        PreferenceHelper.useHardwareCrypto = useHardwareAesState.value && enabled
-    }
-    private val onUseSafDoubleBufferChangeAction: (Boolean) -> Unit = { enabled ->
-        useSafDoubleBufferState.value = enabled
-        PreferenceHelper.useSafDoubleBuffer = enabled
-    }
-    private val onOpenHardwareAccelerationAction: () -> Unit = {
-        showHardwareAccelerationDialogState.value = true
-    }
-    private val onCloseHardwareAccelerationAction: () -> Unit = {
-        showHardwareAccelerationDialogState.value = false
     }
     private val onLanguageChangeAction: (String) -> Unit = { newLang ->
         currentLanguageState.value = newLang
@@ -283,10 +257,6 @@ class BitLockerSettingsActivity : FragmentActivity() {
             val vaultProtected by vaultProtectedState
             val ejectingPaths by ejectingPathsState
             val useRootAccess by useRootAccessState
-            val useHardwareAes by useHardwareAesState
-            val useHardwareSha2 by useHardwareSha2State
-            val useSafDoubleBuffer by useSafDoubleBufferState
-            val showHardwareAccelerationDialog by showHardwareAccelerationDialogState
             val rootSolution by rootSolutionState
             val showSystemDiagnosticsDialog by showSystemDiagnosticsDialogState
             val pendingRootSwitchTarget by pendingRootSwitchTargetState
@@ -308,10 +278,6 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     themeMode = currentTheme,
                     currentLanguage = currentLang,
                     useRootAccess = useRootAccess,
-                    useHardwareAes = useHardwareAes,
-                    useHardwareSha2 = useHardwareSha2,
-                    useSafDoubleBuffer = useSafDoubleBuffer,
-                    showHardwareAccelerationDialog = showHardwareAccelerationDialog,
                     rootSolution = rootSolution,
                     onRefreshRootEnvironment = { refreshRootSolution(force = true) },
                     showSystemDiagnosticsDialog = showSystemDiagnosticsDialog,
@@ -322,11 +288,6 @@ class BitLockerSettingsActivity : FragmentActivity() {
                     pendingRootSwitchTarget = pendingRootSwitchTarget,
                     isSwitchingModeProcessing = isSwitchingModeProcessing,
                     onUseRootAccessChange = onUseRootAccessChangeAction,
-                    onUseHardwareAesChange = onUseHardwareAesChangeAction,
-                    onUseHardwareSha2Change = onUseHardwareSha2ChangeAction,
-                    onUseSafDoubleBufferChange = onUseSafDoubleBufferChangeAction,
-                    onOpenHardwareAcceleration = onOpenHardwareAccelerationAction,
-                    onCloseHardwareAcceleration = onCloseHardwareAccelerationAction,
                     onOpenSystemDiagnostics = onOpenSystemDiagnosticsAction,
                     onCloseSystemDiagnostics = onCloseSystemDiagnosticsAction,
                     onConfirmSwitchMode = onConfirmSwitchModeAction,
@@ -385,9 +346,6 @@ class BitLockerSettingsActivity : FragmentActivity() {
         vaultProtectedState.value = PreferenceHelper.isBiometricVaultEnabled(this)
         mountReadOnlyState.value = PreferenceHelper.mountReadOnly
         useRootAccessState.value = PreferenceHelper.useRootAccess
-        useHardwareAesState.value = PreferenceHelper.isUseHardwareAes(this)
-        useHardwareSha2State.value = PreferenceHelper.isUseHardwareSha2(this)
-        useSafDoubleBufferState.value = PreferenceHelper.isUseSafDoubleBuffer(this)
         virtualMountState.value = PreferenceHelper.virtualMountEnabled
         refreshRememberedCredentials()
         refreshRootSolution()
@@ -829,10 +787,6 @@ fun MainAppScreen(
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     currentLanguage: String = PreferenceHelper.LANG_SYSTEM,
     useRootAccess: Boolean = true,
-    useHardwareAes: Boolean = true,
-    useHardwareSha2: Boolean = true,
-    useSafDoubleBuffer: Boolean = true,
-    showHardwareAccelerationDialog: Boolean = false,
     showSystemDiagnosticsDialog: Boolean = false,
     rootSolution: RootAccess.RootSolutionInfo,
     onRefreshRootEnvironment: () -> Unit = {},
@@ -843,11 +797,6 @@ fun MainAppScreen(
     pendingRootSwitchTarget: Boolean? = null,
     isSwitchingModeProcessing: Boolean = false,
     onUseRootAccessChange: (Boolean) -> Unit = {},
-    onUseHardwareAesChange: (Boolean) -> Unit = {},
-    onUseHardwareSha2Change: (Boolean) -> Unit = {},
-    onUseSafDoubleBufferChange: (Boolean) -> Unit = {},
-    onOpenHardwareAcceleration: () -> Unit = {},
-    onCloseHardwareAcceleration: () -> Unit = {},
     onOpenSystemDiagnostics: () -> Unit = {},
     onCloseSystemDiagnostics: () -> Unit = {},
     onConfirmSwitchMode: () -> Unit = {},
@@ -1016,14 +965,8 @@ fun MainAppScreen(
                     rememberedCredentials = rememberedCredentials,
                     themeMode = themeMode,
                     currentLanguage = currentLanguage,
-                    useHardwareAes = useHardwareAes,
-                    useHardwareSha2 = useHardwareSha2,
-                    useSafDoubleBuffer = useSafDoubleBuffer,
                     onOpenCredentialsManager = remember { { showCredentialsDialog = true } },
-                    onOpenPerformanceOptimization = onOpenHardwareAcceleration,
-                    onOpenHardwareAcceleration = onOpenHardwareAcceleration,
                     onOpenSystemDiagnostics = onOpenSystemDiagnostics,
-                    onUseSafDoubleBufferChange = onUseSafDoubleBufferChange,
                     onThemeModeChange = onThemeModeChange,
                     onLanguageChange = onLanguageChange
                 )
@@ -1042,19 +985,6 @@ fun MainAppScreen(
                 },
                 onUseRootAccessChange = onUseRootAccessChange,
                 onDismiss = { showConnectionAuthorizationDialog = false }
-            )
-        }
-
-        // Performance Optimization Dialog (Consolidated Hardware Acceleration, SAF Double-Buffer, USB Pipeline, Kernel I/O)
-        if (showHardwareAccelerationDialog) {
-            PerformanceOptimizationDialog(
-                useHardwareAes = useHardwareAes,
-                onUseHardwareAesChange = onUseHardwareAesChange,
-                useHardwareSha2 = useHardwareSha2,
-                onUseHardwareSha2Change = onUseHardwareSha2Change,
-                useSafDoubleBuffer = useSafDoubleBuffer,
-                onUseSafDoubleBufferChange = onUseSafDoubleBufferChange,
-                onDismiss = onCloseHardwareAcceleration
             )
         }
 

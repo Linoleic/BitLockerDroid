@@ -34,14 +34,8 @@ fun SettingsTabContent(
     rememberedCredentials: List<PreferenceHelper.SavedCredential>,
     themeMode: ThemeMode,
     currentLanguage: String,
-    useHardwareAes: Boolean = PreferenceHelper.useHardwareAes,
-    useHardwareSha2: Boolean = PreferenceHelper.useHardwareSha2,
-    useSafDoubleBuffer: Boolean = PreferenceHelper.useSafDoubleBuffer,
     onOpenCredentialsManager: () -> Unit,
-    onOpenPerformanceOptimization: () -> Unit = {},
-    onOpenHardwareAcceleration: () -> Unit = onOpenPerformanceOptimization,
     onOpenSystemDiagnostics: () -> Unit = {},
-    onUseSafDoubleBufferChange: (Boolean) -> Unit = {},
     onThemeModeChange: (ThemeMode) -> Unit,
     onLanguageChange: (String) -> Unit
 ) {
@@ -256,64 +250,7 @@ fun SettingsTabContent(
 
             // Group 4: Advanced Options
             SettingsGroup(title = stringResource(R.string.settings_header_advanced)) {
-                // 2. 性能优化 (整合硬件加密加速、SAF 双缓冲、USB 写入流水线与底层调优)
-                val isHwCryptoSupported = remember {
-                    try {
-                        com.bitlockerdroid.util.NativeBridge.isHardwareCryptoSupported()
-                    } catch (_: Throwable) {
-                        false
-                    }
-                }
-
-                val totalSwitches = 3
-                val enabledCount = (if (useHardwareAes && isHwCryptoSupported) 1 else 0) +
-                        (if (useHardwareSha2 && isHwCryptoSupported) 1 else 0) +
-                        (if (useSafDoubleBuffer) 1 else 0)
-
-                val perfBadgeText = when {
-                    enabledCount == totalSwitches -> stringResource(R.string.settings_performance_badge_all)
-                    enabledCount > 0 -> stringResource(R.string.settings_performance_badge_partial, enabledCount, totalSwitches)
-                    else -> stringResource(R.string.settings_performance_badge_off)
-                }
-
-                val perfBadgeColor = when {
-                    enabledCount == totalSwitches -> SuccessGreen
-                    enabledCount > 0 -> MaterialTheme.colorScheme.tertiary
-                    else -> MaterialTheme.colorScheme.outline
-                }
-
-                val safDoubleBufferShort = stringResource(R.string.settings_saf_double_buffer_short)
-                val hwDisabledStr = stringResource(R.string.settings_hw_state_disabled)
-
-                val perfSummary = remember(
-                    useHardwareAes,
-                    useHardwareSha2,
-                    useSafDoubleBuffer,
-                    isHwCryptoSupported,
-                    safDoubleBufferShort,
-                    hwDisabledStr
-                ) {
-                    buildList {
-                        if (useHardwareAes && isHwCryptoSupported) add("AES")
-                        if (useHardwareSha2 && isHwCryptoSupported) add("SHA-256")
-                        if (useSafDoubleBuffer) add(safDoubleBufferShort)
-                    }.joinToString(" · ").ifEmpty { hwDisabledStr }
-                }
-
-                SettingsClickableItem(
-                    title = stringResource(R.string.settings_performance_title),
-                    description = perfSummary,
-                    badgeText = perfBadgeText,
-                    badgeColor = perfBadgeColor,
-                    onClick = onOpenPerformanceOptimization
-                )
-
-                HorizontalDivider(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                )
-
-                // 4. 系统环境与诊断
+                // 系统环境与诊断
                 val selinuxStatus = remember { com.bitlockerdroid.util.RootAccess.getSelinuxStatus() }
 
                 SettingsClickableItem(
