@@ -161,7 +161,7 @@ For environment setup, NDK CMake build options, and Linux host verification tool
 
 ## License & Acknowledgments
 
-This project is licensed under the **GNU General Public License v2.0 (GPL-2.0)**. See [LICENSE](LICENSE) for details.
+This project is licensed under the **GNU General Public License v2.0 (GPL-2.0)**. See [LICENSE](LICENSE) for details, and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party library notices.
 
 ### Core Upstream Projects & Dependencies
 - **BitLocker Parsing Core**: [dislocker](https://github.com/Aorimn/dislocker) (GPL-2.0)

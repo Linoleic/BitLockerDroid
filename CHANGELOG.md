@@ -8,6 +8,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### 中文
+
+#### 新增
+
+- 新增 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，集中声明 C/C++ 原生库及 Android/Kotlin 第三方开源依赖与许可证信息。
+
+#### 变更
+
+- 启用 Release 构建的 R8 代码混淆与资源裁剪（保留 `NativeBridge` JNI 桥接规则与行号映射），显著减小 APK 体积。
+- 移除设置页「性能优化」入口与开关弹窗，改为默认始终开启硬件加密加速与 SAF 双缓冲。
+- 统一 SAF 文档提供器根盘符图标与主页顶部盘符汇总图标。
+
+#### 修复
+
+- 修复 `useLegacyPackaging = false` 下从 APK 内提取 `libbitlocker_fuse.so`（`bitlocker_fuse`）失败的问题。
+- 修复 FAT32 8.3 短文件名在仅含小写文件名或扩展名时未正确写入 `DIR_NTRes` 大小写标志的问题。
+
+#### 安全
+
+- 合入 FatFs（`ff16p2`，覆盖 CVE-2026-6682 / 6683 / 6687）与 `libntfs-3g`（截至 `2026.9.28`）上游安全补丁，加固畸形 FAT32 / exFAT / NTFS 镜像解析边界。
+
+### English
+
+#### Added
+
+- Added [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) documenting native C/C++ and Android/Kotlin third-party open-source dependencies and licenses.
+
+#### Changed
+
+- Enabled R8 code minification and resource shrinking for release builds (keeping `NativeBridge` JNI bindings and `SourceFile`/`LineNumberTable` attributes), significantly reducing APK size.
+- Removed the Performance Optimization settings entry and toggle dialog so hardware crypto acceleration and SAF double-buffering remain always enabled by default.
+- Aligned the SAF `DocumentsProvider` root drive icon with the home screen drive summary icon.
+
+#### Fixed
+
+- Fixed extracting `libbitlocker_fuse.so` (`bitlocker_fuse`) from the APK when `useLegacyPackaging = false` is enabled.
+- Fixed FAT32 8.3 short-name `DIR_NTRes` case-bit handling for lowercase names and extensions.
+
+#### Security
+
+- Applied upstream security patches for FatFs (`ff16p2`, addressing CVE-2026-6682 / 6683 / 6687) and `libntfs-3g` (through `2026.9.28`) to harden filesystem metadata parsing.
+
 ## [v1.2.1] - 2026-10-26
 
 ### 中文

@@ -161,7 +161,7 @@ cd BitLockerDroid
 
 ## 开源协议与致谢
 
-本项目采用 **GNU General Public License v2.0 (GPL-2.0)** 协议开源，详见 [LICENSE](LICENSE)。
+本项目采用 **GNU General Public License v2.0 (GPL-2.0)** 协议开源，详见 [LICENSE](LICENSE)；第三方开源组件与许可声明详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ### 核心上游项目与依赖
 - **BitLocker 解析核心**：[dislocker](https://github.com/Aorimn/dislocker) (GPL-2.0)
