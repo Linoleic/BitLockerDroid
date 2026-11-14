@@ -582,7 +582,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             row.add(Root.COLUMN_TITLE, v.label)
             row.add(Root.COLUMN_SUMMARY, "BitLocker encrypted volume")
             row.add(Root.COLUMN_MIME_TYPES, "*/*")
-            row.add(Root.COLUMN_ICON, com.bitlockerdroid.R.drawable.ic_drive_bitlocker)
+            row.add(Root.COLUMN_ICON, com.bitlockerdroid.R.drawable.ic_storage_device)
             if (v.freeBytes > 0L) {
                 row.add(Root.COLUMN_AVAILABLE_BYTES, v.freeBytes)
             }
