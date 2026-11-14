@@ -42,6 +42,7 @@
 #define MAX_FAT16	0xFFF5			/* Max FAT16 clusters (differs from specs, but right for real DOS/Windows behavior) */
 #define MAX_FAT32	0x0FFFFFF5		/* Max FAT32 clusters (not specified, practical limit) */
 #define MAX_EXFAT	0x7FFFFFFD		/* Max exFAT clusters (differs from specs, implementation limit) */
+#define MIN_EXFAT	0x00000100		/* Min exFAT clusters (Not defined in specs, implementation limit) */
 
 
 /* Character code support macros */
@@ -3471,7 +3472,7 @@ static FRESULT mount_volume (	/* FR_OK(0): successful, !=0: an error occurred */
 		if (fs->csize == 0)	return FR_NO_FILESYSTEM;	/* (Must be 1..32768 sectors) */
 
 		nclst = ld_dword(fs->win + BPB_NumClusEx);		/* Number of clusters */
-		if (nclst > MAX_EXFAT) return FR_NO_FILESYSTEM;	/* (Too many clusters) */
+		if (nclst < MIN_EXFAT || nclst > MAX_EXFAT) return FR_NO_FILESYSTEM;	/* (Wrong cluster count) */
 		fs->n_fatent = nclst + 2;
 
 		/* Boundaries and Limits */
@@ -3513,6 +3514,7 @@ static FRESULT mount_volume (	/* FR_OK(0): successful, !=0: an error occurred */
 
 		fasize = ld_word(fs->win + BPB_FATSz16);		/* Number of sectors per FAT */
 		if (fasize == 0) fasize = ld_dword(fs->win + BPB_FATSz32);
+		if (fasize >= 0x200000) return FR_NO_FILESYSTEM;	/* (Must be smaller than max FAT size) */
 		fs->fsize = fasize;
 
 		fs->n_fats = fs->win[BPB_NumFATs];				/* Number of FATs */
@@ -5368,7 +5370,7 @@ FRESULT f_getlabel (
 					WCHAR hs;
 					UINT nw;
 
-					for (si = di = hs = 0; si < dj.dir[XDIR_NumLabel]; si++) {	/* Extract volume label from 83 entry */
+					for (si = di = hs = 0; si < dj.dir[XDIR_NumLabel] && si < 11; si++) {	/* Extract volume label from 83 entry */
 						wc = ld_word(dj.dir + XDIR_Label + si * 2);
 						if (hs == 0 && IsSurrogate(wc)) {	/* Is the code a surrogate? */
 							hs = wc; continue;

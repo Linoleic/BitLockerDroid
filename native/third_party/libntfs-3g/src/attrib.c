@@ -3338,6 +3338,20 @@ do_next_attr_loop:
 		 */
 		if (al_entry->type != a->type)
 			break;
+		/*
+		 * The same check is made in ntfs_attr_inconsistent() when the
+		 * mft record is read, but that validation is skipped for the
+		 * tools which set NVolNoFixupWarn(), so the name has to be
+		 * checked here as well.
+		 */
+		if (a->name_length && ((le16_to_cpu(a->name_offset)
+				+ a->name_length * sizeof(ntfschar))
+				> le32_to_cpu(a->length))) {
+			ntfs_log_error("Corrupt attribute name"
+				" in MFT record %lld\n",
+				(long long)ctx->ntfs_ino->mft_no);
+			break;
+		}
 		if (!ntfs_names_are_equal((ntfschar*)((char*)a +
 				le16_to_cpu(a->name_offset)),
 				a->name_length, al_name,
@@ -3528,6 +3542,10 @@ int ntfs_attr_inconsistent(const ATTR_RECORD *a, const MFT_REF mref)
 			if (a->non_resident
 			    || (le32_to_cpu(a->value_length)
 				< offsetof(INDEX_ROOT, index.reserved))
+			    || (le32_to_cpu(ir->index_block_size)
+				< NTFS_BLOCK_SIZE)
+			    || (le32_to_cpu(ir->index_block_size)
+				& (le32_to_cpu(ir->index_block_size) - 1))
 			    || (le32_to_cpu(ir->index.entries_offset)
 				< sizeof(INDEX_HEADER))
 			    || (le32_to_cpu(ir->index.index_length)
@@ -3540,6 +3558,9 @@ int ntfs_attr_inconsistent(const ATTR_RECORD *a, const MFT_REF mref)
 				ntfs_log_error("Corrupt index root"
 					" in MFT record %lld.\n",
 					(long long)inum);
+				errno = EIO;
+				ret = -1;
+			} else if (ntfs_ie_stream_inconsistent(&ir->index, inum)) {
 				errno = EIO;
 				ret = -1;
 			}

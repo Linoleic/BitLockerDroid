@@ -19,13 +19,13 @@ This project incorporates or depends on the following third-party open-source so
 - **License:** Apache-2.0 OR GPL-2.0-or-later
 - **Purpose:** Cryptographic primitives (AES, SHA-256, and platform/error utilities).
 
-### NTFS-3G / `libntfs-3g` (`2022.10.3`)
+### NTFS-3G / `libntfs-3g` (`2022.10.3` + upstream security patches through `2026.9.28`)
 - **Location:** `native/third_party/libntfs-3g/`
 - **Upstream:** <https://github.com/tuxera/ntfs-3g>
 - **License:** GNU General Public License v2.0 or later (GPL-2.0-or-later)
 - **Purpose:** NTFS filesystem read/write support over decrypted BitLocker volumes.
 
-### FatFs (`R0.15`)
+### FatFs (`R0.15` + `R0.16 patch-2` security fixes)
 - **Location:** `native/third_party/fatfs/` (license header in [`native/third_party/fatfs/ff.h`](native/third_party/fatfs/ff.h))
 - **Upstream:** <https://elm-chan.org/fsw/ff/>
 - **Copyright:** Copyright (C) 2022, ChaN, all right reserved.
