@@ -447,15 +447,18 @@ class Fat32Reader(
     private fun isEof(v: Long): Boolean = v >= EOF_MARK || v == BAD_CLUSTER
     private fun isValidCluster(c: Long): Boolean = c >= 2 && c < 0x0ffffff0L
 
-    /** 8.3 short name (uppercase, no path). */
+    /** 8.3 short name, respecting Windows NT / FatFs case flags in DIR_NTRes (byte 12). */
     private fun shortName(e: ByteArray): String {
         val baseRaw = String(e, 0, 8, Charsets.US_ASCII).trimEnd(' ', '\u0000')
         val extRaw = String(e, 8, 3, Charsets.US_ASCII).trimEnd(' ', '\u0000')
         // In FAT, 0x05 in first byte indicates actual character 0xE5 (Kanji lead byte)
-        val base = if ((e[0].toInt() and 0xff) == 0x05 && baseRaw.isNotEmpty()) {
+        val baseAdjusted = if ((e[0].toInt() and 0xff) == 0x05 && baseRaw.isNotEmpty()) {
             "\u00e5" + baseRaw.substring(1)
         } else baseRaw
-        return if (extRaw.isEmpty()) base else "$base.$extRaw"
+        val ntRes = e[12].toInt() and 0xff
+        val base = if ((ntRes and 0x08) != 0) baseAdjusted.lowercase(java.util.Locale.ROOT) else baseAdjusted
+        val ext = if ((ntRes and 0x10) != 0) extRaw.lowercase(java.util.Locale.ROOT) else extRaw
+        return if (ext.isEmpty()) base else "$base.$ext"
     }
 
     private fun le16(b: ByteArray, off: Int): Int =

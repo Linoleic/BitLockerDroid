@@ -1,4 +1,11 @@
 # R8 / ProGuard rules for :app
-#
-# Note: `isMinifyEnabled = false` in app/build.gradle.kts, so these rules are
-# currently inert. Add app-specific keep rules here if minification is enabled.
+
+# NativeBridge is looked up dynamically by name in JNI_OnLoad via FindClass
+# ("com/bitlockerdroid/util/NativeBridge") and bound via RegisterNatives.
+-keep class com.bitlockerdroid.util.NativeBridge {
+    native <methods>;
+}
+
+# Preserve source file names and line numbers for readable crash stack traces
+# when deobfuscated with mapping.txt.
+-keepattributes SourceFile,LineNumberTable

@@ -425,35 +425,41 @@ object RootAccess {
     }
 
     /**
-     * Ensures the high-performance bitlocker_io root helper binary is installed
-     * to /data/local/tmp and app files directory with executable permissions.
+     * Installs a native helper binary bundled as a shared library (e.g. `libbitlocker_io.so`)
+     * into `context.filesDir/<targetName>` and `/data/local/tmp/<targetName>` with executable
+     * permissions. Falls back to extracting from the APK zip when `useLegacyPackaging = false`
+     * leaves `nativeLibraryDir` empty.
      */
-    fun ensureDaemonInstalled(context: android.content.Context) {
+    private fun installBundledBinary(
+        context: android.content.Context,
+        libFileName: String,
+        targetName: String
+    ): String? {
+        val libDir = context.applicationInfo.nativeLibraryDir
+        val nativeBin = java.io.File(libDir, libFileName)
+        val appFilesBin = java.io.File(context.filesDir, targetName)
+        val tmpBin = java.io.File("/data/local/tmp/$targetName")
+
+        if (nativeBin.exists()) {
+            if (!binariesMatch(nativeBin, appFilesBin)) {
+                nativeBin.copyTo(appFilesBin, overwrite = true)
+                appFilesBin.setExecutable(true, false)
+            }
+            if (!binariesMatch(nativeBin, tmpBin)) {
+                exec("cp '${nativeBin.absolutePath}' '${tmpBin.absolutePath}' && chmod 755 '${tmpBin.absolutePath}'")
+            }
+            return if (tmpBin.exists()) tmpBin.absolutePath else appFilesBin.absolutePath
+        }
+
         try {
-            val libDir = context.applicationInfo.nativeLibraryDir
-            val nativeBin = java.io.File(libDir, "libbitlocker_io.so")
-            if (nativeBin.exists()) {
-                val appFilesBin = java.io.File(context.filesDir, "bitlocker_io")
-                if (!binariesMatch(nativeBin, appFilesBin)) {
-                    nativeBin.copyTo(appFilesBin, overwrite = true)
-                    appFilesBin.setExecutable(true, false)
-                }
-                val tmpBin = java.io.File("/data/local/tmp/bitlocker_io")
-                if (!binariesMatch(nativeBin, tmpBin)) {
-                    exec("cp '${nativeBin.absolutePath}' /data/local/tmp/bitlocker_io && chmod 755 /data/local/tmp/bitlocker_io")
-                }
-            } else {
-                try {
-                    val apkFile = java.util.zip.ZipFile(context.applicationInfo.sourceDir)
-                    val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
-                    val entry = apkFile.getEntry("lib/$abi/libbitlocker_io.so")
-                        ?: apkFile.getEntry("lib/arm64-v8a/libbitlocker_io.so")
-                    if (entry != null) {
-                    val appFilesBin = java.io.File(context.filesDir, "bitlocker_io")
-                    val tmpBin = java.io.File("/data/local/tmp/bitlocker_io")
+            java.util.zip.ZipFile(context.applicationInfo.sourceDir).use { apkFile ->
+                val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
+                val entry = apkFile.getEntry("lib/$abi/$libFileName")
+                    ?: apkFile.getEntry("lib/arm64-v8a/$libFileName")
+                if (entry != null) {
                     val needExtract = !appFilesBin.exists() || appFilesBin.length() != entry.size
                     if (needExtract) {
-                        val tempBin = java.io.File(context.filesDir, "bitlocker_io_tmp")
+                        val tempBin = java.io.File(context.filesDir, "${targetName}_tmp")
                         apkFile.getInputStream(entry).use { input ->
                             tempBin.outputStream().use { output -> input.copyTo(output) }
                         }
@@ -461,14 +467,25 @@ object RootAccess {
                         tempBin.renameTo(appFilesBin)
                     }
                     if (!binariesMatch(appFilesBin, tmpBin)) {
-                        exec("cp '${appFilesBin.absolutePath}' /data/local/tmp/bitlocker_io && chmod 755 /data/local/tmp/bitlocker_io")
+                        exec("cp '${appFilesBin.absolutePath}' '${tmpBin.absolutePath}' && chmod 755 '${tmpBin.absolutePath}'")
                     }
-                    }
-                    apkFile.close()
-                } catch (t: Throwable) {
-                    Log.w(TAG, "extract daemon from apk failed", t)
+                    return if (tmpBin.exists()) tmpBin.absolutePath else appFilesBin.absolutePath
                 }
             }
+        } catch (t: Throwable) {
+            Log.w(TAG, "extract $libFileName from apk failed", t)
+        }
+
+        return if (tmpBin.exists()) tmpBin.absolutePath else null
+    }
+
+    /**
+     * Ensures the high-performance bitlocker_io root helper binary is installed
+     * to /data/local/tmp and app files directory with executable permissions.
+     */
+    fun ensureDaemonInstalled(context: android.content.Context) {
+        try {
+            installBundledBinary(context, "libbitlocker_io.so", "bitlocker_io")
         } catch (e: Throwable) {
             Log.w(TAG, "ensureDaemonInstalled failed", e)
         }
@@ -480,17 +497,7 @@ object RootAccess {
      */
     fun ensureFuseDaemonInstalled(context: android.content.Context): String? {
         try {
-            val libDir = context.applicationInfo.nativeLibraryDir
-            val nativeBin = java.io.File(libDir, "libbitlocker_fuse.so")
-            val targetBin = java.io.File("/data/local/tmp/bitlocker_fuse")
-            if (nativeBin.exists()) {
-                if (!binariesMatch(nativeBin, targetBin)) {
-                    exec("cp '${nativeBin.absolutePath}' /data/local/tmp/bitlocker_fuse && chmod 755 /data/local/tmp/bitlocker_fuse")
-                }
-                return targetBin.absolutePath
-            } else if (targetBin.exists()) {
-                return targetBin.absolutePath
-            }
+            return installBundledBinary(context, "libbitlocker_fuse.so", "bitlocker_fuse")
         } catch (e: Throwable) {
             Log.w(TAG, "ensureFuseDaemonInstalled failed", e)
         }
