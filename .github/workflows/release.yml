@@ -1,0 +1,165 @@
+name: Release
+
+# Publishing a release: push a tag named `v<versionName>` (e.g. `v1.2.2`),
+# and this workflow builds, verifies, signs, and publishes the GitHub Release.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, Verify & Publish
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Require a release tag
+        run: |
+          if [ "${GITHUB_REF_TYPE:-}" != "tag" ]; then
+            echo "::error::Select a release tag (e.g. v1.2.2) when starting this workflow manually."
+            exit 1
+          fi
+
+      - name: Test release notes extraction
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Cache Android NDK
+        id: cache-ndk
+        uses: actions/cache@v5
+        with:
+          path: /usr/local/lib/android/sdk/ndk/26.3.11579264
+          key: ndk-26.3.11579264
+
+      - name: Install Android NDK & CMake
+        if: steps.cache-ndk.outputs.cache-hit != 'true'
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;26.3.11579264" "cmake;3.22.1"
+
+      - name: Ensure Build-Tools 35
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "build-tools;35.0.0" || true
+
+      - name: Require signing secrets
+        run: |
+          for name in RELEASE_KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error title=Missing secret::$name is not set for this repository"
+              exit 1
+            fi
+          done
+
+      - name: Configure release signing
+        run: |
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Test & build release APK
+        run: ./gradlew --no-daemon testReleaseUnitTest assembleRelease --stacktrace
+
+      - name: Verify release signing
+        run: |
+          APK=app/build/outputs/apk/release/app-release.apk
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -1)
+          APK_SHA=$("$APKSIGNER" verify --print-certs "$APK" | awk '/SHA-256 digest/{print $NF; exit}' | tr 'A-Z' 'a-z')
+          KS_SHA=$("$JAVA_HOME/bin/keytool" -list -v -keystore "$RUNNER_TEMP/release.jks" \
+            -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" \
+            | grep -iE 'SHA-?256:' | head -1 | awk '{print $NF}' | tr -d ':' | tr 'A-Z' 'a-z')
+          echo "apk=$APK_SHA"
+          echo "keystore=$KS_SHA"
+          if [ -z "$APK_SHA" ] || [ "$APK_SHA" != "$KS_SHA" ]; then
+            echo "::error title=Signing mismatch::the release APK is not signed by the release keystore"
+            exit 1
+          fi
+
+      - name: Resolve and validate release metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          AAPT2=$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort | tail -1)
+          BADGING=$("$AAPT2" dump badging "$APK" | head -1)
+          CODE=$(echo "$BADGING" | grep -oE "versionCode='[0-9]+'" | tr -dc '0-9')
+          NAME=$(echo "$BADGING" | grep -oE "versionName='[^']+'" | sed "s/versionName='//;s/'//")
+          EXPECTED_TAG="v${NAME}"
+          echo "versionCode=$CODE versionName=$NAME expected_tag=$EXPECTED_TAG"
+          echo "tag=$EXPECTED_TAG" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+          case "$NAME" in
+            *-beta*|*-rc*|*-alpha*|*-preview*) PRERELEASE=true ;;
+            *) PRERELEASE=false ;;
+          esac
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+
+          if [ "${GITHUB_REF_NAME:-}" != "$EXPECTED_TAG" ]; then
+            echo "::error title=Tag mismatch::tag is ${GITHUB_REF_NAME:-unknown}, but APK versionName requires $EXPECTED_TAG"
+            exit 1
+          fi
+
+          mkdir -p dist
+          ASSET="BitLockerDroid-${EXPECTED_TAG}.apk"
+          cp "$APK" "dist/${ASSET}"
+          echo "asset=${ASSET}" >> "$GITHUB_OUTPUT"
+
+          # Guard against accidental R8 disablement (current R8 release APK is ~10 MB).
+          SIZE=$(stat -c%s "dist/${ASSET}")
+          echo "asset size: $SIZE bytes"
+          if [ "$SIZE" -gt 20971520 ]; then
+            echo "::error title=APK over size budget::${ASSET} is $((SIZE / 1048576)) MB (> 20 MB limit) - is R8 still enabled?"
+            exit 1
+          fi
+
+          (cd dist && sha256sum "${ASSET}" > checksums.txt)
+          cat dist/checksums.txt
+
+          python3 .github/scripts/release_notes.py "$NAME" CHANGELOG.md NOTES.md
+
+      - name: Publish GitHub Release
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          ASSET="dist/${{ steps.meta.outputs.asset }}"
+          EXTRA_ARGS=()
+          if [ "${{ steps.meta.outputs.prerelease }}" = true ]; then EXTRA_ARGS+=(--prerelease); fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; uploading assets and updating notes."
+            gh release upload "$TAG" "$ASSET" dist/checksums.txt --clobber
+            gh release edit "$TAG" --notes-file NOTES.md --prerelease="${{ steps.meta.outputs.prerelease }}"
+          else
+            gh release create "$TAG" "$ASSET" dist/checksums.txt \
+              --title "BitLockerDroid ${TAG}" \
+              --notes-file NOTES.md \
+              "${EXTRA_ARGS[@]}"
+          fi
+          gh release view "$TAG" --json tagName,name,assets --jq '{tag: .tagName, name: .name, assets: [.assets[].name]}'
