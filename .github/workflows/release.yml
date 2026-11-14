@@ -84,8 +84,8 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Test & build release APK
-        run: ./gradlew --no-daemon testReleaseUnitTest assembleRelease --stacktrace
+      - name: Test & build release + debug APKs
+        run: ./gradlew --no-daemon testReleaseUnitTest assembleRelease assembleDebug --stacktrace
 
       - name: Verify release signing
         run: |
@@ -128,37 +128,41 @@ jobs:
           fi
 
           mkdir -p dist
-          ASSET="BitLockerDroid-${EXPECTED_TAG}.apk"
-          cp "$APK" "dist/${ASSET}"
-          echo "asset=${ASSET}" >> "$GITHUB_OUTPUT"
+          cp app/build/outputs/apk/release/app-release.apk dist/app-release.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/app-debug.apk
 
           # Guard against accidental R8 disablement (current R8 release APK is ~10 MB).
-          SIZE=$(stat -c%s "dist/${ASSET}")
-          echo "asset size: $SIZE bytes"
+          SIZE=$(stat -c%s dist/app-release.apk)
+          echo "app-release.apk size: $SIZE bytes"
           if [ "$SIZE" -gt 20971520 ]; then
-            echo "::error title=APK over size budget::${ASSET} is $((SIZE / 1048576)) MB (> 20 MB limit) - is R8 still enabled?"
+            echo "::error title=APK over size budget::app-release.apk is $((SIZE / 1048576)) MB (> 20 MB limit) - is R8 still enabled?"
             exit 1
           fi
 
-          (cd dist && sha256sum "${ASSET}" > checksums.txt)
-          cat dist/checksums.txt
-
-          python3 .github/scripts/release_notes.py "$NAME" CHANGELOG.md NOTES.md
+          python3 .github/scripts/release_notes.py "$NAME" CHANGELOG.md RAW_NOTES.md
+          {
+            echo "# ${EXPECTED_TAG} 更新日志 / Release Notes"
+            tail -n +2 RAW_NOTES.md
+            echo ""
+            echo "## 附件说明 / Assets"
+            echo ""
+            echo "- \`app-release.apk\`：日常使用请选择此正式版本 (Signed Release APK for everyday use)。"
+            echo "- \`app-debug.apk\`：用于调试和问题排查；调试开销可能使主页滚动更慢，请使用 Release 包评估实际性能 (Debug APK for troubleshooting; use Release to assess scrolling performance)。"
+          } > NOTES.md
 
       - name: Publish GitHub Release
         run: |
           set -euo pipefail
           TAG="${{ steps.meta.outputs.tag }}"
-          ASSET="dist/${{ steps.meta.outputs.asset }}"
           EXTRA_ARGS=()
           if [ "${{ steps.meta.outputs.prerelease }}" = true ]; then EXTRA_ARGS+=(--prerelease); fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists; uploading assets and updating notes."
-            gh release upload "$TAG" "$ASSET" dist/checksums.txt --clobber
-            gh release edit "$TAG" --notes-file NOTES.md --prerelease="${{ steps.meta.outputs.prerelease }}"
+            gh release upload "$TAG" dist/app-release.apk dist/app-debug.apk --clobber
+            gh release edit "$TAG" --title "$TAG" --notes-file NOTES.md --prerelease="${{ steps.meta.outputs.prerelease }}"
           else
-            gh release create "$TAG" "$ASSET" dist/checksums.txt \
-              --title "BitLockerDroid ${TAG}" \
+            gh release create "$TAG" dist/app-release.apk dist/app-debug.apk \
+              --title "$TAG" \
               --notes-file NOTES.md \
               "${EXTRA_ARGS[@]}"
           fi
