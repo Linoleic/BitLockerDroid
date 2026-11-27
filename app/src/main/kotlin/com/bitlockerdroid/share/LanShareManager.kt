@@ -298,6 +298,7 @@ object LanShareManager {
         )
     }
 
+    @Synchronized
     private fun updateAllStates() {
         val current = _shareStates.value.toMutableMap()
         var changed = false

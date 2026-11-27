@@ -1073,4 +1073,89 @@ class LanShareTest {
             return Triple(statusCode, headers, body)
         }
     }
+
+    @Test
+    fun testPutDirectoryRejected405AndTruncatedBodyRejected400() {
+        val tempDir = java.io.File.createTempFile("put_phase3_test_", "").apply {
+            delete()
+            mkdir()
+        }
+        var server: LanWebServer? = null
+        try {
+            java.io.File(tempDir, "folder").mkdirs()
+            val freePort = java.net.ServerSocket(0).use { it.localPort }
+            val adapter = PosixFileShareAdapter(tempDir, "PutDisk", isReadOnly = false)
+            val config = LanShareConfig(
+                volumeLabel = "PutDisk",
+                isReadOnly = false,
+                port = freePort,
+                authEnabled = false
+            )
+            server = LanWebServer(config, adapter)
+            val port = server.start()
+
+            // PUT to an existing directory -> 405 Method Not Allowed
+            val (dirCode, _) = sendRawRequest(
+                port,
+                "PUT /folder HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nContent-Length: 4\r\n\r\ndata"
+            )
+            assertEquals(405, dirCode)
+
+            // PUT with Content-Length: 100 but only 5 bytes sent and EOF -> 400 Bad Request
+            java.net.Socket("127.0.0.1", port).use { socket ->
+                socket.soTimeout = 5000
+                val out = socket.getOutputStream()
+                out.write("PUT /partial.bin HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nContent-Length: 100\r\n\r\nhello".toByteArray())
+                out.flush()
+                socket.shutdownOutput()
+                val statusLine = socket.getInputStream().bufferedReader().readLine() ?: ""
+                assertTrue("Expected 400 but got: $statusLine", statusLine.contains("400"))
+            }
+        } finally {
+            server?.stop()
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun testBasicAuthRateLimitReturns429() {
+        val tempDir = java.io.File.createTempFile("ratelimit_test_", "").apply {
+            delete()
+            mkdir()
+        }
+        var server: LanWebServer? = null
+        try {
+            java.io.File(tempDir, "secret.txt").writeText("secret")
+            val freePort = java.net.ServerSocket(0).use { it.localPort }
+            val adapter = PosixFileShareAdapter(tempDir, "RateDisk", isReadOnly = true)
+            val config = LanShareConfig(
+                volumeLabel = "RateDisk",
+                isReadOnly = true,
+                port = freePort,
+                authEnabled = true,
+                username = "admin",
+                password = "correct"
+            )
+            server = LanWebServer(config, adapter)
+            val port = server.start()
+
+            val badAuth = "Basic " + java.util.Base64.getEncoder().encodeToString("admin:wrong".toByteArray())
+            repeat(10) {
+                val (code, _) = sendRawRequest(
+                    port,
+                    "GET /secret.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nAuthorization: $badAuth\r\n\r\n"
+                )
+                assertEquals(401, code)
+            }
+            val (limitedCode, limitedHeaders) = sendRawRequest(
+                port,
+                "GET /secret.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nAuthorization: $badAuth\r\n\r\n"
+            )
+            assertEquals(429, limitedCode)
+            assertEquals("60", limitedHeaders["retry-after"])
+        } finally {
+            server?.stop()
+            tempDir.deleteRecursively()
+        }
+    }
 }

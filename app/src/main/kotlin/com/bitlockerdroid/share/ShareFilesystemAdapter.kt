@@ -78,6 +78,7 @@ interface ShareFilesystemAdapter {
     fun delete(path: String): Boolean
     fun rename(oldPath: String, newPath: String): Boolean
     fun copyNode(sourcePath: String, destPath: String): Boolean
+    fun sync(): Boolean = true
 }
 
 /**
@@ -223,23 +224,45 @@ class VolumeCoreShareAdapter(
         return firstSeg.startsWith('$')
     }
 
+    private inline fun <T> withWriteTicket(path: String, fallback: T, block: () -> T): T {
+        val ticket = try {
+            core.pendingWrites.begin(path)
+        } catch (_: Exception) {
+            return fallback
+        }
+        var failure: Throwable? = null
+        return try {
+            block()
+        } catch (t: Throwable) {
+            failure = t
+            throw t
+        } finally {
+            core.pendingWrites.finish(ticket, failure)
+        }
+    }
+
     override fun createDirectory(parentPath: String, name: String): Boolean {
         if (isReadOnly) return false
         if (name.isBlank() || name.contains('/') || name.contains('\\') || name.contains('\u0000')) return false
         val target = if (normalizePath(parentPath) == "/") "/$name" else "${normalizePath(parentPath)}/$name"
         if (isProtectedSystemPath(target)) return false
         val writer = core.writer ?: return false
-        val ok = try {
-            val res = writer.createFile(parentPath, name, isDirectory = true)
-            res >= 0L
-        } catch (_: Exception) {
-            false
+        return withWriteTicket(target, false) {
+            val ok = try {
+                val res = writer.createFile(parentPath, name, isDirectory = true)
+                if (res >= 0L) {
+                    writer.sync()
+                    true
+                } else false
+            } catch (_: Exception) {
+                false
+            }
+            if (ok) {
+                core.invalidateCache()
+                pathCache.clear()
+            }
+            ok
         }
-        if (ok) {
-            core.invalidateCache()
-            pathCache.clear()
-        }
-        return ok
     }
 
     override fun createFile(parentPath: String, name: String): Boolean {
@@ -248,47 +271,68 @@ class VolumeCoreShareAdapter(
         val target = if (normalizePath(parentPath) == "/") "/$name" else "${normalizePath(parentPath)}/$name"
         if (isProtectedSystemPath(target)) return false
         val writer = core.writer ?: return false
-        val ok = try {
-            val res = writer.createFile(parentPath, name, isDirectory = false)
-            res >= 0L
-        } catch (_: Exception) {
-            false
+        return withWriteTicket(target, false) {
+            val ok = try {
+                val res = writer.createFile(parentPath, name, isDirectory = false)
+                if (res >= 0L) {
+                    writer.sync()
+                    true
+                } else false
+            } catch (_: Exception) {
+                false
+            }
+            if (ok) {
+                core.invalidateCache()
+                pathCache.clear()
+            }
+            ok
         }
-        if (ok) {
-            core.invalidateCache()
-            pathCache.clear()
-        }
-        return ok
     }
 
     override fun writeData(filePath: String, offset: Long, data: ByteArray, count: Int): Long {
         if (isReadOnly || isProtectedSystemPath(filePath)) return -1L
         val writer = core.writer ?: return -1L
-        val written = try {
-            writer.write(filePath, offset, data, count)
+        return withWriteTicket(filePath, -1L) {
+            try {
+                writer.write(filePath, offset, data, count)
+            } catch (_: Exception) {
+                -1L
+            }
+        }
+    }
+
+    override fun sync(): Boolean {
+        if (isReadOnly) return false
+        val writer = core.writer ?: return false
+        val ok = try {
+            writer.sync()
+            true
         } catch (_: Exception) {
-            -1L
+            false
         }
-        if (written > 0L) {
-            core.invalidateCache()
-            pathCache.clear()
-        }
-        return written
+        core.invalidateCache()
+        pathCache.clear()
+        return ok
     }
 
     override fun truncate(filePath: String, newSize: Long): Boolean {
         if (isReadOnly || isProtectedSystemPath(filePath)) return false
         val writer = core.writer ?: return false
-        val ok = try {
-            writer.truncate(filePath, newSize)
-        } catch (_: Exception) {
-            false
+        return withWriteTicket(filePath, false) {
+            val ok = try {
+                if (writer.truncate(filePath, newSize)) {
+                    writer.sync()
+                    true
+                } else false
+            } catch (_: Exception) {
+                false
+            }
+            if (ok) {
+                core.invalidateCache()
+                pathCache.clear()
+            }
+            ok
         }
-        if (ok) {
-            core.invalidateCache()
-            pathCache.clear()
-        }
-        return ok
     }
 
     override fun delete(path: String): Boolean {
@@ -296,31 +340,41 @@ class VolumeCoreShareAdapter(
         // Never allow deleting the volume root or protected system files
         if (normalizePath(path) == "/" || isProtectedSystemPath(path)) return false
         val writer = core.writer ?: return false
-        val ok = try {
-            writer.delete(path)
-        } catch (_: Exception) {
-            false
+        return withWriteTicket(path, false) {
+            val ok = try {
+                if (writer.delete(path)) {
+                    writer.sync()
+                    true
+                } else false
+            } catch (_: Exception) {
+                false
+            }
+            if (ok) {
+                core.invalidateCache()
+                pathCache.clear()
+            }
+            ok
         }
-        if (ok) {
-            core.invalidateCache()
-            pathCache.clear()
-        }
-        return ok
     }
 
     override fun rename(oldPath: String, newPath: String): Boolean {
         if (isReadOnly || isProtectedSystemPath(oldPath) || isProtectedSystemPath(newPath)) return false
         val writer = core.writer ?: return false
-        val ok = try {
-            writer.rename(oldPath, newPath)
-        } catch (_: Exception) {
-            false
+        return withWriteTicket(newPath, false) {
+            val ok = try {
+                if (writer.rename(oldPath, newPath)) {
+                    writer.sync()
+                    true
+                } else false
+            } catch (_: Exception) {
+                false
+            }
+            if (ok) {
+                core.invalidateCache()
+                pathCache.clear()
+            }
+            ok
         }
-        if (ok) {
-            core.invalidateCache()
-            pathCache.clear()
-        }
-        return ok
     }
 
     override fun copyNode(sourcePath: String, destPath: String): Boolean {
@@ -339,7 +393,7 @@ class VolumeCoreShareAdapter(
                     val r = input.read(buf)
                     if (r <= 0) break
                     val w = writeData(destPath, offset, buf, r)
-                    if (w < 0) {
+                    if (w != r.toLong()) {
                         copyOk = false
                         break
                     }
@@ -350,7 +404,7 @@ class VolumeCoreShareAdapter(
             copyOk = false
         }
         if (copyOk) {
-            truncate(destPath, offset)
+            copyOk = truncate(destPath, offset) && sync()
         }
         return copyOk
     }

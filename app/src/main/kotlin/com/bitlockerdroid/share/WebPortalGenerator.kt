@@ -34,7 +34,9 @@ object WebPortalGenerator {
         return if (idx == 0) "${bytes} B" else String.format(Locale.US, "%.1f %s", b, units[idx])
     }
 
-    private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+    private val dateFormat = ThreadLocal.withInitial {
+        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+    }
 
     fun formatItemUrl(parentPath: String, itemName: String, isDirectory: Boolean): String {
         val cleanParent = if (parentPath == "/" || parentPath.isEmpty()) {
@@ -279,7 +281,7 @@ object WebPortalGenerator {
             }
             sb.append("      </td>\n")
             sb.append("      <td class=\"size-col\">").append(if (node.isDirectory) "-" else formatSize(node.size)).append("</td>\n")
-            sb.append("      <td class=\"date-col\">").append(dateFormat.format(Date(node.lastModified))).append("</td>\n")
+            sb.append("      <td class=\"date-col\">").append(dateFormat.get()!!.format(Date(node.lastModified))).append("</td>\n")
             sb.append("      <td class=\"act-col\">\n")
             if (!node.isDirectory) {
                 sb.append("        <a class=\"btn\" href=\"").append(itemUrl).append("\" download>Download</a>\n")

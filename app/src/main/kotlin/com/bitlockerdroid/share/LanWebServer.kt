@@ -11,8 +11,13 @@ import java.net.SocketException
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -185,8 +190,12 @@ class LanWebServer(
         try { if (t != null) Log.e(TAG, msg, t) else Log.e(TAG, msg) } catch (_: Throwable) { System.err.println("[$TAG] $msg") }
     }
 
+    private data class AuthAttemptState(var failures: Int = 0, var windowStartMs: Long = 0L)
+    private val authFailures = ConcurrentHashMap<String, AuthAttemptState>()
+
     private var serverSocket: ServerSocket? = null
-    private var executor: ExecutorService? = null
+    private var acceptExecutor: ExecutorService? = null
+    private var workerExecutor: ThreadPoolExecutor? = null
 
     @Volatile
     var isRunning = false
@@ -219,9 +228,13 @@ class LanWebServer(
 
         serverSocket = boundSocket
         isRunning = true
-        executor = Executors.newCachedThreadPool()
+        workerExecutor = ThreadPoolExecutor(
+            4, 32, 30L, TimeUnit.SECONDS,
+            LinkedBlockingQueue(64)
+        )
+        acceptExecutor = Executors.newSingleThreadExecutor()
 
-        executor?.submit {
+        acceptExecutor?.submit {
             acceptLoop()
         }
 
@@ -236,8 +249,11 @@ class LanWebServer(
         } catch (_: Exception) {}
         serverSocket = null
 
-        executor?.shutdownNow()
-        executor = null
+        acceptExecutor?.shutdownNow()
+        acceptExecutor = null
+        workerExecutor?.shutdownNow()
+        workerExecutor = null
+        authFailures.clear()
         logI("LanWebServer stopped")
     }
 
@@ -245,8 +261,20 @@ class LanWebServer(
         while (isRunning) {
             try {
                 val socket = serverSocket?.accept() ?: break
-                executor?.submit {
-                    handleConnection(socket)
+                try {
+                    workerExecutor?.execute {
+                        handleConnection(socket)
+                    } ?: run {
+                        try { socket.close() } catch (_: Exception) {}
+                    }
+                } catch (_: RejectedExecutionException) {
+                    try {
+                        socket.soTimeout = 2000
+                        val out = BufferedOutputStream(socket.getOutputStream())
+                        sendError(out, 503, "Service Unavailable")
+                    } catch (_: Exception) {} finally {
+                        try { socket.close() } catch (_: Exception) {}
+                    }
                 }
             } catch (e: SocketException) {
                 if (!isRunning) break
@@ -308,10 +336,36 @@ class LanWebServer(
                 return
             }
 
-            // Authentication check
+            // Authentication check with per-IP rate limiting
             if (config.authEnabled) {
+                val clientIp = socket.inetAddress?.hostAddress ?: "unknown"
+                val nowMs = System.currentTimeMillis()
+                val attempt = authFailures[clientIp]
+                if (attempt != null && synchronized(attempt) {
+                        if (nowMs - attempt.windowStartMs <= 60_000L && attempt.failures >= 10) true else false
+                    }
+                ) {
+                    val rateResp = "HTTP/1.1 429 Too Many Requests\r\n" +
+                            "Retry-After: 60\r\n" +
+                            "Content-Type: text/plain; charset=utf-8\r\n" +
+                            "Content-Length: 22\r\n\r\n" +
+                            "429 Too Many Requests\n"
+                    output.write(rateResp.toByteArray())
+                    output.flush()
+                    return
+                }
                 val authHeader = headers["authorization"]
                 if (!isAuthorized(authHeader)) {
+                    if (authFailures.size > 256) authFailures.clear()
+                    val entry = authFailures.computeIfAbsent(clientIp) { AuthAttemptState(0, nowMs) }
+                    synchronized(entry) {
+                        if (nowMs - entry.windowStartMs > 60_000L) {
+                            entry.failures = 1
+                            entry.windowStartMs = nowMs
+                        } else {
+                            entry.failures++
+                        }
+                    }
                     val authResp = "HTTP/1.1 401 Unauthorized\r\n" +
                             "WWW-Authenticate: Basic realm=\"BitLockerDroid\"\r\n" +
                             "Content-Type: text/plain; charset=utf-8\r\n" +
@@ -321,6 +375,7 @@ class LanWebServer(
                     output.flush()
                     return
                 }
+                authFailures.remove(clientIp)
             }
 
             // Path sanitization & traversal defense
@@ -695,6 +750,10 @@ class LanWebServer(
         }
 
         val existingNode = filesystem.resolveNode(path)
+        if (existingNode?.isDirectory == true) {
+            sendError(output, 405, "Method Not Allowed: cannot PUT to a directory")
+            return
+        }
         val ifNoneMatch = headers["if-none-match"]
         // RFC 7232 Section 3.2: If-None-Match: * requires 412 Precondition Failed if resource already exists
         if (ifNoneMatch != null && ifNoneMatch.trim() == "*" && existingNode != null) {
@@ -728,6 +787,7 @@ class LanWebServer(
         var offset = 0L
         var writeFailed = false
         var malformedBody = false
+        var incompleteBody = false
         val buf = ByteArray(64 * 1024)
 
         if (isChunked) {
@@ -760,7 +820,7 @@ class LanWebServer(
                         break
                     }
                     val written = filesystem.writeData(path, offset, buf, n)
-                    if (written < 0) {
+                    if (written != n.toLong()) {
                         writeFailed = true
                         break
                     }
@@ -784,9 +844,12 @@ class LanWebServer(
             while (remaining > 0) {
                 val toRead = minOf(buf.size.toLong(), remaining).toInt()
                 val n = input.read(buf, 0, toRead)
-                if (n <= 0) break
+                if (n <= 0) {
+                    incompleteBody = true
+                    break
+                }
                 val written = filesystem.writeData(path, offset, buf, n)
-                if (written < 0) {
+                if (written != n.toLong()) {
                     writeFailed = true
                     break
                 }
@@ -796,19 +859,25 @@ class LanWebServer(
         }
 
         if (writeFailed) {
+            filesystem.sync()
             sendError(output, 500, "Internal Server Error: Failed to write data")
             return
         }
 
-        if (malformedBody) {
-            // Keep what was successfully received, then reject the request
+        if (malformedBody || incompleteBody) {
+            // Keep what was successfully received, sync, and reject the incomplete upload
             filesystem.truncate(path, offset)
-            sendError(output, 400, "Bad Request: Malformed chunked body")
+            filesystem.sync()
+            sendError(output, 400, "Bad Request: Incomplete or malformed body")
             return
         }
 
-        // Truncate to offset in case existing file was larger
+        // Truncate to offset in case existing file was larger, then flush to disk
         filesystem.truncate(path, offset)
+        if (!filesystem.sync()) {
+            sendError(output, 500, "Internal Server Error: Failed to sync data")
+            return
+        }
 
         val statusCode = if (existingNode == null) "201 Created" else "204 No Content"
         val resp = "HTTP/1.1 $statusCode\r\nContent-Length: 0\r\n\r\n"
