@@ -47,6 +47,18 @@ jobs:
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "build-tools;35.0.0" || true
 
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Run unit tests
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon testDebugUnitTest --stacktrace 2>&1 | tee build.log || {
+            echo "::error::Unit tests failed. Printing last 150 lines of log:"
+            tail -n 150 build.log
+            exit 1
+          }
+
       - name: Configure Keystore
         id: keystore
         env:
@@ -63,19 +75,14 @@ jobs:
             echo "has_release_keystore=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Make gradlew executable
-        run: chmod +x ./gradlew
-
-      - name: Run unit tests
-        run: ./gradlew --no-daemon testDebugUnitTest --stacktrace
-
       - name: Build APK with Gradle
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          ./gradlew --no-daemon assembleRelease assembleDebug --stacktrace 2>&1 | tee build.log || {
+          set -o pipefail
+          ./gradlew --no-daemon assembleRelease assembleDebug --stacktrace 2>&1 | tee -a build.log || {
             echo "::error::Gradle build failed. Printing last 150 lines of log:"
             tail -n 150 build.log
             exit 1
@@ -86,7 +93,10 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: build-failure-log
-          path: build.log
+          path: |
+            build.log
+            app/build/reports/tests/
+          if-no-files-found: ignore
 
       - name: Prepare Artifacts & Checksums
         id: prepare_artifacts
