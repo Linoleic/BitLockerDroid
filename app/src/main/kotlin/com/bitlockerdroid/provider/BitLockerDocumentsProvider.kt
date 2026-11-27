@@ -266,6 +266,15 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
 
 
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
+        if (!method.startsWith("android:")) {
+            val callingUid = android.os.Binder.getCallingUid()
+            val allowed = callingUid == android.os.Process.myUid() ||
+                (com.bitlockerdroid.BuildConfig.DEBUG &&
+                    (callingUid == android.os.Process.SHELL_UID || callingUid == 0))
+            if (!allowed) {
+                throw SecurityException("Unauthorized provider call: $method")
+            }
+        }
         LogFile.write("provider", "call method=$method arg=$arg")
         if (method == "create_document") {
             val parentDocId = arg ?: extras?.getString("parent_doc_id") ?: return null

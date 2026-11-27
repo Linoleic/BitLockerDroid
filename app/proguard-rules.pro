@@ -6,6 +6,12 @@
     native <methods>;
 }
 
+-keep class com.bitlockerdroid.usb.PipelinedUsbCommunication {
+    native <methods>;
+}
+
+-keep class me.jahnen.libaums.** { *; }
+
 # Preserve source file names and line numbers for readable crash stack traces
 # when deobfuscated with mapping.txt.
 -keepattributes SourceFile,LineNumberTable

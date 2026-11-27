@@ -47,7 +47,9 @@ class BitLockerCoreService : Service() {
                     intent.getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_DEVICE)
                 }
                 if (dev != null) {
-                    com.bitlockerdroid.usb.UsbStorageManager.onDeviceDetached(dev)
+                    Thread({
+                        com.bitlockerdroid.usb.UsbStorageManager.onDeviceDetached(dev)
+                    }, "BitLocker-UsbDetach").start()
                 }
                 val usbManager = context?.getSystemService(android.hardware.usb.UsbManager::class.java)
                 val remainingStorage = usbManager?.deviceList?.values?.filter { isMassStorageDevice(it) } ?: emptyList()
@@ -113,6 +115,50 @@ class BitLockerCoreService : Service() {
         }
     }
 
+    private val usbPermissionReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
+            if (intent?.action != com.bitlockerdroid.usb.UsbStorageManager.ACTION_USB_PERMISSION) return
+            val granted = intent.getBooleanExtra(android.hardware.usb.UsbManager.EXTRA_PERMISSION_GRANTED, false)
+            LogFile.write("app", "usbPermissionReceiver: USB permission granted=$granted")
+            val dev = if (android.os.Build.VERSION.SDK_INT >= 33) {
+                intent.getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_DEVICE, android.hardware.usb.UsbDevice::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_DEVICE)
+            }
+            if (!granted) {
+                if (dev != null) {
+                    com.bitlockerdroid.usb.UsbStorageManager.onPermissionDenied(dev)
+                }
+                return
+            }
+            scanRunnable?.let { scanHandler.removeCallbacks(it) }
+            val task = Runnable {
+                Thread({
+                    context?.let { ctx ->
+                        val pm = ctx.getSystemService(android.os.PowerManager::class.java)
+                        val wakeLock = pm?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "bitlockerdroid:otg_scan")
+                        try {
+                            wakeLock?.acquire(5000L)
+                            BitLockerDetector.scanAndDetect(ctx)
+                        } catch (e: Throwable) {
+                            LogFile.write("app", "Unhandled exception in BitLocker-UsbScan: ${e.message}")
+                            android.util.Log.e("BitLockerCoreService", "Unhandled exception in BitLocker-UsbScan", e)
+                        } finally {
+                            try {
+                                if (wakeLock?.isHeld == true) {
+                                    wakeLock.release()
+                                }
+                            } catch (_: Throwable) {}
+                        }
+                    }
+                }, "BitLocker-UsbScan").start()
+            }
+            scanRunnable = task
+            scanHandler.postDelayed(task, 300L)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         ContextProvider.app = applicationContext
@@ -127,8 +173,8 @@ class BitLockerCoreService : Service() {
         val filter = android.content.IntentFilter().apply {
             addAction(android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED)
             addAction(android.hardware.usb.UsbManager.ACTION_USB_DEVICE_DETACHED)
-            addAction(com.bitlockerdroid.usb.UsbStorageManager.ACTION_USB_PERMISSION)
         }
+        val permissionFilter = android.content.IntentFilter(com.bitlockerdroid.usb.UsbStorageManager.ACTION_USB_PERMISSION)
         val mediaFilter = android.content.IntentFilter().apply {
             addAction(Intent.ACTION_MEDIA_MOUNTED)
             addAction(Intent.ACTION_MEDIA_CHECKING)
@@ -141,9 +187,11 @@ class BitLockerCoreService : Service() {
         try {
             if (android.os.Build.VERSION.SDK_INT >= 33) {
                 registerReceiver(usbReceiver, filter, android.content.Context.RECEIVER_EXPORTED)
+                registerReceiver(usbPermissionReceiver, permissionFilter, android.content.Context.RECEIVER_NOT_EXPORTED)
                 registerReceiver(usbReceiver, mediaFilter, android.content.Context.RECEIVER_EXPORTED)
             } else {
                 registerReceiver(usbReceiver, filter)
+                registerReceiver(usbPermissionReceiver, permissionFilter)
                 registerReceiver(usbReceiver, mediaFilter)
             }
         } catch (e: Exception) {
@@ -155,6 +203,9 @@ class BitLockerCoreService : Service() {
         scanRunnable?.let { scanHandler.removeCallbacks(it) }
         try {
             unregisterReceiver(usbReceiver)
+        } catch (_: Exception) {}
+        try {
+            unregisterReceiver(usbPermissionReceiver)
         } catch (_: Exception) {}
         super.onDestroy()
     }

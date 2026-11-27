@@ -11,26 +11,22 @@ import com.bitlockerdroid.util.ContextProvider
  */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED ||
-            intent.action == Intent.ACTION_LOCKED_BOOT_COMPLETED
-        ) {
-            ContextProvider.app = context.applicationContext
-            val serviceIntent = Intent(context, BitLockerCoreService::class.java).apply {
-                putExtra("extra_from_fgs", true)
-            }
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        val appCtx = context.applicationContext
+        ContextProvider.app = appCtx
+        val pending = goAsync()
+        Thread({
             try {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    context.startForegroundService(serviceIntent)
-                } else {
-                    context.startService(serviceIntent)
+                try {
+                    appCtx.startService(Intent(appCtx, BitLockerCoreService::class.java))
+                } catch (e: Exception) {
+                    com.bitlockerdroid.util.LogFile.write("app", "BootReceiver: failed to start service: ${e.message}")
                 }
-            } catch (e: Exception) {
-                com.bitlockerdroid.util.LogFile.write("app", "BootReceiver: failed to start service: ${e.message}")
+                try { Thread.sleep(2000) } catch (_: InterruptedException) {}
+                BitLockerDetector.scanAndDetect(appCtx)
+            } finally {
+                pending.finish()
             }
-            Thread {
-                try { Thread.sleep(2000) } catch (_: Exception) {}
-                BitLockerDetector.scanAndDetect(context)
-            }.start()
-        }
+        }, "BitLocker-BootScan").start()
     }
 }

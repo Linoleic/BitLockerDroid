@@ -30,6 +30,7 @@ object KeyGuardService {
         return ks
     }
 
+    @Synchronized
     private fun getOrCreateKey(): SecretKey {
         val ks = keyStore()
         (ks.getKey(ALIAS, null) as? SecretKey)?.let { return it }
@@ -40,8 +41,10 @@ object KeyGuardService {
                 ALIAS,
                 KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
             )
+                .setKeySize(256)
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setRandomizedEncryptionRequired(true)
                 .build()
         )
         return kg.generateKey()
@@ -80,6 +83,7 @@ object KeyGuardService {
         }
     }
 
+    @Synchronized
     fun deleteKey() {
         try {
             keyStore().deleteEntry(ALIAS)
