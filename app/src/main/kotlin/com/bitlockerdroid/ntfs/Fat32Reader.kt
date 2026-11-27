@@ -305,8 +305,9 @@ class Fat32Reader(
         val clusterSize = boot.clusterSize.toInt()
         val buf = ByteArray(clusterSize)
         var cluster = ref
-        var guard = 0
-        while (isValidCluster(cluster) && guard++ < 100000) {
+        val visited = HashSet<Long>()
+        while (isValidCluster(cluster)) {
+            if (!visited.add(cluster)) break
             val n = source.read(boot.clusterByte(cluster), buf, 0, buf.size)
             if (n < DIR_ENTRY_SIZE) break
             val endOfDir = parseDirCluster(buf, n, out, cluster)
@@ -357,7 +358,7 @@ class Fat32Reader(
 
             val clusterHi = le16(e, 20)
             val clusterLo = le16(e, 26)
-            val firstCluster = ((clusterHi.toLong() shl 16) or clusterLo.toLong())
+            val firstCluster = (((clusterHi.toLong() shl 16) or clusterLo.toLong()) and 0x0fffffffL)
             val size = le32(e, 28)
             val isDir = (attr and ATTR_DIRECTORY) != 0
 
@@ -388,22 +389,25 @@ class Fat32Reader(
      * directory was never listed in this process), reads the chain until EOF.
      */
     override fun readFile(ref: Long, offset: Long, dst: ByteArray, dstPos: Int, len: Int): Int {
-        if (!isValidCluster(ref) || len <= 0) return 0
+        if (!isValidCluster(ref) || offset < 0L || len <= 0 || dstPos < 0 || dstPos >= dst.size) return 0
+        val safeLen = minOf(len, dst.size - dstPos)
         val clusterSize = boot.clusterSize.toInt()
         val cachedSize = entryCache[ref]?.fileSize
         // If size is known and the request starts past it, nothing to read.
         if (cachedSize != null && offset >= cachedSize) return 0
         val toRead = minOf(
-            len.toLong(),
-            if (cachedSize != null) cachedSize - offset else len.toLong()
+            safeLen.toLong(),
+            if (cachedSize != null) cachedSize - offset else safeLen.toLong()
         ).toInt()
 
         var filePos = 0L
         var cluster = ref
         var written = 0
-        var guard = 0
+        var tortoise = ref
+        var power = 1L
+        var lam = 0L
         var tempBuf: ByteArray? = null
-        while (isValidCluster(cluster) && guard++ < 100000 && written < toRead) {
+        while (isValidCluster(cluster) && written < toRead) {
             val clusterStart = filePos
             val clusterEnd = filePos + clusterSize
             if (offset < clusterEnd) {
@@ -431,6 +435,13 @@ class Fat32Reader(
             }
             filePos = clusterEnd
             cluster = nextCluster(cluster)
+            if (isEof(cluster)) break
+            if (cluster == tortoise) break
+            if (++lam == power) {
+                tortoise = cluster
+                power = power shl 1
+                lam = 0L
+            }
         }
         return written
     }
@@ -440,8 +451,7 @@ class Fat32Reader(
         val fatByte = boot.fatStartByte + cluster * 4
         val e = ByteArray(4)
         if (source.read(fatByte, e, 0, 4) < 4) return BAD_CLUSTER
-        val v = le32(e, 0)
-        return if (isEof(v)) v else (v and 0x0fffffffL)
+        return le32(e, 0) and 0x0fffffffL
     }
 
     private fun isEof(v: Long): Boolean = v >= EOF_MARK || v == BAD_CLUSTER

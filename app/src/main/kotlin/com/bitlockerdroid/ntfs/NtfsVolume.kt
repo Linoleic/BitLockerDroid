@@ -37,7 +37,15 @@ object NtfsVolume {
 
         val bytesPerSector = (sector[11].toInt() and 0xff) or
             ((sector[12].toInt() and 0xff) shl 8)
-        val sectorsPerCluster = sector[13].toInt() and 0xff
+        if (bytesPerSector !in listOf(512, 1024, 2048, 4096)) return null
+
+        val rawSpc = sector[13].toInt() and 0xff
+        val sectorsPerCluster = when {
+            rawSpc in 1..128 && (rawSpc and (rawSpc - 1)) == 0 -> rawSpc
+            rawSpc in 0xF4..0xFF -> 1 shl (256 - rawSpc)
+            else -> return null
+        }
+        if (bytesPerSector.toLong() * sectorsPerCluster > 2L * 1024 * 1024) return null
 
         // at offset 48 (0x30): MFT LCN (8 bytes LE)
         val mftLcn = le64(sector, 48)
@@ -45,6 +53,7 @@ object NtfsVolume {
         val mftMirrorLcn = le64(sector, 56)
         // total sectors at offset 40 (0x28)
         val totalSectors = le64(sector, 40)
+        if (totalSectors <= 0L || mftLcn < 0L) return null
         val totalClusters = totalSectors / sectorsPerCluster
 
         return BootSector(

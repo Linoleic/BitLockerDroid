@@ -45,9 +45,6 @@ object Fat32Volume {
 
         val oem = String(sector, 3, 8, Charsets.US_ASCII)
         val fsType = String(sector, 82, 8, Charsets.US_ASCII)
-        val isFat32 = fsType.trim() == "FAT32" ||
-            (oem.startsWith("MSDOS") && sector[11].toInt() == 0x00 && sector[12].toInt() == 0x02)
-        if (!isFat32) return null
 
         val bytesPerSector = (sector[11].toInt() and 0xff) or
             ((sector[12].toInt() and 0xff) shl 8)
@@ -55,10 +52,27 @@ object Fat32Volume {
         val reservedSectors = (sector[14].toInt() and 0xff) or
             ((sector[15].toInt() and 0xff) shl 8)
         val fatCount = sector[16].toInt() and 0xff
+        val rootEntryCount = (sector[17].toInt() and 0xff) or
+            ((sector[18].toInt() and 0xff) shl 8)
+        val sectorsPerFat16 = (sector[22].toInt() and 0xff) or
+            ((sector[23].toInt() and 0xff) shl 8)
 
         // FAT32: sectors per FAT is a 32-bit value at offset 0x24.
         val sectorsPerFat = le32(sector, 0x24)
-        val rootCluster = le32(sector, 0x2c)
+        val rootCluster = le32(sector, 0x2c) and 0x0fffffffL
+
+        val isFat32 = fsType.trim() == "FAT32" ||
+            (oem.startsWith("MSDOS") && rootEntryCount == 0 && sectorsPerFat16 == 0 && sectorsPerFat > 0L)
+        if (!isFat32) return null
+
+        if (bytesPerSector !in listOf(512, 1024, 2048, 4096) ||
+            sectorsPerCluster !in listOf(1, 2, 4, 8, 16, 32, 64, 128) ||
+            reservedSectors < 1 || fatCount !in 1..2 ||
+            rootEntryCount != 0 || sectorsPerFat16 != 0 ||
+            sectorsPerFat <= 0L || rootCluster !in 2L..0x0ffffff6L
+        ) {
+            return null
+        }
 
         val backupBootSector = if (sector.size >= 0x34) {
             val bk = (sector[0x32].toInt() and 0xff) or ((sector[0x33].toInt() and 0xff) shl 8)

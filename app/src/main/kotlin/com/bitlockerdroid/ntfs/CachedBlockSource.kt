@@ -39,6 +39,7 @@ class CachedBlockSource(
     override val size: Long get() = volumeSize
 
     private val lock = Any()
+    private var generation: Long = 0L
 
     /** LRU cache of blockStart (absolute byte offset) -> decrypted plaintext bytes. */
     private val cache = object : LinkedHashMap<Long, ByteArray>(maxCacheBlocks, 0.75f, true) {
@@ -66,50 +67,69 @@ class CachedBlockSource(
             val blockStart = blockIndex * blockSize
             val inBlockOff = (curOffset - blockStart).toInt()
 
-            val blockData = getOrLoadBlock(blockStart) ?: break
-            if (inBlockOff >= blockData.size) break
-
-            val available = blockData.size - inBlockOff
-            val chunk = minOf(safeToRead - bytesCopied, available)
+            val chunk = readFromBlock(blockStart, inBlockOff, dst, dstPos + bytesCopied, safeToRead - bytesCopied)
             if (chunk <= 0) break
-
-            System.arraycopy(blockData, inBlockOff, dst, dstPos + bytesCopied, chunk)
             bytesCopied += chunk
         }
 
         return bytesCopied
     }
 
-    private fun getOrLoadBlock(blockStart: Long): ByteArray? {
+    private fun readFromBlock(
+        blockStart: Long,
+        inBlockOff: Int,
+        dst: ByteArray,
+        dstPos: Int,
+        maxLen: Int
+    ): Int {
+        val loadGen: Long
         synchronized(lock) {
-            cache[blockStart]?.let { return it }
+            cache[blockStart]?.let { blockData ->
+                if (inBlockOff >= blockData.size) return 0
+                val chunk = minOf(maxLen, blockData.size - inBlockOff)
+                if (chunk > 0) {
+                    System.arraycopy(blockData, inBlockOff, dst, dstPos, chunk)
+                }
+                return chunk
+            }
+            loadGen = generation
         }
 
         val validLen = minOf(blockSize.toLong(), volumeSize - blockStart).toInt()
-        if (validLen <= 0) return null
+        if (validLen <= 0) return 0
 
         val effSectorSize = if (sectorSize > 0) sectorSize else 512
         // Ensure aligned to sectorSize
         val alignedLen = ((validLen + effSectorSize - 1) / effSectorSize) * effSectorSize
 
-        val decrypted = rawSectorReader(blockStart, alignedLen) ?: return null
-        val blockData = if (decrypted.size == validLen) {
-            decrypted
-        } else if (decrypted.size > validLen) {
-            decrypted.copyOf(validLen)
+        val decrypted = rawSectorReader(blockStart, alignedLen) ?: return 0
+        val blockData = if (decrypted.size > validLen) {
+            decrypted.copyOf(validLen).also {
+                Arrays.fill(decrypted, 0.toByte())
+            }
         } else {
             decrypted
         }
 
         synchronized(lock) {
-            cache[blockStart] = blockData
+            val chunk = if (inBlockOff < blockData.size) {
+                minOf(maxLen, blockData.size - inBlockOff).also { c ->
+                    if (c > 0) System.arraycopy(blockData, inBlockOff, dst, dstPos, c)
+                }
+            } else 0
+            if (generation == loadGen) {
+                cache[blockStart] = blockData
+            } else {
+                Arrays.fill(blockData, 0.toByte())
+            }
+            return chunk
         }
-        return blockData
     }
 
     /** Clears and zeros out all cached plaintext memory. */
     fun clear() {
         synchronized(lock) {
+            generation++
             for (arr in cache.values) {
                 Arrays.fill(arr, 0.toByte())
             }

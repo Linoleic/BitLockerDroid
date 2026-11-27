@@ -190,17 +190,16 @@ object NtfsFileRecordParser {
      * Returns false when a sector check value mismatches (corrupt record).
      */
     fun applyUpdateSequenceArray(rec: ByteArray, usaOffsetFieldPos: Int, sectorSize: Int): Boolean {
-        if (sectorSize <= 0 || rec.size < usaOffsetFieldPos + 4) return true
+        if (sectorSize <= 0 || rec.size < usaOffsetFieldPos + 4) return false
         val usaOffset = le16(rec, usaOffsetFieldPos).toInt()
         val usaCount = le16(rec, usaOffsetFieldPos + 2).toInt()
-        // Sanity: the array must fit inside the record and hold exactly one
-        // check value + one fixup per sector.
-        if (usaOffset <= 0 || usaCount != rec.size / sectorSize + 1 ||
-            usaOffset + usaCount * 2 > rec.size) return true
+        // Sanity: the array must fit inside the record and hold one check value + one fixup per sector.
+        if (usaOffset <= 0 || usaCount <= 1 || usaCount != rec.size / sectorSize + 1 ||
+            usaOffset + usaCount * 2 > rec.size) return false
         val checkValue = le16(rec, usaOffset)
         for (i in 1 until usaCount) {
             val sectorEnd = i * sectorSize - 2
-            if (sectorEnd < 0 || sectorEnd + 2 > rec.size) break
+            if (sectorEnd < 0 || sectorEnd + 2 > rec.size) return false
             if (le16(rec, sectorEnd) != checkValue) return false
             val saved = le16(rec, usaOffset + i * 2)
             rec[sectorEnd] = (saved and 0xff).toByte()
@@ -222,84 +221,89 @@ object NtfsFileRecordParser {
         val attrs = ArrayList<NtfsAttribute>(8)
 
         while (attrOff > 0 && attrOff < rec.size - 16) {
-            val type = le32(rec, attrOff.toInt())
+            val attrStart = attrOff.toInt()
+            val type = le32(rec, attrStart)
             if (type == ATTRIBUTE_END) break
 
-            val length = le32(rec, attrOff.toInt() + 4).toInt()
+            val length = le32(rec, attrStart + 4).toInt()
             if (length < 16 || attrOff + length > rec.size) break
+            val attrEnd = attrStart + length
 
             // NTFS attribute header (resident layout):
             //   0x00 type (u32), 0x04 length (u32), 0x08 non-resident (u8),
             //   0x09 name length (u8), 0x0a name offset (u16), 0x0c flags (u16),
             //   0x0e attribute id (u16), 0x10 value length (u32), 0x14 value offset (u16)
-            val nonResident = rec[attrOff.toInt() + 8].toInt() and 0xff
-            val nameLen = rec[attrOff.toInt() + 9].toInt() and 0xff
-            val nameOff = le16(rec, attrOff.toInt() + 10)
-            val valueLen = le32(rec, attrOff.toInt() + 16).toInt()
-            val valueOff = le16(rec, attrOff.toInt() + 20)
+            val nonResident = rec[attrStart + 8].toInt() and 0xff
+            val nameLen = rec[attrStart + 9].toInt() and 0xff
+            val nameOff = le16(rec, attrStart + 10)
+            if (nameLen > 0) {
+                val bo = attrStart + nameOff
+                if (nameOff < 16 || bo < attrStart || bo + nameLen * 2 > attrEnd) {
+                    attrOff += length
+                    continue
+                }
+            }
 
-            val name = if (nameLen > 0) {
-                val bo = attrOff.toInt() + nameOff
-                val nameBytes = rec.copyOfRange(bo, bo + nameLen * 2)
-                String(nameBytes, Charsets.UTF_16LE)
-            } else ""
-
-            when (type.toInt()) {
-                NtfsFileRecord.TYPE_STANDARD_INFO -> {
-                    val valuePos = attrOff.toInt() + valueOff.toInt()
-                    if (valuePos >= 0 && valuePos + 16 <= rec.size) {
-                        val cTime = VolumeTimestampUtil.filetimeToMillis(le64(rec, valuePos))
-                        val mTime = VolumeTimestampUtil.filetimeToMillis(le64(rec, valuePos + 8))
-                        attrs.add(StandardInfoAttribute(type.toInt(), cTime, mTime))
-                    }
+            if (nonResident == 0) {
+                if (length < 22) {
+                    attrOff += length
+                    continue
                 }
-                NtfsFileRecord.TYPE_ATTRIBUTE_LIST -> {
-                    if (nonResident == 0) {
-                        val valuePos = attrOff.toInt() + valueOff.toInt()
-                        if (valuePos >= 0 && valuePos + valueLen <= rec.size) {
-                            val entries = parseAttributeList(rec, valuePos, valueLen)
-                            attrs.add(AttributeListAttribute(type.toInt(), entries))
+                val valueLenU = le32(rec, attrStart + 16)
+                val valueOff = le16(rec, attrStart + 20)
+                val valuePos = attrStart + valueOff
+                if (valueOff < 22 || valueLenU < 0L || valueLenU > length.toLong() ||
+                    valuePos.toLong() + valueLenU > attrEnd.toLong()
+                ) {
+                    attrOff += length
+                    continue
+                }
+                val valueLen = valueLenU.toInt()
+                when (type.toInt()) {
+                    NtfsFileRecord.TYPE_STANDARD_INFO -> {
+                        if (valueLen >= 16) {
+                            val cTime = VolumeTimestampUtil.filetimeToMillis(le64(rec, valuePos))
+                            val mTime = VolumeTimestampUtil.filetimeToMillis(le64(rec, valuePos + 8))
+                            attrs.add(StandardInfoAttribute(type.toInt(), cTime, mTime))
                         }
                     }
-                }
-                NtfsFileRecord.TYPE_FILE_NAME -> {
-                    val valuePos = attrOff.toInt() + valueOff.toInt()
-                    if (valuePos >= 0 && valuePos + valueLen.toInt() <= rec.size) {
-                        val parentRef = le64(rec, valuePos) and 0x0000ffffffffffffL
-                        val mTime = if (valuePos + 24 <= rec.size) {
-                            VolumeTimestampUtil.filetimeToMillis(le64(rec, valuePos + 16))
-                        } else 0L
-                        val name = parseFileName(rec, valuePos, valueLen.toInt())
-                        if (name != null) attrs.add(FileNameAttribute(type.toInt(), name, parentRef, mTime))
+                    NtfsFileRecord.TYPE_ATTRIBUTE_LIST -> {
+                        val entries = parseAttributeList(rec, valuePos, valueLen)
+                        attrs.add(AttributeListAttribute(type.toInt(), entries))
                     }
-                }
-                NtfsFileRecord.TYPE_DATA -> {
-                    if (nonResident == 0) {
-                        val valuePos = attrOff.toInt() + valueOff.toInt()
-                        if (valuePos >= 0 && valuePos + valueLen.toInt() <= rec.size) {
-                            val data = rec.copyOfRange(valuePos, valuePos + valueLen.toInt())
-                            attrs.add(ResidentDataAttribute(type.toInt(), data))
-                        }
-                    } else {
-                        parseNonResident(rec, attrOff.toInt(), length)?.let {
-                            attrs.add(it)
+                    NtfsFileRecord.TYPE_FILE_NAME -> {
+                        if (valueLen >= 66) {
+                            val parentRef = le64(rec, valuePos) and 0x0000ffffffffffffL
+                            val mTime = VolumeTimestampUtil.filetimeToMillis(le64(rec, valuePos + 16))
+                            val name = parseFileName(rec, valuePos, valueLen)
+                            if (name != null) attrs.add(FileNameAttribute(type.toInt(), name, parentRef, mTime))
                         }
                     }
-                }
-                NtfsFileRecord.TYPE_INDEX_ROOT -> {
-                    val valuePos = attrOff.toInt() + valueOff.toInt()
-                    if (valuePos + valueLen.toInt() <= rec.size) {
-                        val value = rec.copyOfRange(valuePos, valuePos + valueLen.toInt())
+                    NtfsFileRecord.TYPE_DATA -> {
+                        val data = rec.copyOfRange(valuePos, valuePos + valueLen)
+                        attrs.add(ResidentDataAttribute(type.toInt(), data))
+                    }
+                    NtfsFileRecord.TYPE_INDEX_ROOT -> {
+                        val value = rec.copyOfRange(valuePos, valuePos + valueLen)
                         attrs.add(IndexRootAttribute(type.toInt(), value))
                     }
                 }
-                NtfsFileRecord.TYPE_INDEX_ALLOCATION -> {
-                    if (nonResident != 0) {
-                        val lowestVcn = le64(rec, attrOff.toInt() + 16)
-                        val mappingPairsOff = le16(rec, attrOff.toInt() + 32)
-                        val runs = parseDataRuns(rec, attrOff.toInt() + mappingPairsOff, attrOff.toInt() + length)
-                        // index block size is in the index root; default 4096
-                        attrs.add(IndexAllocationAttribute(type.toInt(), runs, 4096))
+            } else {
+                when (type.toInt()) {
+                    NtfsFileRecord.TYPE_DATA -> {
+                        parseNonResident(rec, attrStart, length)?.let {
+                            attrs.add(it)
+                        }
+                    }
+                    NtfsFileRecord.TYPE_INDEX_ALLOCATION -> {
+                        if (length >= 34) {
+                            val mappingPairsOff = le16(rec, attrStart + 32)
+                            if (mappingPairsOff in 34 until length) {
+                                val runs = parseDataRuns(rec, attrStart + mappingPairsOff, attrEnd)
+                                // index block size is in the index root; default 4096
+                                attrs.add(IndexAllocationAttribute(type.toInt(), runs, 4096))
+                            }
+                        }
                     }
                 }
             }
@@ -343,13 +347,14 @@ object NtfsFileRecordParser {
     }
 
     private fun parseFileName(rec: ByteArray, valuePos: Int, valueLen: Int): String? {
-        if (valueLen < 66) return null // $FILE_NAME is 66+ bytes
+        if (valueLen < 66 || valuePos + 66 > rec.size) return null // $FILE_NAME is 66+ bytes
         val nameLen = rec[valuePos + 64].toInt() and 0xff
         if (nameLen == 0) return null
         val nameType = rec[valuePos + 65].toInt() and 0xff
-        // Skip DOS 8.3 name types (0x01), prefer normal names
-        if (nameType == 1) return null
+        // nameType: 0=POSIX, 1=Win32, 2=DOS 8.3 alias, 3=Win32 & DOS. Skip DOS 8.3 (0x02).
+        if (nameType == 2) return null
         val start = valuePos + 66
+        if (66 + nameLen * 2 > valueLen || start + nameLen * 2 > rec.size) return null
         val nameBytes = rec.copyOfRange(start, start + nameLen * 2)
         return String(nameBytes, Charsets.UTF_16LE)
     }

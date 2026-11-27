@@ -149,9 +149,12 @@ class NtfsReader(
     }
 
     private val cache = HashMap<Long, NtfsFileRecord?>()
+    @Volatile
+    private var cachedMftRuns: List<DataRun>? = null
 
     override fun invalidateCache() {
         cachedVolumeInfo = null
+        cachedMftRuns = null
         synchronized(cache) {
             cache.clear()
         }
@@ -251,27 +254,64 @@ class NtfsReader(
         )
     }
 
+    private fun getMftDataRuns(): List<DataRun>? {
+        cachedMftRuns?.let { return it }
+        val rec0 = readRecordAtPhysical(0L, boot.mftStartByte) ?: return null
+        val directRuns = rec0.dataRuns()
+        val attrList = rec0.attributeList
+        val runs = if (attrList.isNullOrEmpty()) {
+            directRuns
+        } else {
+            val allRuns = ArrayList<DataRun>()
+            if (directRuns != null) allRuns.addAll(directRuns)
+            for (entry in attrList) {
+                if (entry.type == NtfsFileRecord.TYPE_DATA && entry.name.isEmpty()) {
+                    val childRecNum = entry.mftReference and 0x0000FFFFFFFFFFFFL
+                    if (childRecNum != 0L && !directRuns.isNullOrEmpty()) {
+                        val childByte = resolveStreamOffset(directRuns, childRecNum * MFT_RECORD_SIZE, boot.clusterSize)
+                        if (childByte != null) {
+                            readRecordAtPhysical(childRecNum, childByte)?.dataRuns()?.let { allRuns.addAll(it) }
+                        }
+                    }
+                }
+            }
+            if (allRuns.isNotEmpty()) allRuns else directRuns
+        }
+        if (runs != null) cachedMftRuns = runs
+        return runs
+    }
+
+    private fun readRecordAtPhysical(recordNumber: Long, bytePos: Long): NtfsFileRecord? {
+        if (bytePos < 0L) return null
+        val rec = ByteArray(MFT_RECORD_SIZE)
+        val n = source.read(bytePos, rec, 0, MFT_RECORD_SIZE)
+        if (n < 56) return null
+        if (!NtfsFileRecordParser.applyUpdateSequenceArray(rec, 0x04, boot.bytesPerSector)) return null
+        return NtfsFileRecordParser.parse(recordNumber, rec)
+    }
+
     private fun readRecord(recordNumber: Long): NtfsFileRecord? {
+        if (recordNumber < 0L) return null
         synchronized(cache) {
             if (cache.containsKey(recordNumber)) return cache[recordNumber]
         }
 
-        val bytePos = boot.mftStartByte + recordNumber * MFT_RECORD_SIZE
-        val rec = ByteArray(MFT_RECORD_SIZE)
-        val n = source.read(bytePos, rec, 0, MFT_RECORD_SIZE)
-        if (n < 56) {
+        val bytePos = if (recordNumber == 0L) {
+            boot.mftStartByte
+        } else {
+            val mftRuns = getMftDataRuns()
+            if (!mftRuns.isNullOrEmpty()) {
+                resolveStreamOffset(mftRuns, recordNumber * MFT_RECORD_SIZE, boot.clusterSize)
+            } else {
+                boot.mftStartByte + recordNumber * MFT_RECORD_SIZE
+            }
+        }
+        if (bytePos == null) {
             synchronized(cache) { cache[recordNumber] = null }
             return null
         }
 
-        // Restore the Update Sequence Array before parsing: the tail 2 bytes
-        // of every 512B sector inside the record are USN check values.
-        if (!NtfsFileRecordParser.applyUpdateSequenceArray(rec, 0x04, boot.bytesPerSector)) {
-            synchronized(cache) { cache[recordNumber] = null }
-            return null
-        }
-
-        val record = NtfsFileRecordParser.parse(recordNumber, rec)
+        val record = readRecordAtPhysical(recordNumber, bytePos)
         synchronized(cache) { cache[recordNumber] = record }
         return record
     }
@@ -329,11 +369,12 @@ class NtfsReader(
         if (value.size < 32) return emptyList()
 
         val indexBlockSize = le32(value, 8).toInt()
-        if (indexBlockSize <= 0) return emptyList()
+        if (indexBlockSize < 32 || indexBlockSize > 65536) return emptyList()
 
         // INDEX_HEADER at offset 0x10: first_entry_offset (u32), total entry
         // slots (u32), allocated (u32), not-allocated (u32)
         val entriesStart = 0x10 + le32(value, 0x10).toInt()
+        if (entriesStart < 0x10 || entriesStart >= value.size) return emptyList()
         // Sub-node VCNs discovered while parsing, queued for BFS below.
         val pendingBlocks = ArrayDeque<Long>()
         parseIndexEntries(value, entriesStart, value.size, out, pendingBlocks)
@@ -360,8 +401,9 @@ class NtfsReader(
                 // INDX blocks are fixup-protected too (USA offset field at 0x04).
                 if (!NtfsFileRecordParser.applyUpdateSequenceArray(block, 0x04, boot.bytesPerSector)) continue
                 val firstEntry = 0x18 + le32(block, 0x18).toInt()
-                val entriesTotal = le32(block, 0x1c).toInt()
-                parseIndexEntries(block, firstEntry, firstEntry + entriesTotal, out, pendingBlocks)
+                val entriesEnd = (0x18L + le32(block, 0x1c)).coerceAtMost(block.size.toLong()).toInt()
+                if (firstEntry < 0x18 || firstEntry >= entriesEnd) continue
+                parseIndexEntries(block, firstEntry, entriesEnd, out, pendingBlocks)
             }
         }
 
@@ -375,8 +417,10 @@ class NtfsReader(
      * lies beyond the stream.
      */
     private fun resolveStreamOffset(runs: List<DataRun>, streamByte: Long, clusterSize: Long): Long? {
+        if (streamByte < 0L || clusterSize <= 0L) return null
         var streamPos = 0L
         for (run in runs) {
+            if (run.clusterCount <= 0L) continue
             val runBytes = run.clusterCount * clusterSize
             if (streamByte < streamPos + runBytes) {
                 if (run.clusterOffset == 0L) return null
@@ -406,7 +450,7 @@ class NtfsReader(
             // key length (u16) | flags (u16) | reserved (u16) | key (FILE_NAME)
             val fileRef = le64(buf, pos)
             val entryLength = le16(buf, pos + 8)
-            if (entryLength == 0) break
+            if (entryLength < 16 || pos + entryLength > end) break
             val keyLength = le16(buf, pos + 10)
             val flags = le16(buf, pos + 12)
 
@@ -461,27 +505,31 @@ class NtfsReader(
      * non-resident data runs. Returns the number of bytes read.
      */
     override fun readFile(recordNumber: Long, offset: Long, dst: ByteArray, dstPos: Int, len: Int): Int {
+        if (offset < 0L || len <= 0 || dstPos < 0 || dstPos >= dst.size) return 0
+        val safeLen = minOf(len, dst.size - dstPos)
         val record = readRecord(recordNumber) ?: return 0
         val clusterSize = boot.clusterSize
 
         // Resident content
         record.residentData()?.let { data ->
             if (offset >= data.size) return 0
-            val n = minOf(len.toLong(), data.size - offset).toInt()
+            val n = minOf(safeLen.toLong(), data.size - offset).toInt()
             System.arraycopy(data, offset.toInt(), dst, dstPos, n)
             return n
         }
 
         // Non-resident: walk data runs. Supports fragmented data runs distributed across $ATTRIBUTE_LIST.
+        val fileSize = resolveFileSize(record)
+        if (fileSize <= 0L || offset >= fileSize) return 0
         val runs = resolveDataRuns(record) ?: return 0
         var filePos = offset
-        var remaining = len.toLong()
+        val targetRead = minOf(safeLen.toLong(), fileSize - offset)
+        var remaining = targetRead
         var runFileStart = 0L
 
         for (run in runs) {
             if (remaining <= 0) break
             if (run.clusterCount <= 0) {
-                runFileStart += 0
                 continue
             }
             val runBytes = run.clusterCount * clusterSize
@@ -514,6 +562,6 @@ class NtfsReader(
             runFileStart = runFileEnd
         }
 
-        return (len - remaining).toInt()
+        return (targetRead - remaining).toInt()
     }
 }

@@ -253,15 +253,16 @@ class ExFatReader(
         val clusterSize = boot.clusterSize.toInt()
         val buf = ByteArray(clusterSize)
         var cluster = firstCluster
-        var guard = 0
-        val isDir = (ref == rootRef) || (entryCache[ref]?.isDirectory == true)
-        val maxClusters = if (noFatChain && !isDir) {
-            val sz = entryCache[ref]?.fileSize ?: 0L
-            if (sz > 0) ((sz + clusterSize - 1) / clusterSize).toInt().coerceAtLeast(1) else 1
+        val visited = if (noFatChain) null else HashSet<Long>()
+        val sz = entryCache[ref]?.fileSize ?: 0L
+        val maxContigClusters = if (noFatChain && sz > 0L) {
+            ((sz + clusterSize - 1) / clusterSize).toInt().coerceAtLeast(1)
         } else {
-            100000
+            Int.MAX_VALUE
         }
-        while (isValidCluster(cluster) && guard++ < maxClusters) {
+        var guard = 0
+        while (isValidCluster(cluster) && guard++ < maxContigClusters) {
+            if (visited != null && !visited.add(cluster)) break
             val n = source.read(boot.clusterByte(cluster), buf, 0, buf.size)
             if (n < ENTRY_SIZE) break
             val endOfDir = parseDirCluster(buf, n, out, cluster)
@@ -383,17 +384,19 @@ class ExFatReader(
      * Returns bytes copied.
      */
     override fun readFile(ref: Long, offset: Long, dst: ByteArray, dstPos: Int, len: Int): Int {
+        if (offset < 0L || len <= 0 || dstPos < 0 || dstPos >= dst.size) return 0
         if (!entryCache.containsKey(ref)) {
             readEntry(ref)
         }
         val firstCluster = startClusterMap[ref] ?: ref
-        if (!isValidCluster(firstCluster) || len <= 0) return 0
+        if (!isValidCluster(firstCluster)) return 0
+        val safeLen = minOf(len, dst.size - dstPos)
         val clusterSize = boot.clusterSize.toInt()
         val cachedSize = entryCache[ref]?.fileSize
         if (cachedSize != null && offset >= cachedSize) return 0
         val toRead = if (cachedSize != null) {
-            minOf(len.toLong(), cachedSize - offset).toInt()
-        } else len
+            minOf(safeLen.toLong(), cachedSize - offset).toInt()
+        } else safeLen
 
         val noFatChain = noFatChainMap[ref] ?: false
         if (noFatChain && clusterSize > 0) {
@@ -405,9 +408,11 @@ class ExFatReader(
         var filePos = 0L
         var cluster = firstCluster
         var written = 0
-        var guard = 0
+        var tortoise = firstCluster
+        var power = 1L
+        var lam = 0L
         var tempBuf: ByteArray? = null
-        while (isValidCluster(cluster) && guard++ < 100000 && written < toRead) {
+        while (isValidCluster(cluster) && written < toRead) {
             val clusterStart = filePos
             val clusterEnd = filePos + clusterSize
             if (offset < clusterEnd) {
@@ -436,6 +441,12 @@ class ExFatReader(
             filePos = clusterEnd
             cluster = nextCluster(cluster)
             if (isEof(cluster)) break
+            if (cluster == tortoise) break
+            if (++lam == power) {
+                tortoise = cluster
+                power = power shl 1
+                lam = 0L
+            }
         }
         return written
     }
