@@ -211,6 +211,22 @@ static void make_ff_path(fatfs_slot_t *slot, const char *path, char *out, size_t
     dis_fatfs_make_path((dis_fatfs_handle_t)slot, path, out, out_len);
 }
 
+static int fresult_to_errno(FRESULT res) {
+    switch (res) {
+        case FR_OK: return 0;
+        case FR_NO_FILE:
+        case FR_NO_PATH:
+        case FR_INVALID_NAME: return -ENOENT;
+        case FR_DENIED: return -EACCES;
+        case FR_EXIST: return -EEXIST;
+        case FR_WRITE_PROTECTED: return -EROFS;
+        case FR_NOT_ENOUGH_CORE: return -ENOMEM;
+        case FR_TOO_MANY_OPEN_FILES: return -EMFILE;
+        case FR_INVALID_PARAMETER: return -EINVAL;
+        default: return -EIO;
+    }
+}
+
 dis_fatfs_handle_t dis_fatfs_mount(dis_ctx_t *ctx, int read_only) {
     if (!ctx) return NULL;
 
@@ -325,7 +341,7 @@ int64_t dis_fatfs_create(dis_fatfs_handle_t vol_handle, const char *parent_path,
         FRESULT res = f_mkdir(full_path);
         if (res != FR_OK && res != FR_EXIST) {
             DLOG("f_mkdir failed for '%s' (res=%d)", full_path, (int)res);
-            return -((int64_t)res);
+            return fresult_to_errno(res);
         }
         DIR dir;
         res = f_opendir(&dir, full_path);
@@ -338,7 +354,7 @@ int64_t dis_fatfs_create(dis_fatfs_handle_t vol_handle, const char *parent_path,
         FRESULT res = f_open(&fil, full_path, FA_CREATE_NEW | FA_WRITE | FA_READ);
         if (res != FR_OK) {
             DLOG("f_open create failed for '%s' (res=%d)", full_path, (int)res);
-            return -((int64_t)res);
+            return fresult_to_errno(res);
         }
         DWORD clst = fil.obj.sclust;
         f_close(&fil);
@@ -393,7 +409,7 @@ int dis_fatfs_delete(dis_fatfs_handle_t vol_handle, const char *path) {
     }
     if (res != FR_OK) {
         DLOG("f_unlink failed for '%s' (res=%d)", full_path, (int)res);
-        return -((int)res);
+        return fresult_to_errno(res);
     }
     DLOG("f_unlink succeeded for '%s'", full_path);
     return 0;
@@ -418,7 +434,7 @@ int dis_fatfs_rename(dis_fatfs_handle_t vol_handle, const char *old_path, const 
     FRESULT res = f_rename(full_old, full_new);
     if (res != FR_OK) {
         DLOG("f_rename failed for '%s' -> '%s' (res=%d)", full_old, full_new, (int)res);
-        return -((int)res);
+        return fresult_to_errno(res);
     }
     DLOG("f_rename succeeded for '%s' -> '%s'", full_old, full_new);
     return 0;
@@ -441,7 +457,7 @@ int64_t dis_fatfs_write(dis_fatfs_handle_t vol_handle, const char *path, int64_t
         FRESULT res = f_open(&slot->write_fil, full_path, FA_WRITE | FA_OPEN_ALWAYS);
         if (res != FR_OK) {
             DLOG("f_open write failed for '%s' (res=%d)", full_path, (int)res);
-            return -((int64_t)res);
+            return fresult_to_errno(res);
         }
         slot->write_fil_open = 1;
         strncpy(slot->write_path, full_path, sizeof(slot->write_path) - 1);
@@ -454,7 +470,7 @@ int64_t dis_fatfs_write(dis_fatfs_handle_t vol_handle, const char *path, int64_t
         f_close(&slot->write_fil);
         slot->write_fil_open = 0;
         slot->write_path[0] = '\0';
-        return -((int64_t)res);
+        return fresult_to_errno(res);
     }
 
     UINT bw = 0;
@@ -464,7 +480,15 @@ int64_t dis_fatfs_write(dis_fatfs_handle_t vol_handle, const char *path, int64_t
         f_close(&slot->write_fil);
         slot->write_fil_open = 0;
         slot->write_path[0] = '\0';
-        return -((int64_t)res);
+        return fresult_to_errno(res);
+    }
+    if (bw < (UINT)count) {
+        DLOG("f_write short write (disk full) for '%s': wrote=%u expected=%lld", full_path, bw, (long long)count);
+        f_sync(&slot->write_fil);
+        f_close(&slot->write_fil);
+        slot->write_fil_open = 0;
+        slot->write_path[0] = '\0';
+        return -ENOSPC;
     }
     return (int64_t)bw;
 }
@@ -488,7 +512,7 @@ int64_t dis_fatfs_truncate(dis_fatfs_handle_t vol_handle, const char *path, int6
         FRESULT res = f_open(&fil, full_path, FA_CREATE_ALWAYS | FA_WRITE);
         if (res != FR_OK) {
             DLOG("f_open create_always failed for '%s' (res=%d)", full_path, (int)res);
-            return -((int64_t)res);
+            return fresult_to_errno(res);
         }
         if (f_close(&fil) != FR_OK) return -EIO;
         DLOG("f_open create_always (truncate to 0) succeeded for '%s'", full_path);
@@ -499,13 +523,13 @@ int64_t dis_fatfs_truncate(dis_fatfs_handle_t vol_handle, const char *path, int6
     FRESULT res = f_open(&fil, full_path, FA_WRITE | FA_OPEN_ALWAYS);
     if (res != FR_OK) {
         DLOG("f_open truncate failed for '%s' (res=%d)", full_path, (int)res);
-        return -((int64_t)res);
+        return fresult_to_errno(res);
     }
 
     res = f_lseek(&fil, (FSIZE_t)new_size);
     if (res != FR_OK) {
         f_close(&fil);
-        return -((int64_t)res);
+        return fresult_to_errno(res);
     }
 
     res = f_truncate(&fil);
@@ -513,7 +537,7 @@ int64_t dis_fatfs_truncate(dis_fatfs_handle_t vol_handle, const char *path, int6
 
     if (res != FR_OK) {
         DLOG("f_truncate failed for '%s' (res=%d)", full_path, (int)res);
-        return -((int64_t)res);
+        return fresult_to_errno(res);
     }
     return 0;
 }
@@ -541,16 +565,20 @@ int dis_fatfs_get_space(dis_fatfs_handle_t vol_handle, int64_t *total_bytes, int
 int dis_fatfs_sync(dis_fatfs_handle_t vol_handle) {
     if (!vol_handle) return -EINVAL;
     fatfs_slot_t *slot = (fatfs_slot_t *)vol_handle;
+    int err = 0;
     if (slot->write_fil_open) {
-        FRESULT result = f_sync(&slot->write_fil);
-        if (result != FR_OK) return -EIO;
-        result = f_close(&slot->write_fil);
-        if (result != FR_OK) return -EIO;
+        FRESULT sync_res = f_sync(&slot->write_fil);
+        FRESULT close_res = f_close(&slot->write_fil);
         slot->write_fil_open = 0;
         slot->write_path[0] = '\0';
+        if (sync_res != FR_OK || close_res != FR_OK) {
+            err = -EIO;
+        }
     }
     if (slot->ctx) {
-        return dis_blk_sync(slot->ctx);
+        if (dis_blk_sync(slot->ctx) != 0 && err == 0) {
+            err = -EIO;
+        }
     }
-    return 0;
+    return err;
 }

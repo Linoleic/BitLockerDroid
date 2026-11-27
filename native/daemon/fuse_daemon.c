@@ -182,6 +182,24 @@ typedef struct {
     uint64_t mtime;
 } file_meta_t;
 
+static int g_write_dirty = 0;
+
+static int flush_fuse_writes(int force_blk_sync) {
+    if (g_read_only) return 0;
+    if (!force_blk_sync && !g_write_dirty) return 0;
+    int ret = 0;
+    if (g_fs_type == FS_TYPE_NTFS && g_ntfs_vol) {
+        ret = dis_ntfs_sync((dis_ntfs_handle_t)g_ntfs_vol);
+    } else if (g_fs_type == FS_TYPE_FATFS && g_fatfs_vol) {
+        ret = dis_fatfs_sync(g_fatfs_vol);
+    }
+    if (ret == 0) {
+        g_write_dirty = 0;
+        return 0;
+    }
+    return -EIO;
+}
+
 static int query_file_meta(const char *path, file_meta_t *meta) {
     if (!meta) return -EINVAL;
     memset(meta, 0, sizeof(*meta));
@@ -193,6 +211,8 @@ static int query_file_meta(const char *path, file_meta_t *meta) {
         meta->mtime = 1700000000;
         return 0;
     }
+
+    flush_fuse_writes(0);
 
     if (g_fs_type == FS_TYPE_NTFS) {
         ntfs_inode *ni = ntfs_pathname_to_inode(g_ntfs_vol, NULL, path);
@@ -215,7 +235,23 @@ static int query_file_meta(const char *path, file_meta_t *meta) {
         meta->is_dir = (fno.fattrib & AM_DIR) ? 1 : 0;
         meta->size = (uint64_t)fno.fsize;
         meta->mode = meta->is_dir ? (S_IFDIR | 0777) : (S_IFREG | 0666);
-        meta->mtime = 1700000000;
+        if (fno.fdate == 0) {
+            meta->mtime = (uint64_t)time(NULL);
+        } else {
+            struct tm t;
+            memset(&t, 0, sizeof(t));
+            int mon = ((fno.fdate >> 5) & 0x0F) - 1;
+            int mday = (fno.fdate & 0x1F);
+            t.tm_year = ((fno.fdate >> 9) & 0x7F) + 80;
+            t.tm_mon = (mon >= 0 && mon <= 11) ? mon : 0;
+            t.tm_mday = (mday >= 1 && mday <= 31) ? mday : 1;
+            t.tm_hour = (fno.ftime >> 11) & 0x1F;
+            t.tm_min = (fno.ftime >> 5) & 0x3F;
+            t.tm_sec = (fno.ftime & 0x1F) * 2;
+            t.tm_isdst = -1;
+            time_t t_val = mktime(&t);
+            meta->mtime = (t_val > 0) ? (uint64_t)t_val : 1700000000ULL;
+        }
         return 0;
     }
 
@@ -305,7 +341,7 @@ static void handle_fuse_getattr(int fd, struct fuse_in_header *in) {
 
     struct fuse_attr_out out;
     memset(&out, 0, sizeof(out));
-    out.attr_valid = 5;
+    out.attr_valid = 0;
     fill_fuse_attr(in->nodeid, &meta, &out.attr);
 
     send_fuse_reply(fd, in->unique, 0, &out, sizeof(out));
@@ -328,8 +364,8 @@ static void handle_fuse_lookup(int fd, struct fuse_in_header *in, void *data) {
             memset(&entry, 0, sizeof(entry));
             entry.nodeid = in->nodeid;
             entry.generation = 1;
-            entry.entry_valid = 5;
-            entry.attr_valid = 5;
+            entry.entry_valid = 0;
+            entry.attr_valid = 0;
             fill_fuse_attr(in->nodeid, &meta, &entry.attr);
             send_fuse_reply(fd, in->unique, 0, &entry, sizeof(entry));
             return;
@@ -356,8 +392,8 @@ static void handle_fuse_lookup(int fd, struct fuse_in_header *in, void *data) {
     memset(&entry, 0, sizeof(entry));
     entry.nodeid = child_ino;
     entry.generation = 1;
-    entry.entry_valid = 5;
-    entry.attr_valid = 5;
+    entry.entry_valid = 0;
+    entry.attr_valid = 0;
     fill_fuse_attr(child_ino, &meta, &entry.attr);
 
     send_fuse_reply(fd, in->unique, 0, &entry, sizeof(entry));
@@ -443,7 +479,7 @@ static void handle_fuse_readdir(int fd, struct fuse_in_header *in, void *data) {
         return;
     }
 
-    char *buf = (char *)malloc(rin->size);
+    char *buf = (char *)calloc(1, rin->size);
     if (!buf) {
         send_fuse_reply(fd, in->unique, -ENOMEM, NULL, 0);
         return;
@@ -460,6 +496,8 @@ static void handle_fuse_readdir(int fd, struct fuse_in_header *in, void *data) {
     // Always include "." and ".."
     readdir_add_entry(&ctx, in->nodeid, ".", 1);
     readdir_add_entry(&ctx, in->nodeid == FUSE_ROOT_ID ? FUSE_ROOT_ID : 1, "..", 1);
+
+    flush_fuse_writes(0);
 
     if (g_fs_type == FS_TYPE_NTFS) {
         ntfs_inode *dir_ni = (strcmp(path, "/") == 0) ? ntfs_inode_open(g_ntfs_vol, FILE_root)
@@ -504,20 +542,30 @@ static void handle_fuse_read(int fd, struct fuse_in_header *in, void *data) {
         return;
     }
 
-    char *buf = (char *)malloc(rin->size);
+    char *buf = (char *)calloc(1, rin->size);
     if (!buf) {
         send_fuse_reply(fd, in->unique, -ENOMEM, NULL, 0);
         return;
     }
 
     ssize_t bytes_read = 0;
+    int read_err = 0;
+
+    flush_fuse_writes(0);
 
     if (g_fs_type == FS_TYPE_NTFS) {
         ntfs_inode *ni = ntfs_pathname_to_inode(g_ntfs_vol, NULL, path);
-        if (ni) {
+        if (!ni) {
+            read_err = -ENOENT;
+        } else {
             ntfs_attr *na = ntfs_attr_open(ni, AT_DATA, NULL, 0);
-            if (na) {
+            if (!na) {
+                read_err = -EIO;
+            } else {
                 bytes_read = (ssize_t)ntfs_attr_pread(na, rin->offset, rin->size, buf);
+                if (bytes_read < 0) {
+                    read_err = errno ? -errno : -EIO;
+                }
                 ntfs_attr_close(na);
             }
             ntfs_inode_close(ni);
@@ -527,17 +575,30 @@ static void handle_fuse_read(int fd, struct fuse_in_header *in, void *data) {
         dis_fatfs_make_path(g_fatfs_vol, path, ff_path, sizeof(ff_path));
         FIL fil;
         FRESULT fr = f_open(&fil, ff_path, FA_READ);
-        if (fr == FR_OK) {
-            f_lseek(&fil, rin->offset);
-            UINT br = 0;
-            f_read(&fil, buf, rin->size, &br);
-            bytes_read = (ssize_t)br;
+        if (fr != FR_OK) {
+            read_err = (fr == FR_NO_FILE || fr == FR_NO_PATH) ? -ENOENT : -EIO;
+        } else {
+            if (f_lseek(&fil, rin->offset) != FR_OK) {
+                read_err = -EIO;
+            } else {
+                UINT br = 0;
+                if (f_read(&fil, buf, rin->size, &br) != FR_OK) {
+                    read_err = -EIO;
+                } else {
+                    bytes_read = (ssize_t)br;
+                }
+            }
             f_close(&fil);
         }
+    } else {
+        read_err = -ENOSYS;
     }
 
-    if (bytes_read < 0) bytes_read = 0;
-    send_fuse_reply(fd, in->unique, 0, buf, (size_t)bytes_read);
+    if (read_err < 0) {
+        send_fuse_reply(fd, in->unique, read_err, NULL, 0);
+    } else {
+        send_fuse_reply(fd, in->unique, 0, buf, (size_t)bytes_read);
+    }
     free(buf);
 }
 
@@ -587,6 +648,7 @@ static void handle_fuse_create(int fd, struct fuse_in_header *in, void *data) {
         }
     }
 
+    g_write_dirty = 1;
     uint64_t child_ino = get_or_create_ino(full_path);
     file_meta_t meta;
     if (query_file_meta(full_path, &meta) != 0) {
@@ -604,8 +666,8 @@ static void handle_fuse_create(int fd, struct fuse_in_header *in, void *data) {
 
     reply.entry.nodeid = child_ino;
     reply.entry.generation = 1;
-    reply.entry.entry_valid = 1;
-    reply.entry.attr_valid = 1;
+    reply.entry.entry_valid = 0;
+    reply.entry.attr_valid = 0;
     fill_fuse_attr(child_ino, &meta, &reply.entry.attr);
 
     reply.open.fh = child_ino;
@@ -646,6 +708,7 @@ static void handle_fuse_write(int fd, struct fuse_in_header *in, void *data) {
         return;
     }
 
+    g_write_dirty = 1;
     struct fuse_write_out out;
     memset(&out, 0, sizeof(out));
     out.size = (uint32_t)written;
@@ -677,6 +740,7 @@ static void handle_fuse_setattr(int fd, struct fuse_in_header *in, void *data) {
             send_fuse_reply(fd, in->unique, (int)ret, NULL, 0);
             return;
         }
+        g_write_dirty = 1;
     }
 
     file_meta_t meta;
@@ -688,7 +752,7 @@ static void handle_fuse_setattr(int fd, struct fuse_in_header *in, void *data) {
 
     struct fuse_attr_out out;
     memset(&out, 0, sizeof(out));
-    out.attr_valid = 1;
+    out.attr_valid = 0;
     fill_fuse_attr(in->nodeid, &meta, &out.attr);
     send_fuse_reply(fd, in->unique, 0, &out, sizeof(out));
 }
@@ -729,6 +793,7 @@ static void handle_fuse_mkdir(int fd, struct fuse_in_header *in, void *data) {
         return;
     }
 
+    g_write_dirty = 1;
     uint64_t child_ino = get_or_create_ino(full_path);
     file_meta_t meta;
     if (query_file_meta(full_path, &meta) != 0) {
@@ -742,8 +807,8 @@ static void handle_fuse_mkdir(int fd, struct fuse_in_header *in, void *data) {
     memset(&entry, 0, sizeof(entry));
     entry.nodeid = child_ino;
     entry.generation = 1;
-    entry.entry_valid = 1;
-    entry.attr_valid = 1;
+    entry.entry_valid = 0;
+    entry.attr_valid = 0;
     fill_fuse_attr(child_ino, &meta, &entry.attr);
 
     send_fuse_reply(fd, in->unique, 0, &entry, sizeof(entry));
@@ -785,9 +850,17 @@ static void handle_fuse_unlink(int fd, struct fuse_in_header *in, void *data, in
         return;
     }
 
+    g_write_dirty = 1;
     remove_ino(full_path);
     send_fuse_reply(fd, in->unique, 0, NULL, 0);
 }
+
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE (1 << 0)
+#endif
+#ifndef RENAME_EXCHANGE
+#define RENAME_EXCHANGE (1 << 1)
+#endif
 
 static void handle_fuse_rename(int fd, struct fuse_in_header *in, void *data, int is_rename2) {
     if (g_read_only) {
@@ -796,15 +869,21 @@ static void handle_fuse_rename(int fd, struct fuse_in_header *in, void *data, in
     }
 
     uint64_t newdir = 0;
+    uint32_t rflags = 0;
     const char *oldname = NULL;
     if (is_rename2) {
         struct fuse_rename2_in *r2 = (struct fuse_rename2_in *)data;
         newdir = r2->newdir;
+        rflags = r2->flags;
         oldname = (const char *)data + sizeof(struct fuse_rename2_in);
     } else {
         struct fuse_rename_in *r = (struct fuse_rename_in *)data;
         newdir = r->newdir;
         oldname = (const char *)data + sizeof(struct fuse_rename_in);
+    }
+    if ((rflags & ~RENAME_NOREPLACE) != 0) {
+        send_fuse_reply(fd, in->unique, -EINVAL, NULL, 0);
+        return;
     }
     const char *newname = oldname + strlen(oldname) + 1;
 
@@ -823,6 +902,29 @@ static void handle_fuse_rename(int fd, struct fuse_in_header *in, void *data, in
     if (strcmp(new_parent, "/") == 0) snprintf(new_path, sizeof(new_path), "/%s", newname);
     else snprintf(new_path, sizeof(new_path), "%s/%s", new_parent, newname);
 
+    flush_fuse_writes(0);
+
+    file_meta_t dst_meta;
+    if (query_file_meta(new_path, &dst_meta) == 0) {
+        if (rflags & RENAME_NOREPLACE) {
+            send_fuse_reply(fd, in->unique, -EEXIST, NULL, 0);
+            return;
+        }
+        if (strcasecmp(old_path, new_path) != 0) {
+            int del_ret = 0;
+            if (g_fs_type == FS_TYPE_NTFS) {
+                del_ret = dis_ntfs_delete((dis_ntfs_handle_t)g_ntfs_vol, new_path);
+            } else if (g_fs_type == FS_TYPE_FATFS) {
+                del_ret = dis_fatfs_delete(g_fatfs_vol, new_path);
+            }
+            if (del_ret != 0) {
+                send_fuse_reply(fd, in->unique, del_ret, NULL, 0);
+                return;
+            }
+            remove_ino(new_path);
+        }
+    }
+
     int ret = 0;
     if (g_fs_type == FS_TYPE_NTFS) {
         ret = dis_ntfs_rename((dis_ntfs_handle_t)g_ntfs_vol, old_path, new_path);
@@ -838,6 +940,7 @@ static void handle_fuse_rename(int fd, struct fuse_in_header *in, void *data, in
         return;
     }
 
+    g_write_dirty = 1;
     rename_ino(old_path, new_path);
     send_fuse_reply(fd, in->unique, 0, NULL, 0);
 }
@@ -940,11 +1043,23 @@ static void secure_zero(void *p, size_t n) {
 }
 
 int main(int argc, char **argv) {
-    signal(SIGTERM, sig_handler);
-    signal(SIGINT, sig_handler);
+    struct sigaction sa_term;
+    memset(&sa_term, 0, sizeof(sa_term));
+    sa_term.sa_handler = sig_handler;
+    sigemptyset(&sa_term.sa_mask);
+    sa_term.sa_flags = 0; /* Do not set SA_RESTART so read(/dev/fuse) wakes on SIGTERM/SIGINT */
+    sigaction(SIGTERM, &sa_term, NULL);
+    sigaction(SIGINT, &sa_term, NULL);
+
+    struct sigaction sa_usr1;
+    memset(&sa_usr1, 0, sizeof(sa_usr1));
+    sa_usr1.sa_handler = sigusr1_handler;
+    sigemptyset(&sa_usr1.sa_mask);
+    sa_usr1.sa_flags = 0;
+    sigaction(SIGUSR1, &sa_usr1, NULL);
+
     signal(SIGHUP, SIG_IGN);
     signal(SIGPIPE, SIG_IGN);
-    signal(SIGUSR1, sigusr1_handler);
 
     if (argc < 6) {
         fprintf(stderr, "Usage: %s <dev_path> <offset> <key_type: 1=pass,2=rec> <key> <mountpoint> [rw|ro] [-f]\n", argv[0]);
@@ -1103,6 +1218,12 @@ int main(int argc, char **argv) {
             break;
         }
 
+        if (g_cache_dirty) {
+            g_cache_dirty = 0;
+            remount_fs_caches();
+            if (!g_running) break;
+        }
+
         struct fuse_in_header *in = (struct fuse_in_header *)in_buf;
         void *data = in_buf + sizeof(struct fuse_in_header);
 
@@ -1122,7 +1243,36 @@ int main(int argc, char **argv) {
             case FUSE_CREATE:
                 handle_fuse_create(g_fuse_fd, in, data);
                 break;
-            case FUSE_OPEN:
+            case FUSE_OPEN: {
+                struct fuse_open_in *oin = (struct fuse_open_in *)data;
+                if (oin->flags & O_TRUNC) {
+                    if (g_read_only) {
+                        send_fuse_reply(g_fuse_fd, in->unique, -EROFS, NULL, 0);
+                        break;
+                    }
+                    const char *path = get_path_by_ino(in->nodeid);
+                    if (!path) {
+                        send_fuse_reply(g_fuse_fd, in->unique, -ENOENT, NULL, 0);
+                        break;
+                    }
+                    int64_t tret = 0;
+                    if (g_fs_type == FS_TYPE_NTFS) {
+                        tret = dis_ntfs_truncate((dis_ntfs_handle_t)g_ntfs_vol, path, 0);
+                    } else if (g_fs_type == FS_TYPE_FATFS) {
+                        tret = dis_fatfs_truncate(g_fatfs_vol, path, 0);
+                    }
+                    if (tret < 0) {
+                        send_fuse_reply(g_fuse_fd, in->unique, (int)tret, NULL, 0);
+                        break;
+                    }
+                    g_write_dirty = 1;
+                }
+                struct fuse_open_out o;
+                memset(&o, 0, sizeof(o));
+                o.fh = in->nodeid;
+                send_fuse_reply(g_fuse_fd, in->unique, 0, &o, sizeof(o));
+                break;
+            }
             case FUSE_OPENDIR: {
                 struct fuse_open_out o;
                 memset(&o, 0, sizeof(o));
@@ -1157,13 +1307,21 @@ int main(int argc, char **argv) {
             case 44: // FUSE_READDIRPLUS (reject with ENOSYS so kernel falls back to FUSE_READDIR)
                 send_fuse_reply(g_fuse_fd, in->unique, -ENOSYS, NULL, 0);
                 break;
-            case FUSE_RELEASE:
             case FUSE_RELEASEDIR:
-            case FUSE_FLUSH:
-            case FUSE_FSYNC:
-            case FUSE_FSYNCDIR:
                 send_fuse_reply(g_fuse_fd, in->unique, 0, NULL, 0);
                 break;
+            case FUSE_RELEASE:
+            case FUSE_FLUSH: {
+                int err = flush_fuse_writes(0);
+                send_fuse_reply(g_fuse_fd, in->unique, err, NULL, 0);
+                break;
+            }
+            case FUSE_FSYNC:
+            case FUSE_FSYNCDIR: {
+                int err = flush_fuse_writes(1);
+                send_fuse_reply(g_fuse_fd, in->unique, err, NULL, 0);
+                break;
+            }
             case FUSE_ACCESS:
                 send_fuse_reply(g_fuse_fd, in->unique, 0, NULL, 0);
                 break;
@@ -1171,7 +1329,7 @@ int main(int argc, char **argv) {
                 handle_fuse_statfs(g_fuse_fd, in);
                 break;
             case FUSE_FALLOCATE:
-                send_fuse_reply(g_fuse_fd, in->unique, 0, NULL, 0);
+                send_fuse_reply(g_fuse_fd, in->unique, -EOPNOTSUPP, NULL, 0);
                 break;
             case FUSE_FORGET:
             case FUSE_BATCH_FORGET:
