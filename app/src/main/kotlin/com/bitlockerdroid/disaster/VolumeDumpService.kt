@@ -49,10 +49,10 @@ class VolumeDumpService : Service() {
         val progressState: StateFlow<DumpProgress> = _progressState.asStateFlow()
 
         @Volatile
-        private var isCancelled = false
+        private var currentCancelFlag: java.util.concurrent.atomic.AtomicBoolean? = null
 
         fun cancelDump() {
-            isCancelled = true
+            currentCancelFlag?.set(true)
         }
     }
 
@@ -71,6 +71,7 @@ class VolumeDumpService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
     private var dumpJob: Job? = null
+    private val activeDumpId = java.util.concurrent.atomic.AtomicLong(0L)
     private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
@@ -94,25 +95,26 @@ class VolumeDumpService : Service() {
                 if (targetUriString != null && totalSize > 0) {
                     val targetUri = Uri.parse(targetUriString)
                     startForeground(NOTIFICATION_ID, buildNotification(volumeLabel, 0f, 0.0, 0))
-                    startDumping(mode, handle, devicePath, offset, totalSize, targetUri, volumeLabel)
+                    startDumping(startId, mode, handle, devicePath, offset, totalSize, targetUri, volumeLabel)
                 } else {
-                    stopSelf()
+                    stopSelf(startId)
                 }
             }
             ACTION_CANCEL_DUMP -> {
-                isCancelled = true
+                currentCancelFlag?.set(true)
                 _progressState.value = _progressState.value.copy(
                     isRunning = false,
                     error = getString(R.string.dump_cancelled)
                 )
                 stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                stopSelf(startId)
             }
         }
         return START_NOT_STICKY
     }
 
     private fun startDumping(
+        startId: Int,
         mode: Int,
         activeHandle: Long,
         devicePath: String,
@@ -121,8 +123,11 @@ class VolumeDumpService : Service() {
         targetUri: Uri,
         volumeLabel: String
     ) {
+        currentCancelFlag?.set(true)
         dumpJob?.cancel()
-        isCancelled = false
+        val myDumpId = activeDumpId.incrementAndGet()
+        val cancelledFlag = java.util.concurrent.atomic.AtomicBoolean(false)
+        currentCancelFlag = cancelledFlag
 
         acquireWakeLock()
 
@@ -165,7 +170,7 @@ class VolumeDumpService : Service() {
                 var lastBytesCount = 0L
                 var lastSpeedCalcTime = startTime
 
-                while (written < totalSize && !isCancelled) {
+                while (written < totalSize && !cancelledFlag.get()) {
                     val remaining = totalSize - written
                     val toRead = if (remaining > chunkSize) chunkSize else remaining.toInt()
 
@@ -215,11 +220,13 @@ class VolumeDumpService : Service() {
 
                 outputStream.flush()
 
-                if (isCancelled) {
-                    _progressState.value = _progressState.value.copy(
-                        isRunning = false,
-                        error = getString(R.string.dump_cancelled)
-                    )
+                if (cancelledFlag.get()) {
+                    if (myDumpId == activeDumpId.get()) {
+                        _progressState.value = _progressState.value.copy(
+                            isRunning = false,
+                            error = getString(R.string.dump_cancelled)
+                        )
+                    }
                 } else {
                     _progressState.value = _progressState.value.copy(
                         isRunning = false,
@@ -230,11 +237,13 @@ class VolumeDumpService : Service() {
                     showCompletionNotification(volumeLabel, totalSize)
                 }
             } catch (e: Exception) {
-                _progressState.value = _progressState.value.copy(
-                    isRunning = false,
-                    error = e.localizedMessage ?: "Dump failed"
-                )
-                showErrorNotification(volumeLabel, e.localizedMessage ?: "Unknown error")
+                if (myDumpId == activeDumpId.get()) {
+                    _progressState.value = _progressState.value.copy(
+                        isRunning = false,
+                        error = e.localizedMessage ?: "Dump failed"
+                    )
+                    showErrorNotification(volumeLabel, e.localizedMessage ?: "Unknown error")
+                }
             } finally {
                 try {
                     outputStream?.close()
@@ -244,9 +253,11 @@ class VolumeDumpService : Service() {
                     NativeBridge.nativeClose(sessionHandle)
                 }
 
-                releaseWakeLock()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                if (myDumpId == activeDumpId.get()) {
+                    releaseWakeLock()
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf(startId)
+                }
             }
         }
     }

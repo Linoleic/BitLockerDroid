@@ -129,6 +129,12 @@ object BenchmarkEngine {
         val writePayload = ByteArray(writeChunkSize) { 0x5A }
         var peakChunkMbPerSec = 0.0
 
+        val ticket = try {
+            core.pendingWrites.begin("/$testFileName")
+        } catch (_: Exception) {
+            return@withContext null
+        }
+        var failure: Throwable? = null
         try {
             val createdRef = writer.createFile("/", testFileName, false)
             if (createdRef < 0) return@withContext null
@@ -154,6 +160,7 @@ object BenchmarkEngine {
                     onProgress(writeProgressMsg, curProgress)
                 }
             }
+            core.pendingWrites.syncing(ticket)
             writer.sync()
             val writeElapsedSec = (System.nanoTime() - writeStartNano) / 1_000_000_000.0
             writer.delete("/$testFileName")
@@ -163,13 +170,22 @@ object BenchmarkEngine {
             } else 0.0
             val peakSpeed = maxOf(avgSpeed, peakChunkMbPerSec)
             Pair(avgSpeed, peakSpeed)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            try {
+                writer.delete("/$testFileName")
+                core.invalidateCache()
+            } catch (_: Exception) {}
+            throw cancelled
         } catch (e: Exception) {
+            failure = e
             android.util.Log.w("BenchmarkEngine", "Sequential write benchmark failed: ${e.message}")
             try {
                 writer.delete("/$testFileName")
                 core.invalidateCache()
             } catch (_: Exception) {}
             null
+        } finally {
+            core.pendingWrites.finish(ticket, failure)
         }
     }
 
@@ -229,6 +245,12 @@ object BenchmarkEngine {
         val testFileSize = 256 * 1024L // 256 KB file space
         val payload = ByteArray(randomChunkSize) { 0x3C }
 
+        val ticket = try {
+            core.pendingWrites.begin("/$testFileName")
+        } catch (_: Exception) {
+            return@withContext null
+        }
+        var failure: Throwable? = null
         try {
             val created = writer.createFile("/", testFileName, false)
             if (created < 0) return@withContext null
@@ -264,19 +286,30 @@ object BenchmarkEngine {
                 }
             }
 
+            core.pendingWrites.syncing(ticket)
+            writer.sync()
             writer.delete("/$testFileName")
             core.invalidateCache()
 
             val avgLatencyMs = if (successfulRandomWrites > 0) totalRandomTimeMs / successfulRandomWrites else 0.0
             val iops = if (avgLatencyMs > 0) 1000.0 / avgLatencyMs else 0.0
             Pair(avgLatencyMs, iops)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            try {
+                writer.delete("/$testFileName")
+                core.invalidateCache()
+            } catch (_: Exception) {}
+            throw cancelled
         } catch (e: Exception) {
+            failure = e
             android.util.Log.w("BenchmarkEngine", "4K random write benchmark failed: ${e.message}")
             try {
                 writer.delete("/$testFileName")
                 core.invalidateCache()
             } catch (_: Exception) {}
             null
+        } finally {
+            core.pendingWrites.finish(ticket, failure)
         }
     }
 

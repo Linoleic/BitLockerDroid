@@ -52,6 +52,15 @@ object SmartHealthManager {
         }
         if (!isUsbUri) smartSupportCache[key]?.let { return@withContext it }
 
+        // Avoid sending automatic SG_IO passthrough commands to a root disk with active unlocked sessions.
+        val hasActiveSession = com.bitlockerdroid.service.UnlockManager.activeSessions.any {
+            it.devicePath == devicePath ||
+                com.bitlockerdroid.util.DeviceIdentity.resolveParentDiskNode(it.devicePath) == devicePath
+        }
+        if (hasActiveSession) {
+            return@withContext true
+        }
+
         runAutomaticSupportCheck(
             isUsbUri = isUsbUri,
             query = {
