@@ -858,6 +858,160 @@ class LanShareTest {
         }
     }
 
+    @Test
+    fun testActiveWebContentServedAsAttachmentWithSandboxCsp() {
+        val tempDir = java.io.File.createTempFile("lan_xss_test_", "").apply {
+            delete()
+            mkdir()
+        }
+        try {
+            java.io.File(tempDir, "evil.html").writeText("<script>alert(1)</script>")
+            java.io.File(tempDir, "evil.svg").writeText("<svg onload=\"alert(1)\"/>")
+            java.io.File(tempDir, "hello.txt").writeText("plain text")
+
+            val adapter = PosixFileShareAdapter(tempDir, "XssTest", isReadOnly = true)
+            val freePort = java.net.ServerSocket(0).use { it.localPort }
+            val config = LanShareConfig(
+                devicePath = "/dev/block/test",
+                volumeLabel = "XssTest",
+                port = freePort,
+                isReadOnly = true,
+                authEnabled = false
+            )
+            val server = LanWebServer(config, adapter)
+            val port = server.start()
+            try {
+                val (htmlCode, htmlHeaders) = sendRawRequest(port, "GET /evil.html HTTP/1.1\r\nHost: 127.0.0.1:$port\r\n\r\n")
+                assertEquals(200, htmlCode)
+                assertTrue(htmlHeaders["content-disposition"]!!.startsWith("attachment"))
+                assertEquals("sandbox", htmlHeaders["content-security-policy"])
+                assertEquals("nosniff", htmlHeaders["x-content-type-options"])
+
+                val (svgCode, svgHeaders) = sendRawRequest(port, "GET /evil.svg HTTP/1.1\r\nHost: 127.0.0.1:$port\r\n\r\n")
+                assertEquals(200, svgCode)
+                assertTrue(svgHeaders["content-disposition"]!!.startsWith("attachment"))
+                assertEquals("sandbox", svgHeaders["content-security-policy"])
+                assertEquals("nosniff", svgHeaders["x-content-type-options"])
+
+                val (txtCode, txtHeaders) = sendRawRequest(port, "GET /hello.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\n\r\n")
+                assertEquals(200, txtCode)
+                assertTrue(txtHeaders["content-disposition"]!!.startsWith("inline"))
+                assertNull(txtHeaders["content-security-policy"])
+                assertEquals("nosniff", txtHeaders["x-content-type-options"])
+            } finally {
+                server.stop()
+            }
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun testCaseOnlyMoveDoesNotDeleteSourceAndCopyMissingDoesNotDeleteTarget() {
+        val deletedPaths = mutableListOf<String>()
+        val files = linkedMapOf(
+            "/Report.txt" to ShareNode("Report.txt", "/Report.txt", false, 5L, 1000L),
+            "/Existing.txt" to ShareNode("Existing.txt", "/Existing.txt", false, 8L, 1000L)
+        )
+        val adapter = object : ShareFilesystemAdapter {
+            override val volumeLabel = "CaseInsensitive"
+            override val isReadOnly = false
+            override fun getRoot() = ShareNode(volumeLabel, "/", true, 0L, 1000L)
+            override fun resolveNode(path: String): ShareNode? =
+                files.entries.firstOrNull { it.key.equals(path, ignoreCase = true) }?.value
+            override fun listChildren(dirNode: ShareNode) = files.values.toList()
+            override fun openRangeStream(node: ShareNode, startOffset: Long, length: Long) = java.io.ByteArrayInputStream(ByteArray(0))
+            override fun readDirect(node: ShareNode, offset: Long, dst: ByteArray, dstPos: Int, len: Int) = 0
+            override fun createDirectory(parentPath: String, name: String) = false
+            override fun createFile(parentPath: String, name: String) = false
+            override fun writeData(filePath: String, offset: Long, data: ByteArray, count: Int) = -1L
+            override fun truncate(filePath: String, newSize: Long) = false
+            override fun delete(path: String): Boolean {
+                deletedPaths.add(path)
+                val key = files.keys.firstOrNull { it.equals(path, ignoreCase = true) } ?: return false
+                files.remove(key)
+                return true
+            }
+            override fun rename(oldPath: String, newPath: String): Boolean {
+                val key = files.keys.firstOrNull { it.equals(oldPath, ignoreCase = true) } ?: return false
+                val old = files.remove(key) ?: return false
+                files[newPath] = old.copy(name = newPath.substringAfterLast('/'), path = newPath)
+                return true
+            }
+            override fun copyNode(sourcePath: String, destPath: String) = false
+        }
+
+        val freePort = java.net.ServerSocket(0).use { it.localPort }
+        val config = LanShareConfig(
+            devicePath = "/dev/block/test",
+            volumeLabel = "CaseInsensitive",
+            port = freePort,
+            isReadOnly = false,
+            authEnabled = false
+        )
+        val server = LanWebServer(config, adapter)
+        val port = server.start()
+        try {
+            val (moveCode, _) = sendRawRequest(
+                port,
+                "MOVE /Report.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nDestination: http://127.0.0.1:$port/report.txt\r\nOverwrite: T\r\n\r\n"
+            )
+            assertEquals(201, moveCode)
+            assertTrue("Case-only MOVE must not delete source", deletedPaths.isEmpty())
+            assertNotNull(files["/report.txt"])
+
+            val (copyCode, _) = sendRawRequest(
+                port,
+                "COPY /Missing.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nDestination: http://127.0.0.1:$port/Existing.txt\r\nOverwrite: T\r\n\r\n"
+            )
+            assertEquals(404, copyCode)
+            assertNotNull("Failed COPY of missing source must not delete destination", files["/Existing.txt"])
+        } finally {
+            server.stop()
+        }
+    }
+
+    @Test
+    fun testPathTraversalHeaderSanitizationAndLockTimeoutEscaping() {
+        val tempDir = java.io.File.createTempFile("lan_sec_test_", "").apply {
+            delete()
+            mkdir()
+        }
+        try {
+            val adapter = PosixFileShareAdapter(tempDir, "SecTest", isReadOnly = false)
+            val freePort = java.net.ServerSocket(0).use { it.localPort }
+            val config = LanShareConfig(
+                devicePath = "/dev/block/test",
+                volumeLabel = "SecTest",
+                port = freePort,
+                isReadOnly = false,
+                authEnabled = false
+            )
+            val server = LanWebServer(config, adapter)
+            assertNull(server.sanitizePath("../outside.txt"))
+            assertNull(server.sanitizePath("/foo/../outside.txt"))
+            assertNull(server.sanitizePath("/foo\u0000bar"))
+            assertNull(server.parseDestinationPath("http://127.0.0.1:8080/../outside.txt"))
+            assertEquals("/a+b/file.txt", server.parseDestinationPath("http://127.0.0.1:8080/a+b/file.txt?x=1"))
+            assertEquals("evil__name.txt", server.sanitizeHeaderFilename("evil\r\nname.txt"))
+
+            val port = server.start()
+            try {
+                val (lockCode, _, lockBody) = sendRawRequestWithBody(
+                    port,
+                    "LOCK /file.txt HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nTimeout: Second-10<injected/>\r\n\r\n"
+                )
+                assertEquals(201, lockCode)
+                assertTrue(lockBody.contains("Second-10&lt;injected/&gt;"))
+                assertFalse(lockBody.contains("<injected/>"))
+            } finally {
+                server.stop()
+            }
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
     private fun sendRawRequest(port: Int, request: String): Pair<Int, Map<String, String>> {
         java.net.Socket("127.0.0.1", port).use { socket ->
             socket.soTimeout = 5000

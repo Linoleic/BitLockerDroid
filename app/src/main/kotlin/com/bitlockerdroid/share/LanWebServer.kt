@@ -325,7 +325,7 @@ class LanWebServer(
 
             // Path sanitization & traversal defense
             val decodedPath = try {
-                URLDecoder.decode(rawUri.substringBefore('?'), "UTF-8")
+                URLDecoder.decode(rawUri.substringBefore('?').replace("+", "%2B"), "UTF-8")
             } catch (_: Exception) {
                 rawUri.substringBefore('?')
             }
@@ -385,15 +385,74 @@ class LanWebServer(
         )
     }
 
-    private fun sanitizePath(path: String): String? {
+    internal fun sanitizePath(path: String): String? {
+        for (c in path) {
+            if (c == '\u0000' || c.code < 0x20 || c.code == 0x7F) return null
+        }
         var p = path.replace('\\', '/')
-        if (p.contains("/../") || p.endsWith("/..") || p == "..") return null
+        if (!p.startsWith('/')) p = "/$p"
+        val rawSegments = p.split('/')
+        for (seg in rawSegments) {
+            if (seg == ".." || seg == ".") return null
+        }
         while (p.contains("//")) {
             p = p.replace("//", "/")
         }
-        if (!p.startsWith('/')) p = "/$p"
         if (p.length > 1 && p.endsWith('/')) p = p.dropLast(1)
         return p
+    }
+
+    internal fun parseDestinationPath(destinationUri: String): String? {
+        val trimmed = destinationUri.trim()
+        if (trimmed.isEmpty()) return null
+        val rawPath = try {
+            val uri = java.net.URI(trimmed)
+            uri.rawPath ?: if (!trimmed.contains("://") && !trimmed.startsWith('/')) "/$trimmed" else return null
+        } catch (_: Exception) {
+            if (trimmed.contains("://")) {
+                val afterScheme = trimmed.substringAfter("://")
+                val slashIdx = afterScheme.indexOf('/')
+                if (slashIdx < 0) "/" else afterScheme.substring(slashIdx).substringBefore('?').substringBefore('#')
+            } else {
+                trimmed.substringBefore('?').substringBefore('#')
+            }
+        }
+        val decoded = try {
+            URLDecoder.decode(rawPath.replace("+", "%2B"), "UTF-8")
+        } catch (_: Exception) {
+            rawPath
+        }
+        return sanitizePath(decoded)
+    }
+
+    internal fun isActiveWebContent(mimeType: String, fileName: String): Boolean {
+        val baseMime = mimeType.substringBefore(';').trim().lowercase()
+        if (baseMime in setOf(
+                "text/html",
+                "application/xhtml+xml",
+                "image/svg+xml",
+                "application/xml",
+                "text/xml",
+                "application/javascript",
+                "text/javascript"
+            )
+        ) {
+            return true
+        }
+        val ext = fileName.substringAfterLast('.', "").lowercase()
+        return ext in setOf("html", "htm", "xhtml", "svg", "xml", "js", "mjs")
+    }
+
+    internal fun sanitizeHeaderFilename(name: String): String {
+        val sb = StringBuilder(name.length)
+        for (c in name) {
+            when {
+                c.code < 0x20 || c.code >= 0x7F -> sb.append('_')
+                c == '"' || c == '\\' -> sb.append('_')
+                else -> sb.append(c)
+            }
+        }
+        return sb.toString()
     }
 
     /** True when the (already sanitized) path refers to the volume root itself. */
@@ -525,9 +584,12 @@ class LanWebServer(
                 val encodedFilename = try {
                     URLEncoder.encode(target.name, "UTF-8").replace("+", "%20")
                 } catch (_: Exception) {
-                    target.name
+                    sanitizeHeaderFilename(target.name)
                 }
-                val asciiFallback = target.name.replace("\"", "")
+                val asciiFallback = sanitizeHeaderFilename(target.name)
+                val activeWeb = isActiveWebContent(mimeType, target.name)
+                val disposition = if (activeWeb) "attachment" else "inline"
+                val cspHeader = if (activeWeb) "Content-Security-Policy: sandbox\r\n" else ""
                 val etag = "\"${target.lastModified.toString(16)}-${target.size.toString(16)}\""
                 val lastMod = WebDavHandler.formatHttpDate(target.lastModified)
                 val resp = "HTTP/1.1 206 Partial Content\r\n" +
@@ -537,7 +599,9 @@ class LanWebServer(
                         "ETag: $etag\r\n" +
                         "Last-Modified: $lastMod\r\n" +
                         "Cache-Control: no-cache\r\n" +
-                        "Content-Disposition: inline; filename*=UTF-8''$encodedFilename; filename=\"$asciiFallback\"\r\n" +
+                        "X-Content-Type-Options: nosniff\r\n" +
+                        cspHeader +
+                        "Content-Disposition: $disposition; filename*=UTF-8''$encodedFilename; filename=\"$asciiFallback\"\r\n" +
                         "Accept-Ranges: bytes\r\n" +
                         "Connection: close\r\n\r\n"
                 output.write(resp.toByteArray())
@@ -554,9 +618,12 @@ class LanWebServer(
                 val encodedFilename = try {
                     URLEncoder.encode(target.name, "UTF-8").replace("+", "%20")
                 } catch (_: Exception) {
-                    target.name
+                    sanitizeHeaderFilename(target.name)
                 }
-                val asciiFallback = target.name.replace("\"", "")
+                val asciiFallback = sanitizeHeaderFilename(target.name)
+                val activeWeb = isActiveWebContent(mimeType, target.name)
+                val disposition = if (activeWeb) "attachment" else "inline"
+                val cspHeader = if (activeWeb) "Content-Security-Policy: sandbox\r\n" else ""
                 val etag = "\"${target.lastModified.toString(16)}-${target.size.toString(16)}\""
                 val lastMod = WebDavHandler.formatHttpDate(target.lastModified)
                 val resp = "HTTP/1.1 200 OK\r\n" +
@@ -565,7 +632,9 @@ class LanWebServer(
                         "ETag: $etag\r\n" +
                         "Last-Modified: $lastMod\r\n" +
                         "Cache-Control: no-cache\r\n" +
-                        "Content-Disposition: inline; filename*=UTF-8''$encodedFilename; filename=\"$asciiFallback\"\r\n" +
+                        "X-Content-Type-Options: nosniff\r\n" +
+                        cspHeader +
+                        "Content-Disposition: $disposition; filename*=UTF-8''$encodedFilename; filename=\"$asciiFallback\"\r\n" +
                         "Accept-Ranges: bytes\r\n" +
                         "Connection: close\r\n\r\n"
                 output.write(resp.toByteArray())
@@ -780,17 +849,17 @@ class LanWebServer(
             sendError(output, 400, "Bad Request: Missing Destination")
             return
         }
-        val destDecoded = try {
-            URLDecoder.decode(destinationUri.substringAfter("://").substringAfter('/'), "UTF-8")
-        } catch (_: Exception) {
-            destinationUri.substringAfter("://").substringAfter('/')
-        }
-        val destPath = sanitizePath(destDecoded) ?: run {
+        val destPath = parseDestinationPath(destinationUri) ?: run {
             sendError(output, 400, "Invalid Destination")
             return
         }
         if (isVolumeRoot(destPath)) {
             sendError(output, 403, "Forbidden: invalid destination")
+            return
+        }
+        val sourceNode = filesystem.resolveNode(path)
+        if (sourceNode == null) {
+            sendError(output, 404, "Not Found")
             return
         }
         // Cycle detection: moving onto itself or into its own subtree would
@@ -799,13 +868,14 @@ class LanWebServer(
             sendError(output, 403, "Forbidden: source and destination are identical")
             return
         }
-        if (destPath.startsWith("$path/")) {
+        if (destPath.startsWith("$path/", ignoreCase = true)) {
             sendError(output, 409, "Conflict: destination lies inside the source")
             return
         }
 
+        val isCaseOnlyRename = destPath.equals(path, ignoreCase = true)
         val overwriteHeader = headers["overwrite"]?.trim()?.uppercase() ?: "T"
-        val destExists = filesystem.resolveNode(destPath) != null
+        val destExists = !isCaseOnlyRename && filesystem.resolveNode(destPath) != null
         if (destExists) {
             if (overwriteHeader == "F") {
                 // RFC 4918 Section 9.9.2: Overwrite: F on existing destination must return 412 Precondition Failed
@@ -841,12 +911,7 @@ class LanWebServer(
             sendError(output, 400, "Bad Request: Missing Destination")
             return
         }
-        val destDecoded = try {
-            URLDecoder.decode(destinationUri.substringAfter("://").substringAfter('/'), "UTF-8")
-        } catch (_: Exception) {
-            destinationUri.substringAfter("://").substringAfter('/')
-        }
-        val destPath = sanitizePath(destDecoded) ?: run {
+        val destPath = parseDestinationPath(destinationUri) ?: run {
             sendError(output, 400, "Invalid Destination")
             return
         }
@@ -854,13 +919,22 @@ class LanWebServer(
             sendError(output, 403, "Forbidden: invalid destination")
             return
         }
+        val sourceNode = filesystem.resolveNode(path)
+        if (sourceNode == null) {
+            sendError(output, 404, "Not Found")
+            return
+        }
+        if (sourceNode.isDirectory && filesystem is VolumeCoreShareAdapter) {
+            sendError(output, 409, "Conflict: directory copy unsupported")
+            return
+        }
         // Cycle detection: copying onto itself or into its own subtree would
         // recurse without bound and exhaust the volume
-        if (destPath == path) {
+        if (destPath.equals(path, ignoreCase = true)) {
             sendError(output, 403, "Forbidden: source and destination are identical")
             return
         }
-        if (destPath.startsWith("$path/")) {
+        if (destPath.startsWith("$path/", ignoreCase = true)) {
             sendError(output, 409, "Conflict: destination lies inside the source")
             return
         }
@@ -894,7 +968,7 @@ class LanWebServer(
         }
         val node = filesystem.resolveNode(path)
         val token = "urn:uuid:" + java.util.UUID.randomUUID().toString()
-        val timeout = headers["timeout"] ?: "Second-3600"
+        val timeout = WebDavHandler.escapeXml(headers["timeout"] ?: "Second-3600")
 
         val lockXml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
                 "<D:prop xmlns:D=\"DAV:\">\n" +

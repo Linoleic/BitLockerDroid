@@ -216,8 +216,18 @@ class VolumeCoreShareAdapter(
         return core.readFile(node.ref, offset, dst, dstPos, len)
     }
 
+    private fun isProtectedSystemPath(path: String): Boolean {
+        if (isSvi(path)) return true
+        val norm = normalizePath(path)
+        val firstSeg = norm.removePrefix("/").substringBefore('/')
+        return firstSeg.startsWith('$')
+    }
+
     override fun createDirectory(parentPath: String, name: String): Boolean {
         if (isReadOnly) return false
+        if (name.isBlank() || name.contains('/') || name.contains('\\') || name.contains('\u0000')) return false
+        val target = if (normalizePath(parentPath) == "/") "/$name" else "${normalizePath(parentPath)}/$name"
+        if (isProtectedSystemPath(target)) return false
         val writer = core.writer ?: return false
         val ok = try {
             val res = writer.createFile(parentPath, name, isDirectory = true)
@@ -234,6 +244,9 @@ class VolumeCoreShareAdapter(
 
     override fun createFile(parentPath: String, name: String): Boolean {
         if (isReadOnly) return false
+        if (name.isBlank() || name.contains('/') || name.contains('\\') || name.contains('\u0000')) return false
+        val target = if (normalizePath(parentPath) == "/") "/$name" else "${normalizePath(parentPath)}/$name"
+        if (isProtectedSystemPath(target)) return false
         val writer = core.writer ?: return false
         val ok = try {
             val res = writer.createFile(parentPath, name, isDirectory = false)
@@ -249,7 +262,7 @@ class VolumeCoreShareAdapter(
     }
 
     override fun writeData(filePath: String, offset: Long, data: ByteArray, count: Int): Long {
-        if (isReadOnly) return -1L
+        if (isReadOnly || isProtectedSystemPath(filePath)) return -1L
         val writer = core.writer ?: return -1L
         val written = try {
             writer.write(filePath, offset, data, count)
@@ -264,7 +277,7 @@ class VolumeCoreShareAdapter(
     }
 
     override fun truncate(filePath: String, newSize: Long): Boolean {
-        if (isReadOnly) return false
+        if (isReadOnly || isProtectedSystemPath(filePath)) return false
         val writer = core.writer ?: return false
         val ok = try {
             writer.truncate(filePath, newSize)
@@ -280,8 +293,8 @@ class VolumeCoreShareAdapter(
 
     override fun delete(path: String): Boolean {
         if (isReadOnly) return false
-        // Never allow deleting the volume root itself
-        if (normalizePath(path) == "/") return false
+        // Never allow deleting the volume root or protected system files
+        if (normalizePath(path) == "/" || isProtectedSystemPath(path)) return false
         val writer = core.writer ?: return false
         val ok = try {
             writer.delete(path)
@@ -296,7 +309,7 @@ class VolumeCoreShareAdapter(
     }
 
     override fun rename(oldPath: String, newPath: String): Boolean {
-        if (isReadOnly) return false
+        if (isReadOnly || isProtectedSystemPath(oldPath) || isProtectedSystemPath(newPath)) return false
         val writer = core.writer ?: return false
         val ok = try {
             writer.rename(oldPath, newPath)
@@ -311,7 +324,7 @@ class VolumeCoreShareAdapter(
     }
 
     override fun copyNode(sourcePath: String, destPath: String): Boolean {
-        if (isReadOnly) return false
+        if (isReadOnly || isProtectedSystemPath(sourcePath) || isProtectedSystemPath(destPath)) return false
         val src = resolveNode(sourcePath) ?: return false
         if (src.isDirectory) return false
         val destParent = destPath.substringBeforeLast('/').ifEmpty { "/" }
