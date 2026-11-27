@@ -8,6 +8,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [v1.2.3] - 2026-11-28
+
+### 中文
+
+#### 安全
+
+- **Root 守护进程与磁盘停盘防误伤加固**：移除 `/data/local/tmp` Root 二进制释放与执行，改为从应用只读原生库目录或 `0700` 私有目录执行；加固 `io_daemon` 块设备路径/符号链接校验与 `scsi_spindown_device` USB 白名单，避免内部 UFS 闪存被误操作。
+- **SAF 与局域网 WebDAV 安全加固**：修复 `BitLockerDocumentsProvider.isChildDocument()` 跨卷越权、5 处只读模式绕过、路径遍历与 `call()` 外部 UID 越权调用；为局域网共享的 `.html`/`.svg`/`.xml` 强制 `attachment` + `Content-Security-Policy: sandbox` + `nosniff` 防同源 XSS，修复相对 `../` 遍历、CRLF 响应头注入与 `LOCK` XML 注入，并增加有界线程池与 Basic Auth 失败限流（429）。
+- **Android 组件、凭据与 CI 加固**：将 `ACTION_USB_PERMISSION` 隔离为 `RECEIVER_NOT_EXPORTED`；凭据查看与管理弹窗强制 `SecureFlagPolicy.SecureOn`，切换自动解锁需生物识别确认；日志查看与复制先脱敏并标记敏感剪贴板；新增 `data_extraction_rules.xml` 阻止 D2D 迁移与云备份；收紧 `BootReceiver`、Release 签名回退与 GitHub Actions 密钥作用域。
+
+#### 修复
+
+- **修复 FUSE 虚拟盘符写入后元数据不更新与文件无法打开**：在 `FUSE_FLUSH` / `FUSE_FSYNC` / `FUSE_RELEASE` 及读取/列目录前强制同步刷盘，补齐 `O_TRUNC`、POSIX 覆盖式 `rename`、真实 FatFs 修改时间及 `attr_valid=0` / `entry_valid=0`，修复 `SIGUSR1` 信号重启与 FUSE ↔ SAF 双向缓存一致性。
+- **修复原生 C/JNI 内存安全与加密边界**：修复 Tier-2 `io_daemon` 管道失步与超 4 MiB 分片；为 JNI VFS 句柄引入会话绑定令牌并修复锁序反转、UAF 与阻塞 I/O 期间持有 `GetPrimitiveArrayCritical` 导致的 GC 死锁；统一区间重叠写屏障、`volume_state` 校验、`ntfs3g_device` 只读/跨引导区拆分与 IEEE 1619 AES-XTS CTS。
+- **修复文件系统解析与缓存并发缺陷**：修复 `CachedBlockSource` 清零竞态与 `clear()` 代际校验；修复 NTFS 误跳 Win32 长文件名、支持碎片化 `$MFT` 与簇尾截断；修复 exFAT `noFatChain` 目录限界、FAT32 高 4 位保留位掩码及大文件 10 万簇截断并加入环检测。
+- **修复 USB Host 检测与 UI 稳定性**：修复 `isDeviceMountedBySystem()` 误判、`MSWIN4.1` 误劫持普通 FAT32、GPT 越界与 BOT 数据阶段 STALL 恢复及多盘热插拔误关会话；消除主线程阻塞 `su`/Socket、修复 `DisasterRecoveryDialog` 跨线程错误信息丢失及多处弹窗重入与取消竞态。
+
+### English
+
+#### Security
+
+- **Root daemon & spindown hardening**: Stopped staging/executing root binaries in `/data/local/tmp`, running them only from `nativeLibraryDir` or owner-only `0700` app-private storage; added `O_NOFOLLOW` + `S_ISBLK` block-device checks in `io_daemon` and removed the overly broad `"target"` sysfs match in `scsi_spindown_device` to protect internal UFS storage.
+- **SAF & LAN WebDAV hardening**: Fixed cross-volume authorization bypass in `BitLockerDocumentsProvider.isChildDocument()`, five read-only bypasses, path traversal, and external UID access to custom `call()` methods; hardened LAN share active content (`.html`/`.svg`/`.xml`) with `Content-Disposition: attachment`, `Content-Security-Policy: sandbox`, and `nosniff`, fixed relative `../` traversal, CRLF header injection, and `LOCK` XML escaping, and added bounded worker threads plus per-IP Basic Auth rate limiting (429).
+- **Android components, credentials & CI hardening**: Isolated `ACTION_USB_PERMISSION` with `RECEIVER_NOT_EXPORTED`; enforced `SecureFlagPolicy.SecureOn` on credential dialogs and biometric checks when toggling auto-unlock; redacted viewed/copied logs with sensitive clipboard flags; added `data_extraction_rules.xml` to block cloud/D2D extraction; tightened `BootReceiver`, release signing defaults, and GitHub Actions secret scoping.
+
+#### Fixed
+
+- **Fixed stale metadata and unopenable files after copying/moving to FUSE mount**: Flushed buffered writes on `FUSE_FLUSH`/`FUSE_FSYNC`/`FUSE_RELEASE` and before reads/lookups, implemented `O_TRUNC`, POSIX overwrite `rename`, real FatFs `mtime`, zero-TTL FUSE attribute caching, non-restarting `SIGUSR1`, and bidirectional FUSE ↔ SAF cache coherency.
+- **Fixed native C/JNI memory safety and crypto edge cases**: Fixed Tier-2 `io_daemon` pipe poisoning and 4 MiB chunking; bound JNI VFS handles to session tokens and fixed AB-BA lock ordering, UAFs, and `GetPrimitiveArrayCritical` across blocking I/O; enforced interval-overlap write barriers, `METADATA_STATE_ENCRYPTED` checks, `ntfs3g_device` read-only/split-header redirects, and IEEE 1619 AES-XTS CTS.
+- **Fixed filesystem parsing and block-cache races**: Fixed `CachedBlockSource` use-after-zero and post-`clear()` repopulation races; fixed NTFS skipping Win32 filenames instead of DOS 8.3 and added fragmented `$MFT` support and non-resident slack-space clamping; fixed exFAT `noFatChain` directory bounds, FAT32 high-4-bit masking, and 100k-cluster truncation with Brent cycle detection.
+- **Fixed USB Host detection and UI responsiveness**: Fixed `isDeviceMountedBySystem()` false positives, plain FAT32 (`MSWIN4.1`) hijacking, GPT buffer overflow, BOT `DATA_IN` STALL recovery, and multi-device USB detach; moved blocking `su`/socket work off the UI thread and fixed `DisasterRecoveryDialog` TLS error reporting, dump cancellation isolation, and dialog re-entry races.
+
 ## [v1.2.2] - 2026-11-14
 
 ### 中文
