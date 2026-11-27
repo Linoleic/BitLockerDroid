@@ -37,6 +37,28 @@ android {
         }
     }
 
+    val releaseKeystoreConfigured: Boolean = run {
+        val rootProps = rootProject.file("keystore.properties")
+        val appProps = file("keystore.properties")
+        val propFile = when {
+            rootProps.exists() -> rootProps
+            appProps.exists() -> appProps
+            else -> null
+        }
+        val keystoreProps = Properties()
+        if (propFile != null && propFile.canRead()) {
+            FileInputStream(propFile).use { keystoreProps.load(it) }
+        }
+        val storeFilePath = System.getenv("KEYSTORE_PATH")
+            ?: keystoreProps.getProperty("STORE_FILE")
+            ?: project.findProperty("RELEASE_STORE_FILE") as? String
+        val candidateFile = storeFilePath?.let { path ->
+            val f = file(path)
+            if (f.exists()) f else rootProject.file(path)
+        }
+        candidateFile != null && candidateFile.exists()
+    }
+
     signingConfigs {
         create("release") {
             // Check for keystore.properties in root project or app directory
@@ -76,34 +98,8 @@ android {
                     ?: keystoreProps.getProperty("KEY_PASSWORD")
                     ?: project.findProperty("RELEASE_KEY_PASSWORD") as? String
                     ?: ""
-            } else {
-                // Dynamic fallback: if release keystore is absent, fall back to debug signing config
-                val debugConfig = getByName("debug")
-                initWith(debugConfig)
-
-                // AGP does not auto-create debug.keystore when validating release signing configs.
-                // If debug.keystore does not exist on disk (e.g. fresh CI machine), create it on the fly.
-                val dFile = debugConfig.storeFile
-                if (dFile != null && !dFile.exists()) {
-                    dFile.parentFile?.mkdirs()
-                    try {
-                        val keytool = org.gradle.internal.jvm.Jvm.current().javaHome.resolve("bin/keytool").absolutePath
-                        val pb = ProcessBuilder(
-                            keytool, "-genkeypair", "-v",
-                            "-keystore", dFile.absolutePath,
-                            "-storepass", "android",
-                            "-alias", "androiddebugkey",
-                            "-keypass", "android",
-                            "-keyalg", "RSA",
-                            "-keysize", "2048",
-                            "-validity", "10000",
-                            "-dname", "CN=Android Debug,O=Android,C=US"
-                        )
-                        pb.redirectErrorStream(true)
-                        val p = pb.start()
-                        p.waitFor()
-                    } catch (_: Exception) {}
-                }
+            } else if (System.getenv("ALLOW_DEBUG_RELEASE_SIGNING") == "true") {
+                initWith(getByName("debug"))
             }
         }
     }
@@ -112,7 +108,9 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("release")
+            if (releaseKeystoreConfigured || System.getenv("ALLOW_DEBUG_RELEASE_SIGNING") == "true") {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

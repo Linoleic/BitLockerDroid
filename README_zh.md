@@ -119,13 +119,15 @@
 
 ## 源码构建
 
-快速本地构建：
+快速本地构建（Debug 版可直接安装）：
 ```bash
 git clone https://github.com/Linoleic/BitLockerDroid.git
 cd BitLockerDroid
-./gradlew :app:assembleRelease
+./gradlew :app:assembleDebug
 ```
-产物输出路径：`app/build/outputs/apk/release/app-release.apk`。
+产物输出路径：`app/build/outputs/apk/debug/app-debug.apk`。
+
+如需构建开启 R8 优化的 Release APK，请配置 `keystore.properties`（或环境变量 `KEYSTORE_PATH`）后运行 `./gradlew :app:assembleRelease`（产物为 `app/build/outputs/apk/release/app-release.apk`）。未配置正式签名时默认产出未签名的 `app-release-unsigned.apk`；若仅用于本地 R8 测试，可显式设置 `ALLOW_DEBUG_RELEASE_SIGNING=true` 启用 Debug 签名。
 
 详细环境配置、NDK 构建要求与宿主机测试工具说明请参阅 **[源码构建指南 (BUILD_zh.md)](BUILD_zh.md)**。
 

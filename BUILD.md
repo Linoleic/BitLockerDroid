@@ -80,16 +80,20 @@ chmod +x gradlew
 ./gradlew :app:assembleRelease
 ```
 
-The output artifact is generated at:
+When a release keystore is configured, the signed artifact is generated at:
 ```
 app/build/outputs/apk/release/app-release.apk
+```
+Without a configured release keystore, Gradle does **not** silently fall back to debug signing and instead outputs an unsigned `app/build/outputs/apk/release/app-release-unsigned.apk`. For quick local installation without setting up a keystore, build the Debug APK (`./gradlew :app:assembleDebug`), or explicitly opt in to debug-signed R8 testing via:
+```bash
+ALLOW_DEBUG_RELEASE_SIGNING=true ./gradlew :app:assembleRelease
 ```
 
 #### Signing Configuration
 
 For each release, update `versionName` and increment `versionCode` in `app/build.gradle.kts`. The version code is explicit and does not depend on Git history.
 
-- **Debug Fallback**: If no custom release keystore is provided, the Gradle build script automatically falls back to Debug signing. Developers can clone and build ready-to-test APKs immediately without extra setup.
+- **No Silent Debug Fallback**: Release builds require an explicit keystore (or `ALLOW_DEBUG_RELEASE_SIGNING=true` for local testing) so CI and release builds can never accidentally publish a debug-signed APK as `app-release.apk`.
 - **Custom Release Keystore Configuration**:
   1. Copy the keystore template:
      ```bash

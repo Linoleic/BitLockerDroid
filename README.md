@@ -119,13 +119,15 @@ Representative benchmarks measured on Qualcomm Snapdragon 8 Gen 2 (Android 16, L
 
 ## Build from Source
 
-Quick local build:
+Quick local debug build (ready to install):
 ```bash
 git clone https://github.com/Linoleic/BitLockerDroid.git
 cd BitLockerDroid
-./gradlew :app:assembleRelease
+./gradlew :app:assembleDebug
 ```
-Output artifact: `app/build/outputs/apk/release/app-release.apk`.
+Output artifact: `app/build/outputs/apk/debug/app-debug.apk`.
+
+To build a minified Release APK, configure `keystore.properties` (or `KEYSTORE_PATH`) and run `./gradlew :app:assembleRelease` (producing `app/build/outputs/apk/release/app-release.apk`). Without a release keystore, Gradle outputs an unsigned `app-release-unsigned.apk` unless `ALLOW_DEBUG_RELEASE_SIGNING=true` is explicitly set for local R8 testing.
 
 For environment setup, NDK CMake build options, and Linux host verification tools, see the **[Build Guide (BUILD.md)](BUILD.md)** (or **[中文构建指南 (BUILD_zh.md)](BUILD_zh.md)**).
 
@@ -136,7 +138,7 @@ For environment setup, NDK CMake build options, and Linux host verification tool
 | Document | Description |
 | :--- | :--- |
 | **[Architecture & Performance Overview (ARCHITECTURE.md)](ARCHITECTURE.md)** | Layered architecture, dual-mode I/O transport, ARMv8-CE 4-way interleaved acceleration, hybrid filesystem design, security boundaries, and full benchmark tables ([简体中文](ARCHITECTURE_zh.md)) |
-| **[Build Guide (BUILD.md)](BUILD.md)** | JDK / SDK / NDK prerequisites, release signing fallback, 16 KB page alignment requirements, and Linux host verification tools ([简体中文](BUILD_zh.md)) |
+| **[Build Guide (BUILD.md)](BUILD.md)** | JDK / SDK / NDK prerequisites, release signing configuration, 16 KB page alignment requirements, and Linux host verification tools ([简体中文](BUILD_zh.md)) |
 | **[Performance Evaluation Specification (perf_eval.md)](perf_eval.md)** | Storage tier classification, warmup discard, `drop_caches` isolation, closed-loop `sync` timing, and 6-partition test matrix definition |
 | **[ADB Debug & Automation Interface (ADB_DEBUG_INTERFACE.md)](ADB_DEBUG_INTERFACE.md)** | `DocumentsProvider` CLI methods for headless unlock, runtime hardware crypto toggling, benchmarking, and automated VFS verification |
 | **[Changelog (CHANGELOG.md)](CHANGELOG.md)** | Release history, architectural changes, and bug fixes across versions |

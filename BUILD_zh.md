@@ -80,16 +80,20 @@ chmod +x gradlew
 ./gradlew :app:assembleRelease
 ```
 
-构建成功后，输出产物位于：
+配置了正式签名密钥库后，签名产物位于：
 ```
 app/build/outputs/apk/release/app-release.apk
+```
+若未配置正式密钥库，Gradle **不会**静默回退到 Debug 签名，而是生成未签名的 `app/build/outputs/apk/release/app-release-unsigned.apk`。本地开发调试可直接运行 `./gradlew :app:assembleDebug`，或显式传入环境变量进行带 Debug 签名的本地 R8 测试：
+```bash
+ALLOW_DEBUG_RELEASE_SIGNING=true ./gradlew :app:assembleRelease
 ```
 
 #### 签名机制说明
 
 每次发版时，在 `app/build.gradle.kts` 中更新 `versionName` 并递增 `versionCode`；版本代码显式维护，不依赖 Git 历史。
 
-- **默认开发回退**：若未配置独立的 Release 签名秘钥，Gradle 构建脚本将自动回退至 Debug 签名，确保开发者克隆项目后无需繁琐配置即可直接编译并生成可安装的 APK。
+- **禁止静默回退 Debug 签名**：正式 Release 构建必须显式配置签名密钥（或仅在本地测试时手动指定 `ALLOW_DEBUG_RELEASE_SIGNING=true`），防止 CI 或发版流程误将 Debug 签名包当作正式 `app-release.apk` 分发。
 - **正式发布签名配置**：
   1. 复制签名模板：
      ```bash

@@ -19,12 +19,6 @@ jobs:
   release:
     name: Build, Verify & Publish
     runs-on: ubuntu-latest
-    env:
-      RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
-      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout repository
@@ -68,6 +62,11 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "build-tools;35.0.0" || true
 
       - name: Require signing secrets
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           for name in RELEASE_KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
             if [ -z "${!name}" ]; then
@@ -76,18 +75,30 @@ jobs:
             fi
           done
 
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Run unit tests
+        run: ./gradlew --no-daemon testReleaseUnitTest --stacktrace
+
       - name: Configure release signing
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
         run: |
           printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
           echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
 
-      - name: Make gradlew executable
-        run: chmod +x ./gradlew
-
-      - name: Test & build release + debug APKs
-        run: ./gradlew --no-daemon testReleaseUnitTest assembleRelease assembleDebug --stacktrace
+      - name: Build release + debug APKs
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew --no-daemon assembleRelease assembleDebug --stacktrace
 
       - name: Verify release signing
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           APK=app/build/outputs/apk/release/app-release.apk
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -1)
@@ -151,15 +162,18 @@ jobs:
           } > NOTES.md
 
       - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.meta.outputs.tag }}"
           EXTRA_ARGS=()
-          if [ "${{ steps.meta.outputs.prerelease }}" = true ]; then EXTRA_ARGS+=(--prerelease); fi
+          if [ "$PRERELEASE" = true ]; then EXTRA_ARGS+=(--prerelease); fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists; uploading assets and updating notes."
             gh release upload "$TAG" dist/app-release.apk dist/app-debug.apk --clobber
-            gh release edit "$TAG" --title "$TAG" --notes-file NOTES.md --prerelease="${{ steps.meta.outputs.prerelease }}"
+            gh release edit "$TAG" --title "$TAG" --notes-file NOTES.md --prerelease="$PRERELEASE"
           else
             gh release create "$TAG" dist/app-release.apk dist/app-debug.apk \
               --title "$TAG" \
