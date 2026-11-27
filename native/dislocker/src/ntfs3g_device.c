@@ -41,7 +41,7 @@ static int dislocker_dev_open(struct ntfs_device *dev, int flags)
 		return -1;
 	}
 	set_ndev_flag(dev, Open);
-	if (flags & O_RDONLY)
+	if ((flags & O_ACCMODE) == O_RDONLY)
 		set_ndev_flag(dev, ReadOnly);
 	return 0;
 }
@@ -75,25 +75,52 @@ static s64 dislocker_dev_write(struct ntfs_device *dev, const void *buf, s64 cou
 	return -1;
 }
 
+static uint64_t dislocker_header_bytes(const dis_ctx_t *ctx)
+{
+	if (ctx->information && ctx->information->nb_backup_sectors > 0 && ctx->sector_size > 0) {
+		return (uint64_t)ctx->information->nb_backup_sectors * ctx->sector_size;
+	}
+	return 8192ULL;
+}
+
 static s64 dislocker_dev_pread(struct ntfs_device *dev, void *buf, s64 count, s64 offset)
 {
 	if (!dev || !dev->d_private || !buf || count < 0 || offset < 0) {
 		errno = EINVAL;
 		return -1;
 	}
-	dis_ctx_t *ctx = (dis_ctx_t *)dev->d_private;
+	if (count == 0)
+		return 0;
 
-	off_t target_offset = (off_t)offset;
-	if (target_offset < 8192 && ctx->information) {
-		target_offset += ctx->information->boot_sectors_backup;
+	dis_ctx_t *ctx = (dis_ctx_t *)dev->d_private;
+	uint64_t header_bytes = dislocker_header_bytes(ctx);
+	uint8_t *out = (uint8_t *)buf;
+	s64 total_read = 0;
+
+	if ((uint64_t)offset < header_bytes && ctx->information && ctx->information->boot_sectors_backup > 0) {
+		uint64_t avail = header_bytes - (uint64_t)offset;
+		size_t first_len = ((uint64_t)count < avail) ? (size_t)count : (size_t)avail;
+		off_t target_offset = (off_t)((uint64_t)offset + ctx->information->boot_sectors_backup);
+		int ret = dis_read_decrypted(ctx, out, target_offset, first_len);
+		if (ret < 0) {
+			errno = EIO;
+			return -1;
+		}
+		total_read += ret;
+		if ((size_t)ret < first_len || total_read == count)
+			return total_read;
 	}
 
-	int ret = dis_read_decrypted(ctx, (uint8_t *)buf, target_offset, (size_t)count);
+	size_t rem = (size_t)(count - total_read);
+	off_t rem_offset = (off_t)(offset + total_read);
+	int ret = dis_read_decrypted(ctx, out + total_read, rem_offset, rem);
 	if (ret < 0) {
+		if (total_read > 0)
+			return total_read;
 		errno = EIO;
 		return -1;
 	}
-	return (s64)ret;
+	return total_read + ret;
 }
 
 static s64 dislocker_dev_pwrite(struct ntfs_device *dev, const void *buf, s64 count, s64 offset)
@@ -102,19 +129,42 @@ static s64 dislocker_dev_pwrite(struct ntfs_device *dev, const void *buf, s64 co
 		errno = EINVAL;
 		return -1;
 	}
-	dis_ctx_t *ctx = (dis_ctx_t *)dev->d_private;
-
-	off_t target_offset = (off_t)offset;
-	if (target_offset < 8192 && ctx->information) {
-		target_offset += ctx->information->boot_sectors_backup;
-	}
-
-	int ret = dis_write_encrypted(ctx, (const uint8_t *)buf, target_offset, (size_t)count);
-	if (ret < 0) {
-		errno = EIO;
+	if (NDevReadOnly(dev)) {
+		errno = EROFS;
 		return -1;
 	}
-	return (s64)ret;
+	if (count == 0)
+		return 0;
+
+	dis_ctx_t *ctx = (dis_ctx_t *)dev->d_private;
+	uint64_t header_bytes = dislocker_header_bytes(ctx);
+	const uint8_t *in = (const uint8_t *)buf;
+	s64 total_written = 0;
+
+	if ((uint64_t)offset < header_bytes && ctx->information && ctx->information->boot_sectors_backup > 0) {
+		uint64_t avail = header_bytes - (uint64_t)offset;
+		size_t first_len = ((uint64_t)count < avail) ? (size_t)count : (size_t)avail;
+		off_t target_offset = (off_t)((uint64_t)offset + ctx->information->boot_sectors_backup);
+		int ret = dis_write_encrypted(ctx, in, target_offset, first_len);
+		if (ret < 0) {
+			errno = (ret == -EPERM) ? EPERM : EIO;
+			return -1;
+		}
+		total_written += ret;
+		if ((size_t)ret < first_len || total_written == count)
+			return total_written;
+	}
+
+	size_t rem = (size_t)(count - total_written);
+	off_t rem_offset = (off_t)(offset + total_written);
+	int ret = dis_write_encrypted(ctx, in + total_written, rem_offset, rem);
+	if (ret < 0) {
+		if (total_written > 0)
+			return total_written;
+		errno = (ret == -EPERM) ? EPERM : EIO;
+		return -1;
+	}
+	return total_written + ret;
 }
 
 static int dislocker_dev_sync(struct ntfs_device *dev)

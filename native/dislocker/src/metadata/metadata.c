@@ -30,8 +30,9 @@ static int get_volume_header(dis_ctx_t *ctx, volume_header_t *vh)
 
 static int check_volume_header(const volume_header_t *vh)
 {
-	if (vh->sector_size == 0) {
-		dis_set_error("Volume header has a null sector size");
+	if (vh->sector_size != 512 && vh->sector_size != 1024 &&
+	    vh->sector_size != 2048 && vh->sector_size != 4096) {
+		dis_set_error("Volume header has invalid sector size (%u)", vh->sector_size);
 		return FALSE;
 	}
 	if (memcmp(BITLOCKER_SIGNATURE, vh->signature, strlen(BITLOCKER_SIGNATURE)) == 0)
@@ -216,6 +217,11 @@ int dis_metadata_parse(dis_ctx_t *ctx)
 	ctx->metadata = metadata;
 	ctx->metadata_size = metadata_size;
 	ctx->volume_state = info->curr_state;
+
+	if (ctx->volume_state != METADATA_STATE_ENCRYPTED) {
+		dis_set_error("Volume state %u is not safely encrypted (cannot open)", ctx->volume_state);
+		return DIS_RET_ERROR_VOLUME_STATE_NOT_SAFE;
+	}
 
 	/* 4. dataset */
 	if (!get_dataset(metadata, &ctx->dataset)) {
@@ -479,6 +485,11 @@ int dis_metadata_restore_package(dis_ctx_t *ctx, const uint8_t *pkg, size_t pkg_
 	}
 
 	/* Safety Guard: Check sector size */
+	if (hdr->sector_size != 512 && hdr->sector_size != 1024 &&
+	    hdr->sector_size != 2048 && hdr->sector_size != 4096) {
+		dis_set_error("Safety violation: invalid backup sector size (%u)", hdr->sector_size);
+		return -101;
+	}
 	if (ctx->sector_size != 0 && ctx->sector_size != hdr->sector_size) {
 		dis_set_error("Safety violation: target sector size (%u) does not match backup (%u)",
 			ctx->sector_size, hdr->sector_size);
@@ -512,13 +523,15 @@ int dis_metadata_restore_package(dis_ctx_t *ctx, const uint8_t *pkg, size_t pkg_
 
 	/* Unpack and raw-write Sector 0 (VBR) */
 	size_t cur = hdr->header_len;
-	if (cur + sizeof(fve_meta_vbr_hdr_t) > pkg_len)
+	if (sizeof(fve_meta_vbr_hdr_t) > pkg_len - cur)
 		return -3;
 	const fve_meta_vbr_hdr_t *vbr_hdr = (const fve_meta_vbr_hdr_t *)(pkg + cur);
 	cur += sizeof(fve_meta_vbr_hdr_t);
 
-	if (cur + vbr_hdr->vbr_size > pkg_len)
+	if (vbr_hdr->vbr_size == 0 || vbr_hdr->vbr_size > 65536U || vbr_hdr->vbr_size > pkg_len - cur)
 		return -3;
+	if (tgt_sz > 0 && (uint64_t)vbr_hdr->vbr_size > tgt_sz)
+		return -101;
 
 	int wr = dis_blk_write_raw(ctx, pkg + cur, 0, vbr_hdr->vbr_size);
 	if (wr != (int)vbr_hdr->vbr_size) {
@@ -528,19 +541,24 @@ int dis_metadata_restore_package(dis_ctx_t *ctx, const uint8_t *pkg, size_t pkg_
 	cur += vbr_hdr->vbr_size;
 
 	/* Unpack and raw-write regions */
-	if (cur + sizeof(fve_meta_regions_hdr_t) > pkg_len)
+	if (sizeof(fve_meta_regions_hdr_t) > pkg_len - cur)
 		return -3;
 	const fve_meta_regions_hdr_t *regs_hdr = (const fve_meta_regions_hdr_t *)(pkg + cur);
 	cur += sizeof(fve_meta_regions_hdr_t);
 
+	if (regs_hdr->region_count > 16U)
+		return -3;
+
 	for (uint32_t i = 0; i < regs_hdr->region_count; i++) {
-		if (cur + sizeof(fve_meta_region_entry_t) > pkg_len)
+		if (sizeof(fve_meta_region_entry_t) > pkg_len - cur)
 			return -3;
 		const fve_meta_region_entry_t *entry = (const fve_meta_region_entry_t *)(pkg + cur);
 		cur += sizeof(fve_meta_region_entry_t);
 
-		if (cur + entry->length > pkg_len)
+		if (entry->length > 1024U * 1024U || entry->length > pkg_len - cur)
 			return -3;
+		if (tgt_sz > 0 && (entry->offset > tgt_sz || (uint64_t)entry->length > tgt_sz - entry->offset))
+			return -101;
 
 		if (entry->length > 0 && entry->offset > 0) {
 			int rwr = dis_blk_write_raw(ctx, pkg + cur, (off_t)entry->offset, entry->length);

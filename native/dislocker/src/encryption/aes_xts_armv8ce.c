@@ -102,7 +102,7 @@ int aes_xts_crypt_armv8ce(aes_ctx_t *crypt_ctx, aes_ctx_t *tweak_ctx, int encryp
                           size_t length, const unsigned char *iv,
                           const unsigned char *input, unsigned char *output)
 {
-    if (length < 16) return -1;
+    if (length < 16 || (length % 16) != 0) return -1;
 
     int nr = crypt_ctx->enc.nr;
     if (nr != 10 && nr != 14) return -1; // AES-128 (10 rounds) or AES-256 (14 rounds)

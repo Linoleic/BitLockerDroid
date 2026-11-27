@@ -23,6 +23,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <limits.h>
 
 /* ---------------- error reporting ---------------- */
 
@@ -169,9 +170,60 @@ dis_ctx_t *dis_open_volume_recovery(const char *path, off_t offset,
 	return dis_open_volume_common(path, offset, NULL, 0, recovery_key, recovery_key_len, info);
 }
 
+static int dis_is_valid_sector_size(uint16_t sector_size)
+{
+	return sector_size == 512 || sector_size == 1024 ||
+		sector_size == 2048 || sector_size == 4096;
+}
+
+static int dis_check_write_barrier(dis_ctx_t *ctx, off_t offset, size_t size)
+{
+	if (!ctx || !dis_is_valid_sector_size(ctx->sector_size)) {
+		dis_set_error("Invalid context or sector size");
+		return -EINVAL;
+	}
+
+	if (offset < 0 || (uint64_t)size > ctx->volume_size ||
+	    (uint64_t)offset > ctx->volume_size - (uint64_t)size) {
+		dis_set_error("Offset %lld + size %zu exceeds volume size %llu",
+			(long long)offset, size, (unsigned long long)ctx->volume_size);
+		return -EINVAL;
+	}
+
+	/* Write barrier: protect BitLocker volume header (sectors 0..15) and metadata blocks */
+	uint64_t header_bytes = 8192ULL;
+	if (ctx->information && ctx->information->nb_backup_sectors > 0) {
+		if ((uint64_t)ctx->information->nb_backup_sectors > UINT64_MAX / ctx->sector_size) {
+			dis_set_error("Write barrier overflow");
+			return -EINVAL;
+		}
+		header_bytes = (uint64_t)ctx->information->nb_backup_sectors * ctx->sector_size;
+	}
+	if ((uint64_t)offset < header_bytes) {
+		dis_set_error("Write barrier violation: offset %lld is in protected BitLocker header area",
+			(long long)offset);
+		return -EPERM;
+	}
+	if (ctx->information) {
+		uint64_t msize = (ctx->metadata_size > 0x10000ULL) ? (uint64_t)ctx->metadata_size : 0x10000ULL;
+		uint64_t write_start = (uint64_t)offset;
+		uint64_t write_end = write_start + (uint64_t)size;
+		for (int i = 0; i < 3; i++) {
+			uint64_t info_off = ctx->information->information_off[i];
+			if (info_off != 0 && info_off <= UINT64_MAX - msize &&
+			    write_start < info_off + msize && write_end > info_off) {
+				dis_set_error("Write barrier violation: offset %lld is in protected FVE metadata block %d",
+					(long long)offset, i);
+				return -EPERM;
+			}
+		}
+	}
+	return 0;
+}
+
 int dis_read_decrypted(dis_ctx_t *ctx, uint8_t *buffer, off_t offset, size_t size)
 {
-	if (!ctx || !buffer) {
+	if (!ctx || !buffer || !dis_is_valid_sector_size(ctx->sector_size)) {
 		dis_set_error("Invalid arguments to dis_read_decrypted");
 		return -EINVAL;
 	}
@@ -179,27 +231,20 @@ int dis_read_decrypted(dis_ctx_t *ctx, uint8_t *buffer, off_t offset, size_t siz
 	if (size == 0)
 		return 0;
 
-	if (offset < 0) {
-		dis_set_error("Negative offset %lld", (long long)offset);
-		return -EINVAL;
-	}
-
-	if ((uint64_t)offset >= ctx->volume_size) {
-		dis_set_error("Offset %lld exceeds volume size %llu",
-			(long long)offset, (unsigned long long)ctx->volume_size);
+	if (offset < 0 || (uint64_t)size > ctx->volume_size ||
+	    (uint64_t)offset > ctx->volume_size - (uint64_t)size) {
+		dis_set_error("Offset %lld + size %zu exceeds volume size %llu",
+			(long long)offset, size, (unsigned long long)ctx->volume_size);
 		return -EINVAL;
 	}
 
 	uint16_t sector_size = ctx->sector_size;
-	size_t sector_to_add = 0;
-
-	if ((offset % sector_size) != 0)
-		sector_to_add += 1;
-	if (((offset + (off_t)size) % sector_size) != 0)
-		sector_to_add += 1;
-
-	size_t sector_count = (size / sector_size) + sector_to_add;
 	off_t sector_start = offset / sector_size;
+	off_t sector_end = (offset + (off_t)size + sector_size - 1) / sector_size;
+	size_t sector_count = (size_t)(sector_end - sector_start);
+	if (sector_count > SIZE_MAX / sector_size || sector_count * sector_size > (size_t)INT_MAX) {
+		return -EINVAL;
+	}
 	size_t total = sector_count * sector_size;
 
 	uint8_t *buf = malloc(total);
@@ -247,42 +292,17 @@ int dis_write_encrypted(dis_ctx_t *ctx, const uint8_t *buffer, off_t offset, siz
 	if (size == 0)
 		return 0;
 
-	if (offset < 0) {
-		dis_set_error("Negative offset %lld", (long long)offset);
-		return -EINVAL;
-	}
-
-	if ((uint64_t)(offset + size) > ctx->volume_size) {
-		dis_set_error("Offset %lld + size %zu exceeds volume size %llu",
-			(long long)offset, size, (unsigned long long)ctx->volume_size);
-		return -EINVAL;
-	}
-
-	/* Write barrier: protect BitLocker volume header (sectors 0..15) and metadata blocks */
-	size_t header_bytes = 8192;
-	if (ctx->information && ctx->information->nb_backup_sectors > 0) {
-		header_bytes = (size_t)ctx->information->nb_backup_sectors * ctx->sector_size;
-	}
-	if (offset < (off_t)header_bytes) {
-		dis_set_error("Write barrier violation: offset %lld is in protected BitLocker header area",
-			(long long)offset);
-		return -EPERM;
-	}
-	if (ctx->information) {
-		for (int i = 0; i < 3; i++) {
-			off_t info_off = (off_t)ctx->information->information_off[i];
-			if (info_off != 0 && offset >= info_off && offset < info_off + 0x10000) {
-				dis_set_error("Write barrier violation: offset %lld is in protected FVE metadata block %d",
-					(long long)offset, i);
-				return -EPERM;
-			}
-		}
-	}
+	int barrier_rc = dis_check_write_barrier(ctx, offset, size);
+	if (barrier_rc != 0)
+		return barrier_rc;
 
 	uint16_t sector_size = ctx->sector_size;
 	off_t sector_start = offset / sector_size;
 	off_t sector_end = (offset + (off_t)size + sector_size - 1) / sector_size;
 	size_t sector_count = (size_t)(sector_end - sector_start);
+	if (sector_count > SIZE_MAX / sector_size || sector_count * sector_size > (size_t)INT_MAX) {
+		return -EINVAL;
+	}
 	size_t total = sector_count * sector_size;
 
 	uint8_t *enc_buf = malloc(total);
@@ -297,33 +317,27 @@ int dis_write_encrypted(dis_ctx_t *ctx, const uint8_t *buffer, off_t offset, siz
 
 	if (sector_count == 1) {
 		if (first_sec_off > 0 || last_sec_tail > 0) {
-			if (dis_blk_read(ctx, enc_buf, first_sec_addr, sector_size) != (int)sector_size) {
-				free(enc_buf);
-				return -EIO;
-			}
-			if (!dis_decrypt_sector(ctx, enc_buf, first_sec_addr)) {
+			if (dis_blk_read(ctx, enc_buf, first_sec_addr, sector_size) != (int)sector_size ||
+			    !dis_decrypt_sector(ctx, enc_buf, first_sec_addr)) {
+				dis_secure_zero(enc_buf, total);
 				free(enc_buf);
 				return -EIO;
 			}
 		}
 	} else {
 		if (first_sec_off > 0) {
-			if (dis_blk_read(ctx, enc_buf, first_sec_addr, sector_size) != (int)sector_size) {
-				free(enc_buf);
-				return -EIO;
-			}
-			if (!dis_decrypt_sector(ctx, enc_buf, first_sec_addr)) {
+			if (dis_blk_read(ctx, enc_buf, first_sec_addr, sector_size) != (int)sector_size ||
+			    !dis_decrypt_sector(ctx, enc_buf, first_sec_addr)) {
+				dis_secure_zero(enc_buf, total);
 				free(enc_buf);
 				return -EIO;
 			}
 		}
 		if (last_sec_tail > 0) {
 			uint8_t *last_dst = enc_buf + (sector_count - 1) * sector_size;
-			if (dis_blk_read(ctx, last_dst, last_sec_addr, sector_size) != (int)sector_size) {
-				free(enc_buf);
-				return -EIO;
-			}
-			if (!dis_decrypt_sector(ctx, last_dst, last_sec_addr)) {
+			if (dis_blk_read(ctx, last_dst, last_sec_addr, sector_size) != (int)sector_size ||
+			    !dis_decrypt_sector(ctx, last_dst, last_sec_addr)) {
+				dis_secure_zero(enc_buf, total);
 				free(enc_buf);
 				return -EIO;
 			}
@@ -394,29 +408,12 @@ int dis_encrypt_region(dis_ctx_t *ctx, const uint8_t *in, uint8_t *out,
 	if (!ctx || !in || !out || size == 0)
 		return -1;
 
+	if (dis_check_write_barrier(ctx, offset, size) != 0)
+		return -1;
+
 	uint16_t sector_size = ctx->sector_size;
 	if (offset % sector_size != 0 || size % sector_size != 0)
 		return -1;
-
-	/* Write barrier: protect BitLocker volume header (sectors 0..15) and metadata blocks */
-	size_t header_bytes = 8192;
-	if (ctx->information && ctx->information->nb_backup_sectors > 0) {
-		header_bytes = (size_t)ctx->information->nb_backup_sectors * ctx->sector_size;
-	}
-	if (offset < (off_t)header_bytes) {
-		dis_set_error("Write barrier violation: offset %lld is in protected BitLocker header area", (long long)offset);
-		return -1;
-	}
-	if (ctx->information) {
-		for (int i = 0; i < 3; i++) {
-			off_t info_off = (off_t)ctx->information->information_off[i];
-			if (info_off != 0 && offset >= info_off && offset < info_off + 0x10000) {
-				dis_set_error("Write barrier violation: offset %lld is in protected FVE metadata block %d",
-					(long long)offset, i);
-				return -1;
-			}
-		}
-	}
 
 	size_t n = size / sector_size;
 	for (size_t i = 0; i < n; i++) {
