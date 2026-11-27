@@ -89,6 +89,8 @@ static dis_ctx_t *ptrj(jlong h)
 
 typedef struct {
 	dis_ctx_t *ctx;
+	jlong ntfs_token;
+	jlong fatfs_token;
 	pthread_mutex_t lock;
 	int used;
 	int closing;
@@ -96,6 +98,7 @@ typedef struct {
 
 static jni_slot_t g_sessions[JNI_MAX_SESSIONS];
 static pthread_mutex_t g_sessions_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t g_vfs_token_seq = 1;
 
 static jlong slot_register(dis_ctx_t *ctx)
 {
@@ -104,6 +107,8 @@ static jlong slot_register(dis_ctx_t *ctx)
 	for (int i = 0; i < JNI_MAX_SESSIONS; i++) {
 		if (!g_sessions[i].used) {
 			g_sessions[i].ctx = ctx;
+			g_sessions[i].ntfs_token = 0;
+			g_sessions[i].fatfs_token = 0;
 			g_sessions[i].closing = 0;
 			g_sessions[i].used = 1;
 			h = jptr(ctx);
@@ -114,29 +119,104 @@ static jlong slot_register(dis_ctx_t *ctx)
 	return h;
 }
 
-/* Returns the slot owning `h` with its per-slot lock held, or NULL. */
+/* Returns the slot owning `h` with its per-slot lock held, or NULL.
+ * Never blocks on s->lock while holding g_sessions_lock (preserves lock order:
+ * target->lock -> g_sessions_lock). */
 static jni_slot_t *slot_acquire(jlong h)
 {
 	dis_ctx_t *ctx = ptrj(h);
 	if (!ctx)
 		return NULL;
 
+	jni_slot_t *target = NULL;
 	pthread_mutex_lock(&g_sessions_lock);
 	for (int i = 0; i < JNI_MAX_SESSIONS; i++) {
 		jni_slot_t *s = &g_sessions[i];
 		if (s->used && !s->closing && s->ctx == ctx) {
-			pthread_mutex_lock(&s->lock);
-			if (s->closing || !s->used) {
-				pthread_mutex_unlock(&s->lock);
-				pthread_mutex_unlock(&g_sessions_lock);
-				return NULL;
-			}
-			pthread_mutex_unlock(&g_sessions_lock);
-			return s;
+			target = s;
+			break;
 		}
 	}
 	pthread_mutex_unlock(&g_sessions_lock);
-	return NULL;
+
+	if (!target)
+		return NULL;
+
+	pthread_mutex_lock(&target->lock);
+	pthread_mutex_lock(&g_sessions_lock);
+	int valid = (target->used && !target->closing && target->ctx == ctx);
+	pthread_mutex_unlock(&g_sessions_lock);
+	if (!valid) {
+		pthread_mutex_unlock(&target->lock);
+		return NULL;
+	}
+	return target;
+}
+
+static jni_slot_t *slot_acquire_ntfs(jlong token, dis_ntfs_handle_t *out_vol)
+{
+	if (!token || !out_vol)
+		return NULL;
+
+	jni_slot_t *target = NULL;
+	pthread_mutex_lock(&g_sessions_lock);
+	for (int i = 0; i < JNI_MAX_SESSIONS; i++) {
+		jni_slot_t *s = &g_sessions[i];
+		if (s->used && !s->closing && s->ntfs_token == token) {
+			target = s;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&g_sessions_lock);
+
+	if (!target)
+		return NULL;
+
+	pthread_mutex_lock(&target->lock);
+	pthread_mutex_lock(&g_sessions_lock);
+	int valid = (target->used && !target->closing &&
+		target->ntfs_token == token && target->ctx && target->ctx->ntfs_vol);
+	dis_ntfs_handle_t vol = valid ? (dis_ntfs_handle_t)target->ctx->ntfs_vol : NULL;
+	pthread_mutex_unlock(&g_sessions_lock);
+	if (!valid || !vol) {
+		pthread_mutex_unlock(&target->lock);
+		return NULL;
+	}
+	*out_vol = vol;
+	return target;
+}
+
+static jni_slot_t *slot_acquire_fatfs(jlong token, dis_fatfs_handle_t *out_vol)
+{
+	if (!token || !out_vol)
+		return NULL;
+
+	jni_slot_t *target = NULL;
+	pthread_mutex_lock(&g_sessions_lock);
+	for (int i = 0; i < JNI_MAX_SESSIONS; i++) {
+		jni_slot_t *s = &g_sessions[i];
+		if (s->used && !s->closing && s->fatfs_token == token) {
+			target = s;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&g_sessions_lock);
+
+	if (!target)
+		return NULL;
+
+	pthread_mutex_lock(&target->lock);
+	pthread_mutex_lock(&g_sessions_lock);
+	int valid = (target->used && !target->closing &&
+		target->fatfs_token == token && target->ctx && target->ctx->fatfs_vol);
+	dis_fatfs_handle_t vol = valid ? (dis_fatfs_handle_t)target->ctx->fatfs_vol : NULL;
+	pthread_mutex_unlock(&g_sessions_lock);
+	if (!valid || !vol) {
+		pthread_mutex_unlock(&target->lock);
+		return NULL;
+	}
+	*out_vol = vol;
+	return target;
 }
 
 static void slot_release(jni_slot_t *s)
@@ -175,6 +255,8 @@ static dis_ctx_t *slot_take(jlong h)
 	pthread_mutex_lock(&g_sessions_lock);
 	target->used = 0;
 	target->closing = 0;
+	target->ntfs_token = 0;
+	target->fatfs_token = 0;
 	target->ctx = NULL;
 	pthread_mutex_unlock(&g_sessions_lock);
 
@@ -186,6 +268,8 @@ static dis_ctx_t *slot_take(jlong h)
 
 static jboolean native_hasBitLockerHeader(JNIEnv *env, jobject thiz, jstring path)
 {
+	if (!path)
+		return JNI_FALSE;
 	const char *cpath = (*env)->GetStringUTFChars(env, path, NULL);
 	if (!cpath)
 		return JNI_FALSE;
@@ -507,21 +591,40 @@ static jlong native_ntfsMount(JNIEnv *env, jobject thiz, jlong handle, jboolean 
 	if (!slot)
 		return 0;
 	dis_ctx_t *ctx = slot->ctx;
-
-	dis_ntfs_handle_t vol = dis_ntfs_mount(ctx, readOnly ? 1 : 0);
-	slot_release(slot);
-	if (!vol) {
-		LOGE("nativeNtfsMount failed for %s", ctx->device_path);
+	if (ctx->ntfs_vol) {
+		LOGE("nativeNtfsMount: NTFS volume already mounted for %s", ctx->device_path);
+		slot_release(slot);
 		return 0;
 	}
-	return (jlong)(intptr_t)vol;
+
+	dis_ntfs_handle_t vol = dis_ntfs_mount(ctx, readOnly ? 1 : 0);
+	if (!vol) {
+		LOGE("nativeNtfsMount failed for %s", ctx->device_path);
+		slot_release(slot);
+		return 0;
+	}
+	pthread_mutex_lock(&g_sessions_lock);
+	jlong token = (jlong)(++g_vfs_token_seq);
+	if (token == 0) token = (jlong)(++g_vfs_token_seq);
+	slot->ntfs_token = token;
+	pthread_mutex_unlock(&g_sessions_lock);
+	slot_release(slot);
+	return token;
 }
 
 static jint native_ntfsUmount(JNIEnv *env, jobject thiz, jlong volHandle)
 {
-	if (!volHandle)
+	dis_ntfs_handle_t vol = NULL;
+	jni_slot_t *slot = slot_acquire_ntfs(volHandle, &vol);
+	if (!slot)
 		return 0;
-	return (jint)dis_ntfs_umount((dis_ntfs_handle_t)(intptr_t)volHandle);
+
+	int ret = dis_ntfs_umount(vol);
+	pthread_mutex_lock(&g_sessions_lock);
+	slot->ntfs_token = 0;
+	pthread_mutex_unlock(&g_sessions_lock);
+	slot_release(slot);
+	return (jint)ret;
 }
 
 static jlong native_ntfsCreate(JNIEnv *env, jobject thiz, jlong volHandle,
@@ -531,9 +634,18 @@ static jlong native_ntfsCreate(JNIEnv *env, jobject thiz, jlong volHandle,
 		return -1;
 
 	const char *cparent = parentPath ? (*env)->GetStringUTFChars(env, parentPath, NULL) : NULL;
+	if (parentPath && !cparent)
+		return -1;
 	const char *cname = (*env)->GetStringUTFChars(env, name, NULL);
+	if (!cname) {
+		if (cparent) (*env)->ReleaseStringUTFChars(env, parentPath, cparent);
+		return -1;
+	}
 
-	int64_t ret = dis_ntfs_create((dis_ntfs_handle_t)(intptr_t)volHandle, cparent, cname, isDir ? 1 : 0);
+	dis_ntfs_handle_t vol = NULL;
+	jni_slot_t *slot = slot_acquire_ntfs(volHandle, &vol);
+	int64_t ret = slot ? dis_ntfs_create(vol, cparent, cname, isDir ? 1 : 0) : -1;
+	slot_release(slot);
 
 	if (cparent)
 		(*env)->ReleaseStringUTFChars(env, parentPath, cparent);
@@ -548,9 +660,15 @@ static jint native_ntfsDelete(JNIEnv *env, jobject thiz, jlong volHandle, jstrin
 		return -1;
 
 	const char *cpath = (*env)->GetStringUTFChars(env, path, NULL);
-	int ret = dis_ntfs_delete((dis_ntfs_handle_t)(intptr_t)volHandle, cpath);
-	(*env)->ReleaseStringUTFChars(env, path, cpath);
+	if (!cpath)
+		return -1;
 
+	dis_ntfs_handle_t vol = NULL;
+	jni_slot_t *slot = slot_acquire_ntfs(volHandle, &vol);
+	int ret = slot ? dis_ntfs_delete(vol, cpath) : -1;
+	slot_release(slot);
+
+	(*env)->ReleaseStringUTFChars(env, path, cpath);
 	return (jint)ret;
 }
 
@@ -561,9 +679,18 @@ static jint native_ntfsRename(JNIEnv *env, jobject thiz, jlong volHandle,
 		return -1;
 
 	const char *cold = (*env)->GetStringUTFChars(env, oldPath, NULL);
+	if (!cold)
+		return -1;
 	const char *cnew = (*env)->GetStringUTFChars(env, newPath, NULL);
+	if (!cnew) {
+		(*env)->ReleaseStringUTFChars(env, oldPath, cold);
+		return -1;
+	}
 
-	int ret = dis_ntfs_rename((dis_ntfs_handle_t)(intptr_t)volHandle, cold, cnew);
+	dis_ntfs_handle_t vol = NULL;
+	jni_slot_t *slot = slot_acquire_ntfs(volHandle, &vol);
+	int ret = slot ? dis_ntfs_rename(vol, cold, cnew) : -1;
+	slot_release(slot);
 
 	(*env)->ReleaseStringUTFChars(env, oldPath, cold);
 	(*env)->ReleaseStringUTFChars(env, newPath, cnew);
@@ -579,27 +706,43 @@ static jlong native_ntfsWrite(JNIEnv *env, jobject thiz, jlong volHandle,
 
 	jsize dlen = (*env)->GetArrayLength(env, data);
 	if (count > dlen) count = dlen;
+	if (count <= 0)
+		return 0;
 
 	const char *cpath = (*env)->GetStringUTFChars(env, path, NULL);
 	if (!cpath) return -1;
 
-	void *buf = (*env)->GetPrimitiveArrayCritical(env, data, NULL);
+	uint8_t *buf = (uint8_t *)malloc((size_t)count);
 	if (!buf) {
 		(*env)->ReleaseStringUTFChars(env, path, cpath);
 		return -1;
 	}
+	(*env)->GetByteArrayRegion(env, data, 0, count, (jbyte *)buf);
+	if ((*env)->ExceptionCheck(env)) {
+		free(buf);
+		(*env)->ReleaseStringUTFChars(env, path, cpath);
+		return -1;
+	}
 
-	int64_t ret = dis_ntfs_write((dis_ntfs_handle_t)(intptr_t)volHandle, cpath, (int64_t)offset, (const uint8_t *)buf, (int64_t)count);
+	dis_ntfs_handle_t vol = NULL;
+	jni_slot_t *slot = slot_acquire_ntfs(volHandle, &vol);
+	int64_t ret = slot ? dis_ntfs_write(vol, cpath, (int64_t)offset, buf, (int64_t)count) : -1;
+	slot_release(slot);
 
-	(*env)->ReleasePrimitiveArrayCritical(env, data, buf, JNI_ABORT);
+	dis_secure_zero(buf, (size_t)count);
+	free(buf);
 	(*env)->ReleaseStringUTFChars(env, path, cpath);
 	return (jlong)ret;
 }
 
 static jint native_ntfsSync(JNIEnv *env, jobject thiz, jlong volHandle)
 {
-	if (!volHandle) return -1;
-	return (jint)dis_ntfs_sync((dis_ntfs_handle_t)(intptr_t)volHandle);
+	dis_ntfs_handle_t vol = NULL;
+	jni_slot_t *slot = slot_acquire_ntfs(volHandle, &vol);
+	if (!slot) return -1;
+	int ret = dis_ntfs_sync(vol);
+	slot_release(slot);
+	return (jint)ret;
 }
 
 static jlong native_ntfsTruncate(JNIEnv *env, jobject thiz, jlong volHandle,
@@ -609,9 +752,15 @@ static jlong native_ntfsTruncate(JNIEnv *env, jobject thiz, jlong volHandle,
 		return -1;
 
 	const char *cpath = (*env)->GetStringUTFChars(env, path, NULL);
-	int64_t ret = dis_ntfs_truncate((dis_ntfs_handle_t)(intptr_t)volHandle, cpath, (int64_t)newSize);
-	(*env)->ReleaseStringUTFChars(env, path, cpath);
+	if (!cpath)
+		return -1;
 
+	dis_ntfs_handle_t vol = NULL;
+	jni_slot_t *slot = slot_acquire_ntfs(volHandle, &vol);
+	int64_t ret = slot ? dis_ntfs_truncate(vol, cpath, (int64_t)newSize) : -1;
+	slot_release(slot);
+
+	(*env)->ReleaseStringUTFChars(env, path, cpath);
 	return (jlong)ret;
 }
 
@@ -621,21 +770,40 @@ static jlong native_fatfsMount(JNIEnv *env, jobject thiz, jlong handle, jboolean
 	if (!slot)
 		return 0;
 	dis_ctx_t *ctx = slot->ctx;
-
-	dis_fatfs_handle_t vol = dis_fatfs_mount(ctx, readOnly ? 1 : 0);
-	slot_release(slot);
-	if (!vol) {
-		LOGE("nativeFatfsMount failed for %s", ctx->device_path);
+	if (ctx->fatfs_vol) {
+		LOGE("nativeFatfsMount: FatFs volume already mounted for %s", ctx->device_path);
+		slot_release(slot);
 		return 0;
 	}
-	return (jlong)(intptr_t)vol;
+
+	dis_fatfs_handle_t vol = dis_fatfs_mount(ctx, readOnly ? 1 : 0);
+	if (!vol) {
+		LOGE("nativeFatfsMount failed for %s", ctx->device_path);
+		slot_release(slot);
+		return 0;
+	}
+	pthread_mutex_lock(&g_sessions_lock);
+	jlong token = (jlong)(++g_vfs_token_seq);
+	if (token == 0) token = (jlong)(++g_vfs_token_seq);
+	slot->fatfs_token = token;
+	pthread_mutex_unlock(&g_sessions_lock);
+	slot_release(slot);
+	return token;
 }
 
 static jint native_fatfsUmount(JNIEnv *env, jobject thiz, jlong volHandle)
 {
-	if (!volHandle)
+	dis_fatfs_handle_t vol = NULL;
+	jni_slot_t *slot = slot_acquire_fatfs(volHandle, &vol);
+	if (!slot)
 		return 0;
-	return (jint)dis_fatfs_umount((dis_fatfs_handle_t)(intptr_t)volHandle);
+
+	int ret = dis_fatfs_umount(vol);
+	pthread_mutex_lock(&g_sessions_lock);
+	slot->fatfs_token = 0;
+	pthread_mutex_unlock(&g_sessions_lock);
+	slot_release(slot);
+	return (jint)ret;
 }
 
 static jlong native_fatfsCreate(JNIEnv *env, jobject thiz, jlong volHandle,
@@ -645,9 +813,18 @@ static jlong native_fatfsCreate(JNIEnv *env, jobject thiz, jlong volHandle,
 		return -1;
 
 	const char *cparent = parentPath ? (*env)->GetStringUTFChars(env, parentPath, NULL) : NULL;
+	if (parentPath && !cparent)
+		return -1;
 	const char *cname = (*env)->GetStringUTFChars(env, name, NULL);
+	if (!cname) {
+		if (cparent) (*env)->ReleaseStringUTFChars(env, parentPath, cparent);
+		return -1;
+	}
 
-	int64_t ret = dis_fatfs_create((dis_fatfs_handle_t)(intptr_t)volHandle, cparent, cname, isDir ? 1 : 0);
+	dis_fatfs_handle_t vol = NULL;
+	jni_slot_t *slot = slot_acquire_fatfs(volHandle, &vol);
+	int64_t ret = slot ? dis_fatfs_create(vol, cparent, cname, isDir ? 1 : 0) : -1;
+	slot_release(slot);
 
 	if (cparent)
 		(*env)->ReleaseStringUTFChars(env, parentPath, cparent);
@@ -662,9 +839,15 @@ static jint native_fatfsDelete(JNIEnv *env, jobject thiz, jlong volHandle, jstri
 		return -1;
 
 	const char *cpath = (*env)->GetStringUTFChars(env, path, NULL);
-	int ret = dis_fatfs_delete((dis_fatfs_handle_t)(intptr_t)volHandle, cpath);
-	(*env)->ReleaseStringUTFChars(env, path, cpath);
+	if (!cpath)
+		return -1;
 
+	dis_fatfs_handle_t vol = NULL;
+	jni_slot_t *slot = slot_acquire_fatfs(volHandle, &vol);
+	int ret = slot ? dis_fatfs_delete(vol, cpath) : -1;
+	slot_release(slot);
+
+	(*env)->ReleaseStringUTFChars(env, path, cpath);
 	return (jint)ret;
 }
 
@@ -675,9 +858,18 @@ static jint native_fatfsRename(JNIEnv *env, jobject thiz, jlong volHandle,
 		return -1;
 
 	const char *cold = (*env)->GetStringUTFChars(env, oldPath, NULL);
+	if (!cold)
+		return -1;
 	const char *cnew = (*env)->GetStringUTFChars(env, newPath, NULL);
+	if (!cnew) {
+		(*env)->ReleaseStringUTFChars(env, oldPath, cold);
+		return -1;
+	}
 
-	int ret = dis_fatfs_rename((dis_fatfs_handle_t)(intptr_t)volHandle, cold, cnew);
+	dis_fatfs_handle_t vol = NULL;
+	jni_slot_t *slot = slot_acquire_fatfs(volHandle, &vol);
+	int ret = slot ? dis_fatfs_rename(vol, cold, cnew) : -1;
+	slot_release(slot);
 
 	(*env)->ReleaseStringUTFChars(env, oldPath, cold);
 	(*env)->ReleaseStringUTFChars(env, newPath, cnew);
@@ -693,27 +885,43 @@ static jlong native_fatfsWrite(JNIEnv *env, jobject thiz, jlong volHandle,
 
 	jsize dlen = (*env)->GetArrayLength(env, data);
 	if (count > dlen) count = dlen;
+	if (count <= 0)
+		return 0;
 
 	const char *cpath = (*env)->GetStringUTFChars(env, path, NULL);
 	if (!cpath) return -1;
 
-	void *buf = (*env)->GetPrimitiveArrayCritical(env, data, NULL);
+	uint8_t *buf = (uint8_t *)malloc((size_t)count);
 	if (!buf) {
 		(*env)->ReleaseStringUTFChars(env, path, cpath);
 		return -1;
 	}
+	(*env)->GetByteArrayRegion(env, data, 0, count, (jbyte *)buf);
+	if ((*env)->ExceptionCheck(env)) {
+		free(buf);
+		(*env)->ReleaseStringUTFChars(env, path, cpath);
+		return -1;
+	}
 
-	int64_t ret = dis_fatfs_write((dis_fatfs_handle_t)(intptr_t)volHandle, cpath, (int64_t)offset, (const uint8_t *)buf, (int64_t)count);
+	dis_fatfs_handle_t vol = NULL;
+	jni_slot_t *slot = slot_acquire_fatfs(volHandle, &vol);
+	int64_t ret = slot ? dis_fatfs_write(vol, cpath, (int64_t)offset, buf, (int64_t)count) : -1;
+	slot_release(slot);
 
-	(*env)->ReleasePrimitiveArrayCritical(env, data, buf, JNI_ABORT);
+	dis_secure_zero(buf, (size_t)count);
+	free(buf);
 	(*env)->ReleaseStringUTFChars(env, path, cpath);
 	return (jlong)ret;
 }
 
 static jint native_fatfsSync(JNIEnv *env, jobject thiz, jlong volHandle)
 {
-	if (!volHandle) return -1;
-	return (jint)dis_fatfs_sync((dis_fatfs_handle_t)(intptr_t)volHandle);
+	dis_fatfs_handle_t vol = NULL;
+	jni_slot_t *slot = slot_acquire_fatfs(volHandle, &vol);
+	if (!slot) return -1;
+	int ret = dis_fatfs_sync(vol);
+	slot_release(slot);
+	return (jint)ret;
 }
 
 static jlong native_fatfsTruncate(JNIEnv *env, jobject thiz, jlong volHandle,
@@ -723,9 +931,15 @@ static jlong native_fatfsTruncate(JNIEnv *env, jobject thiz, jlong volHandle,
 		return -1;
 
 	const char *cpath = (*env)->GetStringUTFChars(env, path, NULL);
-	int64_t ret = dis_fatfs_truncate((dis_fatfs_handle_t)(intptr_t)volHandle, cpath, (int64_t)newSize);
-	(*env)->ReleaseStringUTFChars(env, path, cpath);
+	if (!cpath)
+		return -1;
 
+	dis_fatfs_handle_t vol = NULL;
+	jni_slot_t *slot = slot_acquire_fatfs(volHandle, &vol);
+	int64_t ret = slot ? dis_fatfs_truncate(vol, cpath, (int64_t)newSize) : -1;
+	slot_release(slot);
+
+	(*env)->ReleaseStringUTFChars(env, path, cpath);
 	return (jlong)ret;
 }
 
@@ -750,14 +964,19 @@ static jstring native_getVolumeGuid(JNIEnv *env, jobject thiz, jlong handle)
 		guid_bytes = (const uint8_t *)ctx->volume_header.guid;
 	}
 
+	uint8_t guid_copy[16];
+	int has_guid = (guid_bytes != NULL);
+	if (has_guid) {
+		memcpy(guid_copy, guid_bytes, 16);
+	}
 	slot_release(slot);
 
-	if (!guid_bytes)
+	if (!has_guid)
 		return NULL;
 
 	int all_zero = 1;
 	for (int i = 0; i < 16; i++) {
-		if (guid_bytes[i] != 0) {
+		if (guid_copy[i] != 0) {
 			all_zero = 0;
 			break;
 		}
@@ -766,13 +985,13 @@ static jstring native_getVolumeGuid(JNIEnv *env, jobject thiz, jlong handle)
 		return NULL;
 
 	char buf[40];
-	uint32_t d1 = (uint32_t)guid_bytes[0] | ((uint32_t)guid_bytes[1] << 8) | ((uint32_t)guid_bytes[2] << 16) | ((uint32_t)guid_bytes[3] << 24);
-	uint16_t d2 = (uint16_t)guid_bytes[4] | ((uint16_t)guid_bytes[5] << 8);
-	uint16_t d3 = (uint16_t)guid_bytes[6] | ((uint16_t)guid_bytes[7] << 8);
+	uint32_t d1 = (uint32_t)guid_copy[0] | ((uint32_t)guid_copy[1] << 8) | ((uint32_t)guid_copy[2] << 16) | ((uint32_t)guid_copy[3] << 24);
+	uint16_t d2 = (uint16_t)guid_copy[4] | ((uint16_t)guid_copy[5] << 8);
+	uint16_t d3 = (uint16_t)guid_copy[6] | ((uint16_t)guid_copy[7] << 8);
 	snprintf(buf, sizeof(buf), "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
 		d1, d2, d3,
-		guid_bytes[8], guid_bytes[9],
-		guid_bytes[10], guid_bytes[11], guid_bytes[12], guid_bytes[13], guid_bytes[14], guid_bytes[15]);
+		guid_copy[8], guid_copy[9],
+		guid_copy[10], guid_copy[11], guid_copy[12], guid_copy[13], guid_copy[14], guid_copy[15]);
 
 	return (*env)->NewStringUTF(env, buf);
 }
@@ -805,9 +1024,13 @@ static jstring native_getRecoveryKeyId(JNIEnv *env, jobject thiz, jlong handle)
 
 static jlongArray native_ntfsGetSpace(JNIEnv *env, jobject thiz, jlong volHandle)
 {
-	if (!volHandle) return NULL;
+	dis_ntfs_handle_t vol = NULL;
+	jni_slot_t *slot = slot_acquire_ntfs(volHandle, &vol);
+	if (!slot) return NULL;
 	int64_t total = 0, free_b = 0;
-	if (dis_ntfs_get_space((dis_ntfs_handle_t)(intptr_t)volHandle, &total, &free_b) != 0)
+	int rc = dis_ntfs_get_space(vol, &total, &free_b);
+	slot_release(slot);
+	if (rc != 0)
 		return NULL;
 	jlong vals[2] = { (jlong)total, (jlong)free_b };
 	jlongArray out = (*env)->NewLongArray(env, 2);
@@ -818,15 +1041,23 @@ static jlongArray native_ntfsGetSpace(JNIEnv *env, jobject thiz, jlong volHandle
 
 static jint native_ntfsRepairDirty(JNIEnv *env, jobject thiz, jlong volHandle)
 {
-	if (!volHandle) return -1;
-	return (jint)dis_ntfs_repair_dirty((dis_ntfs_handle_t)(intptr_t)volHandle);
+	dis_ntfs_handle_t vol = NULL;
+	jni_slot_t *slot = slot_acquire_ntfs(volHandle, &vol);
+	if (!slot) return -1;
+	int ret = dis_ntfs_repair_dirty(vol);
+	slot_release(slot);
+	return (jint)ret;
 }
 
 static jlongArray native_fatfsGetSpace(JNIEnv *env, jobject thiz, jlong volHandle)
 {
-	if (!volHandle) return NULL;
+	dis_fatfs_handle_t vol = NULL;
+	jni_slot_t *slot = slot_acquire_fatfs(volHandle, &vol);
+	if (!slot) return NULL;
 	int64_t total = 0, free_b = 0;
-	if (dis_fatfs_get_space((dis_fatfs_handle_t)(intptr_t)volHandle, &total, &free_b) != 0)
+	int rc = dis_fatfs_get_space(vol, &total, &free_b);
+	slot_release(slot);
+	if (rc != 0)
 		return NULL;
 	jlong vals[2] = { (jlong)total, (jlong)free_b };
 	jlongArray out = (*env)->NewLongArray(env, 2);

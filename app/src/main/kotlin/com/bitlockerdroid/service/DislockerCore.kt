@@ -415,12 +415,17 @@ class DislockerCore private constructor(
 
     val blockSource: NtfsBlockSource get() = cachedSource
 
-    /** Invalidate all block and filesystem caches after a write/delete/rename operation */
-    fun invalidateCache() {
+    /** Invalidate only in-process block and reader caches without signaling FUSE. */
+    fun invalidateLocalCacheOnly() {
         spaceCache.invalidate()
         cachedSource.clear()
         createdEntries.clear()
         reader.invalidateCache()
+    }
+
+    /** Invalidate all block and filesystem caches after a write/delete/rename operation */
+    fun invalidateCache() {
+        invalidateLocalCacheOnly()
         // SAF mutations must become visible to the FUSE daemon's own FatFs /
         // ntfs-3g caches (cross-session cache coherency).
         VirtualStorageMountManager.notifyDataChanged(devicePath)
@@ -564,21 +569,12 @@ class DislockerCore private constructor(
         try {
             when (reader) {
                 is com.bitlockerdroid.ntfs.NtfsReader -> {
+                    val app = try { com.bitlockerdroid.util.ContextProvider.app } catch (_: Throwable) { null }
+                    if (app != null && com.bitlockerdroid.util.PreferenceHelper.isVolumeReadOnly(app, volumeGuid, devicePath)) {
+                        return Result.failure(Exception("Cannot repair dirty flags while volume is mounted read-only"))
+                    }
                     val w = writer as? com.bitlockerdroid.ntfs.NtfsWriter
-                    var success = false
-                    if (w != null && w.isMounted) {
-                        success = w.repairDirty()
-                    }
-                    if (!success) {
-                        val tempWriter = com.bitlockerdroid.ntfs.NtfsWriter(handle, readOnly = false)
-                        try {
-                            if (tempWriter.isMounted) {
-                                success = tempWriter.repairDirty()
-                            }
-                        } finally {
-                            tempWriter.close()
-                        }
-                    }
+                    val success = w != null && w.isMounted && w.repairDirty()
                     if (!success) {
                         return Result.failure(Exception("NTFS dirty bit repair failed in ntfs-3g"))
                     }
