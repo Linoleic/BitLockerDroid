@@ -106,6 +106,7 @@ class PipelinedUsbCommunication(
         return transport.bulkOut(src)
     }
 
+    @Synchronized
     override fun resetDevice() {
         if (isClosed) throw IOException("Device connection is closed")
         Log.i(TAG, "Resetting USB device interface ${usbInterface.id}")
@@ -123,14 +124,26 @@ class PipelinedUsbCommunication(
         if (!deviceConnection.setInterface(usbInterface)) {
             throw IOException("Could not select BOT alternate after reset")
         }
+        transport.resetAfterBotRecovery()
+        resetStage = 0
     }
 
+    @Synchronized
     override fun clearFeatureHalt(endpoint: UsbEndpoint) {
         if (isClosed) throw IOException("Device connection is closed")
         Log.i(TAG, "Clearing halt on endpoint ${endpoint.address}")
         val clearOk = nativeClearHalt(deviceConnection.fileDescriptor, endpoint.address)
         if (!clearOk) {
             Log.w(TAG, "nativeClearHalt returned false for endpoint ${endpoint.address}")
+            return
+        }
+        if (resetStage != 0) {
+            if (endpoint.address == inEndpoint.address) resetStage = resetStage or 2
+            if (endpoint.address == outEndpoint.address) resetStage = resetStage or 4
+            if (resetStage == 7) {
+                transport.resetAfterBotRecovery()
+                resetStage = 0
+            }
         }
     }
 
@@ -155,6 +168,7 @@ class PipelinedUsbCommunication(
         if (!released) Log.i(TAG, "USB claim no longer held after reset; connection closed")
     }
 
+    @Synchronized
     override fun close() {
         if (isClosed) return
         isClosed = true

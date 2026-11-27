@@ -68,13 +68,28 @@ internal class UsbBotTransport(
         if (!dest.hasRemaining()) return 0
         if (phase != Phase.DATA_IN && phase != Phase.CSW) fail("unexpected IN")
         val status = phase == Phase.CSW
-        if (status && dest.remaining() != 13) fail("CSW buffer must contain 13 bytes")
+        if (status && dest.remaining() < 13) fail("CSW buffer must contain at least 13 bytes")
         val length = if (status) 13 else minOf(dest.remaining().toLong(), remaining, input.size.toLong()).toInt()
-        val result = if (status) readStatus() else transfer(true, input, length, 5000)
-        if (result <= 0 || result > length) fail("IN requested=$length result=$result")
+        val result = if (status) {
+            readStatus()
+        } else {
+            val r = transfer(true, input, length, 5000)
+            if (r == -32) {
+                // USB MSC BOT 6.7.2: Bulk-In STALL during Data-In ends data phase; clear halt and receive CSW.
+                if (!clearInHalt()) fail("could not clear DATA_IN halt")
+                phase = Phase.CSW
+                if (dest.remaining() < 13) fail("CSW buffer too small after DATA_IN stall")
+                readStatus()
+            } else {
+                r
+            }
+        }
+        if (result <= 0 || result > maxOf(length, if (phase == Phase.CSW) 13 else 0)) {
+            fail("IN requested=$length result=$result")
+        }
         val header = ByteBuffer.wrap(input).order(ByteOrder.LITTLE_ENDIAN)
         // Failed vendor probes may return an early CSW instead of data.
-        if (status || (result == 13 && header.getInt(0) == 0x53425355)) {
+        if (phase == Phase.CSW || (result == 13 && header.getInt(0) == 0x53425355)) {
             if (result != 13 || header.int != 0x53425355 || header.int != tag) fail("invalid CSW framing/tag")
             val residue = header.int.toLong() and 0xffffffffL
             val commandStatus = header.get().toInt() and 255

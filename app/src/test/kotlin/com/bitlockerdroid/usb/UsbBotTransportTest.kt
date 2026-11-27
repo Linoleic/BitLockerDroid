@@ -126,4 +126,30 @@ class UsbBotTransportTest {
             }
         }
     }
+
+    @Test fun dataInStallClearsHaltAndReadsCswKeepingChannelHealthy() {
+        val b = Backend()
+        b.bot.bulkOut(cbw(512, input = true))
+        b.inputResults.add(-32 to byteArrayOf())
+        b.inputResults.add(13 to csw(residue = 512, status = 1))
+        val buf = ByteBuffer.allocate(512)
+        assertEquals(13, b.bot.bulkIn(buf))
+        assertEquals(1, b.clears)
+        assertTrue(b.bot.healthy)
+        // Next command works cleanly
+        b.bot.bulkOut(cbw(0, tag = 8))
+        b.inputResults.add(13 to csw(tag = 8))
+        assertEquals(13, b.bot.bulkIn(ByteBuffer.allocate(13)))
+    }
+
+    @Test fun shortDataInFollowedByLargerBufferReceivesCsw() {
+        val b = Backend()
+        b.bot.bulkOut(cbw(18, input = true))
+        b.inputResults.add(8 to ByteArray(8))
+        b.inputResults.add(13 to csw(residue = 10, status = 0))
+        assertEquals(8, b.bot.bulkIn(ByteBuffer.allocate(18)))
+        // Caller passes remaining-sized buffer (> 13) like UsbSmartProbe does
+        assertEquals(13, b.bot.bulkIn(ByteBuffer.allocate(24)))
+        assertTrue(b.bot.healthy)
+    }
 }

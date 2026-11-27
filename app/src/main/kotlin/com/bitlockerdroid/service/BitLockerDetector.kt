@@ -65,8 +65,8 @@ object BitLockerDetector {
                 val signature = headerInfo?.signature
                 val guid = headerInfo?.guid
                 val recoveryKeyId = headerInfo?.recoveryKeyId
-                LogFile.write("app", "  node $node sig=$signature guid=$guid rkId=$recoveryKeyId")
-                if (signature == "-FVE-FS-" || signature == "MSWIN4.1") {
+                LogFile.write("app", "  node $node sig=$signature guid=$guid rkId=$recoveryKeyId verified=${headerInfo?.verifiedMetadata}")
+                if (signature == "-FVE-FS-" || (signature == "MSWIN4.1" && headerInfo.verifiedMetadata)) {
                     if (!guid.isNullOrBlank() && !detectedGuids.add(guid.lowercase())) {
                         LogFile.write("app", "  node $node duplicate GUID $guid, skipping duplicate registration")
                         continue

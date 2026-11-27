@@ -115,6 +115,14 @@ object UsbStorageManager {
     private val activeSessions = ConcurrentHashMap<String, UsbSession>()
     private val activeSessionLock = Any()
 
+    fun getConnectedPartitionPaths(): List<String> {
+        val connectedIds = activeDevices.keys
+        return discoveredPartitions.keys.filter { path ->
+            val devId = path.removePrefix("usb://").substringBefore('/').toIntOrNull()
+            devId != null && connectedIds.contains(devId)
+        }
+    }
+
     fun getPartitionInfo(devicePath: String): UsbPartitionInfo? = discoveredPartitions[devicePath]
 
     /** Devices probed or system-mounted and confirmed to contain NO BitLocker partitions. Keyed by "vid:pid" */
@@ -145,15 +153,7 @@ object UsbStorageManager {
             return false
         }
 
-        val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
-        val massStorageDevices = usbManager?.deviceList?.values?.filter { isMassStorageDevice(it) } ?: emptyList()
-
-        if (massStorageDevices.size <= 1) {
-            LogFile.write("app", "isDeviceMountedBySystem: single USB mass storage device matches mounted volume (${device.deviceName})")
-            return true
-        }
-
-        // Multiple USB devices connected: correlate via sysfs
+        // Correlate via sysfs
         try {
             val devParts = device.deviceName.split('/')
             if (devParts.size >= 2) {
@@ -192,7 +192,7 @@ object UsbStorageManager {
             }
         }
 
-        return true
+        return false
     }
 
     private fun hasMountedBlockUnderSysfs(usbDir: File): Boolean {
@@ -661,16 +661,26 @@ object UsbStorageManager {
                     val partEntriesLba = gptBuf.getLong(72)
                     val numParts = gptBuf.getInt(80)
                     val partEntrySize = gptBuf.getInt(84)
-                    if (numParts <= 0 || numParts > 16384 || partEntrySize < 128 || partEntrySize > 4096) {
+                    val totalTableBytes = numParts.toLong() * partEntrySize.toLong()
+                    if (partEntriesLba < 2L || numParts <= 0 || numParts > 16384 ||
+                        partEntrySize < 128 || partEntrySize > 4096 ||
+                        totalTableBytes !in 128L..(2L * 1024 * 1024)
+                    ) {
                         throw java.io.IOException("Invalid GPT partition entry geometry")
                     }
 
-                    val entriesBuf = ByteBuffer.allocate(numParts * partEntrySize).order(ByteOrder.LITTLE_ENDIAN)
-                    val sectorsToRead = (numParts * partEntrySize + sectorSize - 1) / sectorSize
+                    val sectorsToRead = ((totalTableBytes + sectorSize - 1) / sectorSize).toInt()
+                    if (scsi.blocks > 0L && partEntriesLba + sectorsToRead > scsi.blocks) {
+                        throw java.io.IOException("GPT partition table extends past device size")
+                    }
+                    val entriesBuf = ByteBuffer.allocate(totalTableBytes.toInt()).order(ByteOrder.LITTLE_ENDIAN)
+                    val sBuf = ByteBuffer.allocate(sectorSize)
                     for (s in 0 until sectorsToRead) {
-                        val sBuf = ByteBuffer.allocate(sectorSize)
+                        sBuf.clear()
                         scsi.read(partEntriesLba + s, sBuf)
                         sBuf.flip()
+                        val toCopy = minOf(sBuf.remaining(), entriesBuf.remaining())
+                        sBuf.limit(sBuf.position() + toCopy)
                         entriesBuf.put(sBuf)
                     }
                     entriesBuf.flip()
@@ -684,8 +694,8 @@ object UsbStorageManager {
                         entriesBuf.position(p * partEntrySize + 32)
                         val startLba = entriesBuf.getLong()
                         val endLba = entriesBuf.getLong()
-                        val count = endLba - startLba + 1
-                        if (count > 0) {
+                        if (startLba > 0L && endLba >= startLba && (scsi.blocks <= 0L || endLba < scsi.blocks)) {
+                            val count = endLba - startLba + 1
                             rawPartitions.add(RawPartition(p + 1, startLba, count, sectorSize))
                         }
                     }
@@ -717,9 +727,17 @@ object UsbStorageManager {
 
                 if (sig == "-FVE-FS-" || sig == "MSWIN4.1") {
                     val guids = BitLockerDetector.extractMetadataGuidsFromReader(sig, bytes) { offBytes, cntBytes ->
-                        val readBuf = ByteBuffer.allocate(cntBytes)
+                        if (offBytes < 0L || cntBytes <= 0 ||
+                            offBytes % sectorSize != 0L || cntBytes % sectorSize != 0
+                        ) {
+                            return@extractMetadataGuidsFromReader null
+                        }
                         val skipSectors = offBytes / sectorSize
                         val countSectors = cntBytes / sectorSize
+                        if (skipSectors + countSectors > part.sectorCount) {
+                            return@extractMetadataGuidsFromReader null
+                        }
+                        val readBuf = ByteBuffer.allocate(cntBytes)
                         var cur = part.startLba + skipSectors
                         var remSectors = countSectors
                         val tmpBuf = ByteBuffer.allocate(sectorSize)
@@ -733,6 +751,9 @@ object UsbStorageManager {
                             remSectors--
                         }
                         readBuf.array()
+                    }
+                    if (sig == "MSWIN4.1" && !guids.verifiedMetadata) {
+                        continue
                     }
 
                     val devPath = UsbPartitionPathSupport.format(dev.deviceId, part.index)

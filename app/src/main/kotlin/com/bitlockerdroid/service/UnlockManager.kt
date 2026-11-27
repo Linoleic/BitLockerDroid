@@ -1075,7 +1075,14 @@ object UnlockManager {
         } else {
             Thread({
                 try {
-                    val nodes = BitLockerDetector.enumerateVoldNodes()
+                    val nodes = mutableListOf<String>()
+                    if (com.bitlockerdroid.util.PreferenceHelper.useRootAccess &&
+                        com.bitlockerdroid.util.RootAccess.hasSu()
+                    ) {
+                        nodes.addAll(BitLockerDetector.enumerateVoldNodes())
+                    } else {
+                        nodes.addAll(com.bitlockerdroid.usb.UsbStorageManager.getConnectedPartitionPaths())
+                    }
                     forgetDetectedMissing(nodes)
                 } catch (e: Exception) {
                     Log.w(TAG, "forgetDetectedMissing error during onUsbDetached", e)
