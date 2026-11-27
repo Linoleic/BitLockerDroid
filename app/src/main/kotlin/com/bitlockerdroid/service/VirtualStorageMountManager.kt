@@ -352,7 +352,12 @@ object VirtualStorageMountManager {
             dead
         }
 
-        val daemonPath = RootAccess.ensureFuseDaemonInstalled(context) ?: "/data/local/tmp/bitlocker_fuse"
+        com.bitlockerdroid.util.DevicePathSecurity.requireValid(effectivePath)
+        val daemonPath = RootAccess.ensureFuseDaemonInstalled(context)
+        if (daemonPath.isNullOrBlank() || daemonPath.contains('\'') || daemonPath.contains('\n') || daemonPath.contains('\r')) {
+            LogFile.write("app", "VirtualStorageMount: bitlocker_fuse binary unavailable")
+            return Result.failure(IllegalStateException("bitlocker_fuse binary unavailable"))
+        }
 
         // Mimic real Android USB OTG naming: /storage/ABCD-1234 using the first 8 hex characters of GUID
         val storageId = formatStorageId(volumeGuid, effectivePath)
@@ -365,7 +370,7 @@ object VirtualStorageMountManager {
 
         // Clean up any stale mount or conflicting bitlocker_fuse daemon for this devicePath
         try {
-            RootAccess.exec("su -c 'for pid in \$(pidof bitlocker_fuse 2>/dev/null); do if grep -q \"$effectivePath\" /proc/\$pid/cmdline 2>/dev/null; then kill -9 \$pid 2>/dev/null; fi; done'")
+            RootAccess.exec("su -c 'for pid in \$(pidof bitlocker_fuse 2>/dev/null); do if tr \"\\0\" \"\\n\" < /proc/\$pid/cmdline 2>/dev/null | grep -Fxq -- \"$effectivePath\"; then kill -9 \$pid 2>/dev/null; fi; done'")
             RootAccess.exec("su -M -c 'umount -l \"$mountPoint\" 2>/dev/null; rmdir \"$mountPoint\" 2>/dev/null'")
             // Also cleanup legacy /storage/BitLocker_* if present
             RootAccess.exec("su -M -c 'for m in /storage/BitLocker_*; do if [ -d \"\$m\" ]; then umount -l \"\$m\" 2>/dev/null; rmdir \"\$m\" 2>/dev/null; fi; done'")
@@ -519,7 +524,8 @@ object VirtualStorageMountManager {
                 }
             }
             // Also cleanup any bitlocker_fuse matching this devicePath with SIGTERM -> SIGKILL fallback
-            RootAccess.exec("su -c 'for pid in \$(pidof bitlocker_fuse 2>/dev/null); do if grep -q \"$devicePath\" /proc/\$pid/cmdline 2>/dev/null; then kill -TERM \$pid 2>/dev/null; sleep 0.1; kill -9 \$pid 2>/dev/null; fi; done'")
+            com.bitlockerdroid.util.DevicePathSecurity.requireValid(devicePath)
+            RootAccess.exec("su -c 'for pid in \$(pidof bitlocker_fuse 2>/dev/null); do if tr \"\\0\" \"\\n\" < /proc/\$pid/cmdline 2>/dev/null | grep -Fxq -- \"$devicePath\"; then kill -TERM \$pid 2>/dev/null; sleep 0.1; kill -9 \$pid 2>/dev/null; fi; done'")
         } catch (e: Throwable) {
             Log.w(TAG, "unmount error", e)
         }

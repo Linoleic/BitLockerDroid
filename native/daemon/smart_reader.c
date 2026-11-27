@@ -818,6 +818,9 @@ int scsi_spindown_device(const char *dev_path) {
     if (stat(dev_path, &st) < 0) {
         return -errno;
     }
+    if (!S_ISBLK(st.st_mode)) {
+        return -ENOTBLK;
+    }
 
     char actual_dev[256];
     strncpy(actual_dev, dev_path, sizeof(actual_dev) - 1);
@@ -875,10 +878,12 @@ int scsi_spindown_device(const char *dev_path) {
     snprintf(sys_block, sizeof(sys_block), "/sys/block/%s", parent_disk_name);
     char real_sys[PATH_MAX] = {0};
     if (realpath(sys_block, real_sys)) {
-        if (strstr(real_sys, "ufshc") || strstr(real_sys, "bootdevice") || strstr(real_sys, "mmcblk")) {
+        if (strstr(real_sys, "ufshc") || strstr(real_sys, "bootdevice") ||
+            strstr(real_sys, "mmcblk") || strstr(real_sys, ".ufs") ||
+            strstr(real_sys, "/ufs")) {
             return -EPERM;
         }
-        if (!strstr(real_sys, "usb") && !strstr(real_sys, "target")) {
+        if (!strstr(real_sys, "/usb") && !strstr(real_sys, "usbhost")) {
             return -EPERM;
         }
     } else {
@@ -888,12 +893,17 @@ int scsi_spindown_device(const char *dev_path) {
     // Step 1: System-wide sync and block buffer flush
     sync();
 
-    int fd = open(actual_dev, O_RDWR | O_LARGEFILE | O_CLOEXEC);
+    int fd = open(actual_dev, O_RDWR | O_LARGEFILE | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) {
-        fd = open(actual_dev, O_RDONLY | O_LARGEFILE | O_CLOEXEC);
+        fd = open(actual_dev, O_RDONLY | O_LARGEFILE | O_CLOEXEC | O_NOFOLLOW);
     }
     if (fd < 0) {
         return -errno != 0 ? -errno : -ENODEV;
+    }
+    struct stat fd_st;
+    if (fstat(fd, &fd_st) < 0 || !S_ISBLK(fd_st.st_mode)) {
+        close(fd);
+        return -EPERM;
     }
 
     if (ioctl(fd, BLKFLSBUF, 0) != 0) {

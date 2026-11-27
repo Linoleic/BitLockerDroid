@@ -121,15 +121,26 @@ object SmartHealthManager {
                 reason = context.getString(R.string.smart_usb_close_volumes)).copy(failureStage = SmartFailureStage.BUSY)
         }
 
+        if (devicePath.isBlank() || devicePath.startsWith("storage:") || !com.bitlockerdroid.util.DevicePathSecurity.isValid(devicePath)) {
+            return@withContext SmartHealthInfo.unconfirmed(
+                node = devicePath,
+                reason = context.getString(R.string.smart_query_failed)
+            ).copy(failureStage = SmartFailureStage.CONNECTION)
+        }
+
         queryLocalSmart(
             devicePath = devicePath,
             rootEnabled = PreferenceHelper.useRootAccess,
             failureReason = context.getString(R.string.smart_query_failed),
             rootQuery = {
                 if (!RootAccess.hasSu(forceRefresh = forceAuthorizationCheck)) throw SmartQueryException(SmartFailureStage.AUTHORIZATION) else {
-                    RootAccess.ensureDaemonInstalled(context)
+                    val daemonPath = RootAccess.ensureDaemonInstalled(context)
+                        ?: throw SmartQueryException(SmartFailureStage.READ)
+                    if (daemonPath.contains('\'') || daemonPath.contains('\n') || daemonPath.contains('\r')) {
+                        throw SmartQueryException(SmartFailureStage.READ)
+                    }
                     val escapedPath = devicePath.replace("'", "'\\''")
-                    val result = RootAccess.exec("/data/local/tmp/bitlocker_io --smart '$escapedPath'", 12000)
+                    val result = RootAccess.exec("'$daemonPath' --smart '$escapedPath'", 12000)
                     if (result == null || result.first != 0) throw SmartQueryException(SmartFailureStage.READ)
                     result.second
                 }

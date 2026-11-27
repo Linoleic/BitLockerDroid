@@ -21,6 +21,7 @@
 #include <scsi/sg.h>
 
 static int fake_stat(const char *path, struct stat *st);
+static int fake_fstat(int fd, struct stat *st);
 static int fake_access(const char *path, int mode);
 static char *fake_realpath(const char *path, char *resolved);
 static int fake_open(const char *path, int flags, ...);
@@ -34,6 +35,7 @@ static int fake_closedir(DIR *dir);
 
 /* Function-like macros leave struct stat and other type names untouched. */
 #define stat(...) fake_stat(__VA_ARGS__)
+#define fstat(...) fake_fstat(__VA_ARGS__)
 #define access(...) fake_access(__VA_ARGS__)
 #define realpath(...) fake_realpath(__VA_ARGS__)
 #define open(...) fake_open(__VA_ARGS__)
@@ -46,6 +48,7 @@ static int fake_closedir(DIR *dir);
 #define closedir(...) fake_closedir(__VA_ARGS__)
 #include "../daemon/smart_reader.c"
 #undef stat
+#undef fstat
 #undef access
 #undef realpath
 #undef open
@@ -85,7 +88,9 @@ enum fail_mode {
     FAIL_DELETE_WRITE,
     FAIL_DELETE_OPEN,
     KEEP_BLOCK_AFTER_DELETE,
-    INTERNAL_UFS
+    INTERNAL_UFS,
+    INTERNAL_UFS_TARGET,
+    NON_BLOCK_FILE
 };
 
 static enum fail_mode g_mode;
@@ -134,6 +139,14 @@ static void reset_fake(enum fail_mode mode) {
 static int fake_stat(const char *path, struct stat *st) {
     assert(strcmp(path, "/dev/block/sda") == 0);
     memset(st, 0, sizeof(*st));
+    st->st_mode = (g_mode == NON_BLOCK_FILE ? S_IFREG : S_IFBLK) | 0600;
+    st->st_rdev = makedev(8, 0);
+    return 0;
+}
+
+static int fake_fstat(int fd, struct stat *st) {
+    assert(fd == 10);
+    memset(st, 0, sizeof(*st));
     st->st_mode = S_IFBLK | 0600;
     st->st_rdev = makedev(8, 0);
     return 0;
@@ -163,6 +176,8 @@ static char *fake_realpath(const char *path, char *resolved) {
     assert(strcmp(path, "/sys/block/sda") == 0 || strcmp(path, "/sys/dev/block/8:0") == 0);
     const char *sys_path = g_mode == INTERNAL_UFS
         ? "/sys/devices/platform/ufshc/host0/block/sda"
+        : g_mode == INTERNAL_UFS_TARGET
+        ? "/sys/devices/platform/14700000.ufs/host0/target0:0:0/0:0:0:0/block/sda"
         : "/sys/devices/platform/usbhost/1-1/host0/target0:0:0/0:0:0:0/block/sda";
     strcpy(resolved, sys_path);
     return resolved;
@@ -465,6 +480,12 @@ int main(void) {
     test_missing_delete_node_is_not_success();
     test_device_still_present_after_delete_is_not_success();
     test_internal_ufs_is_refused_without_writes();
+    reset_fake(INTERNAL_UFS_TARGET);
+    assert(scsi_spindown_device("/dev/block/sda") == -EPERM);
+    assert(g_open_device_count == 0 && g_ioctl_count == 0 && g_write_count == 0);
+    reset_fake(NON_BLOCK_FILE);
+    assert(scsi_spindown_device("/dev/block/sda") == -ENOTBLK);
+    assert(g_open_device_count == 0 && g_ioctl_count == 0 && g_write_count == 0);
     test_sync_unsupported_allowed_only_with_verified_write_cache_disabled();
     test_sync_or_mode_sense_uncertainty_refuses_stop();
     puts("spindown_test: all cases passed");

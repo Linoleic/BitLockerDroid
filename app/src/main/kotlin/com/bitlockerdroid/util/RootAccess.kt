@@ -438,17 +438,23 @@ object RootAccess {
         val libDir = context.applicationInfo.nativeLibraryDir
         val nativeBin = java.io.File(libDir, libFileName)
         val appFilesBin = java.io.File(context.filesDir, targetName)
-        val tmpBin = java.io.File("/data/local/tmp/$targetName")
 
         if (nativeBin.exists()) {
             if (!binariesMatch(nativeBin, appFilesBin)) {
-                nativeBin.copyTo(appFilesBin, overwrite = true)
-                appFilesBin.setExecutable(true, false)
+                val tempBin = java.io.File(context.filesDir, "${targetName}_tmp")
+                nativeBin.copyTo(tempBin, overwrite = true)
+                setOwnerOnlyExecutable(tempBin)
+                if (!tempBin.renameTo(appFilesBin)) {
+                    tempBin.delete()
+                }
+            } else {
+                setOwnerOnlyExecutable(appFilesBin)
             }
-            if (!binariesMatch(nativeBin, tmpBin)) {
-                exec("cp '${nativeBin.absolutePath}' '${tmpBin.absolutePath}' && chmod 755 '${tmpBin.absolutePath}'")
+            return when {
+                nativeBin.canExecute() -> nativeBin.absolutePath
+                appFilesBin.exists() && appFilesBin.canExecute() -> appFilesBin.absolutePath
+                else -> null
             }
-            return if (tmpBin.exists()) tmpBin.absolutePath else appFilesBin.absolutePath
         }
 
         try {
@@ -463,37 +469,48 @@ object RootAccess {
                         apkFile.getInputStream(entry).use { input ->
                             tempBin.outputStream().use { output -> input.copyTo(output) }
                         }
-                        tempBin.setExecutable(true, false)
-                        tempBin.renameTo(appFilesBin)
+                        setOwnerOnlyExecutable(tempBin)
+                        if (!tempBin.renameTo(appFilesBin)) {
+                            tempBin.delete()
+                        }
+                    } else {
+                        setOwnerOnlyExecutable(appFilesBin)
                     }
-                    if (!binariesMatch(appFilesBin, tmpBin)) {
-                        exec("cp '${appFilesBin.absolutePath}' '${tmpBin.absolutePath}' && chmod 755 '${tmpBin.absolutePath}'")
-                    }
-                    return if (tmpBin.exists()) tmpBin.absolutePath else appFilesBin.absolutePath
+                    return if (appFilesBin.exists() && appFilesBin.canExecute()) appFilesBin.absolutePath else null
                 }
             }
         } catch (t: Throwable) {
             Log.w(TAG, "extract $libFileName from apk failed", t)
         }
 
-        return if (tmpBin.exists()) tmpBin.absolutePath else null
+        return if (appFilesBin.exists() && appFilesBin.canExecute()) appFilesBin.absolutePath else null
+    }
+
+    private fun setOwnerOnlyExecutable(file: java.io.File) {
+        file.setReadable(false, false)
+        file.setReadable(true, true)
+        file.setWritable(false, false)
+        file.setWritable(true, true)
+        file.setExecutable(false, false)
+        file.setExecutable(true, true)
     }
 
     /**
      * Ensures the high-performance bitlocker_io root helper binary is installed
-     * to /data/local/tmp and app files directory with executable permissions.
+     * in the app-private files directory with owner-only executable permissions.
      */
-    fun ensureDaemonInstalled(context: android.content.Context) {
+    fun ensureDaemonInstalled(context: android.content.Context): String? {
         try {
-            installBundledBinary(context, "libbitlocker_io.so", "bitlocker_io")
+            return installBundledBinary(context, "libbitlocker_io.so", "bitlocker_io")
         } catch (e: Throwable) {
             Log.w(TAG, "ensureDaemonInstalled failed", e)
         }
+        return null
     }
 
     /**
      * Ensures the userspace FUSE mount daemon binary (libbitlocker_fuse.so) is installed
-     * to /data/local/tmp/bitlocker_fuse with executable permissions.
+     * in the app-private files directory with owner-only executable permissions.
      */
     fun ensureFuseDaemonInstalled(context: android.content.Context): String? {
         try {
@@ -509,13 +526,18 @@ object RootAccess {
      * the physical block device using bitlocker_io --spindown.
      */
     fun spindownDevice(devicePath: String): Boolean {
+        DevicePathSecurity.requireValid(devicePath)
         if (!hasSu()) return false
-        try {
+        val daemonPath = try {
             ensureDaemonInstalled(ContextProvider.app)
-        } catch (_: Throwable) {}
+        } catch (_: Throwable) {
+            null
+        } ?: return false
+        if (daemonPath.contains('\'') || daemonPath.contains('\n') || daemonPath.contains('\r')) {
+            return false
+        }
 
-        val daemonPath = "/data/local/tmp/bitlocker_io"
-        val daemonRes = exec("$daemonPath --spindown '$devicePath'", 6000)
+        val daemonRes = exec("'$daemonPath' --spindown '$devicePath'", 6000)
         if (daemonRes != null) {
             if (daemonRes.first == 0 && daemonRes.second.contains("\"success\":true")) {
                 Log.i(TAG, "spindownDevice succeeded via daemon for $devicePath")

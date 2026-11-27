@@ -169,6 +169,40 @@ static int writev_all(int fd, struct iovec *iov, int iovcnt) {
     return 0;
 }
 
+static int is_allowed_block_path(const char *path) {
+    if (!path || strncmp(path, "/dev/block/", 11) != 0 || path[11] == '\0') {
+        return 0;
+    }
+    for (const char *p = path; *p; p++) {
+        char c = *p;
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '/' || c == '_' ||
+              c == '-' || c == '.' || c == ':' || c == ',')) {
+            return 0;
+        }
+    }
+    if (strstr(path, "/../") || strstr(path, "/./") || strcmp(path + strlen(path) - 3, "/..") == 0) {
+        return 0;
+    }
+    return 1;
+}
+
+static ssize_t pread_retry(int fd, void *buf, size_t count, off_t offset) {
+    ssize_t n;
+    do {
+        n = pread(fd, buf, count, offset);
+    } while (n < 0 && errno == EINTR);
+    return n;
+}
+
+static ssize_t pwrite_retry(int fd, const void *buf, size_t count, off_t offset) {
+    ssize_t n;
+    do {
+        n = pwrite(fd, buf, count, offset);
+    } while (n < 0 && errno == EINTR);
+    return n;
+}
+
 int main(int argc, char **argv) {
     signal(SIGPIPE, SIG_IGN);
 
@@ -221,12 +255,24 @@ int main(int argc, char **argv) {
     }
 
     const char *dev_path = argv[1];
-    int dev_fd = open(dev_path, O_RDWR | O_LARGEFILE | O_CLOEXEC);
+    if (!is_allowed_block_path(dev_path)) {
+        int32_t err = -EPERM;
+        write_all(STDOUT_FILENO, &err, 4);
+        return 2;
+    }
+    int dev_fd = open(dev_path, O_RDWR | O_LARGEFILE | O_CLOEXEC | O_NOFOLLOW);
     if (dev_fd < 0) {
-        dev_fd = open(dev_path, O_RDONLY | O_LARGEFILE | O_CLOEXEC);
+        dev_fd = open(dev_path, O_RDONLY | O_LARGEFILE | O_CLOEXEC | O_NOFOLLOW);
     }
     if (dev_fd < 0) {
         int32_t err = -errno;
+        write_all(STDOUT_FILENO, &err, 4);
+        return 2;
+    }
+    struct stat dev_st;
+    if (fstat(dev_fd, &dev_st) < 0 || !S_ISBLK(dev_st.st_mode)) {
+        close(dev_fd);
+        int32_t err = -EPERM;
         write_all(STDOUT_FILENO, &err, 4);
         return 2;
     }
@@ -264,11 +310,13 @@ int main(int argc, char **argv) {
                 break;
             }
 
-            if (len > MAX_CHUNK_SIZE) {
-                len = MAX_CHUNK_SIZE;
+            if (len == 0 || len > MAX_CHUNK_SIZE) {
+                int32_t status = -EINVAL;
+                write_all(STDOUT_FILENO, &status, 4);
+                break;
             }
 
-            ssize_t n = pread(dev_fd, buf, (size_t)len, (off_t)offset);
+            ssize_t n = pread_retry(dev_fd, buf, (size_t)len, (off_t)offset);
             int32_t status = (n < 0) ? -errno : (int32_t)n;
             if (status <= 0) {
                 if (write_all(STDOUT_FILENO, &status, 4) != 0) break;
@@ -298,7 +346,7 @@ int main(int argc, char **argv) {
                 break;
             }
 
-            ssize_t n = pwrite(dev_fd, buf, (size_t)len, (off_t)offset);
+            ssize_t n = pwrite_retry(dev_fd, buf, (size_t)len, (off_t)offset);
             int32_t status = (n < 0) ? -errno : (int32_t)n;
             if (write_all(STDOUT_FILENO, &status, 4) != 0) break;
         } else if (cmd == CMD_SYNC) {
@@ -320,6 +368,8 @@ int main(int argc, char **argv) {
             if (len > 0) {
                 if (write_all(STDOUT_FILENO, smart_json, len) != 0) break;
             }
+        } else {
+            break;
         }
     }
 

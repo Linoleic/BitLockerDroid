@@ -60,6 +60,7 @@
 #ifndef IO_RESPONSE_TIMEOUT_MS
 #define IO_RESPONSE_TIMEOUT_MS 60000
 #endif
+#define IO_DAEMON_MAX_CHUNK (4 * 1024 * 1024)
 
 typedef struct {
 	struct timespec expires;
@@ -98,9 +99,8 @@ static const char *const SU_PATHS[] = {
 };
 
 static const char *const DAEMON_PATHS[] = {
-	"/data/local/tmp/bitlocker_io",
-	"/data/data/com.bitlockerdroid/files/bitlocker_io",
 	"/data/user/0/com.bitlockerdroid/files/bitlocker_io",
+	"/data/data/com.bitlockerdroid/files/bitlocker_io",
 	NULL
 };
 
@@ -265,15 +265,21 @@ static int is_safe_device_path(const char *path)
 	return 1;
 }
 
-/* Find an accessible daemon binary */
+/* Find an accessible, non-symlink daemon binary owned by this app or root */
 static const char *find_daemon_binary(void)
 {
+	uid_t self_uid = getuid();
 	for (int i = 0; DAEMON_PATHS[i] != NULL; i++) {
+		struct stat st;
+		if (lstat(DAEMON_PATHS[i], &st) != 0) continue;
+		if (!S_ISREG(st.st_mode)) continue;
+		if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0) continue;
+		if (st.st_uid != self_uid && st.st_uid != 0) continue;
 		if (access(DAEMON_PATHS[i], X_OK) == 0) {
 			return DAEMON_PATHS[i];
 		}
 	}
-	return DAEMON_PATHS[0]; // fallback
+	return NULL;
 }
 
 static int is_fd_transport(const dis_ctx_t *ctx)
@@ -286,16 +292,20 @@ static int io_is_poisoned(const dis_ctx_t *ctx)
 	return __atomic_load_n(&ctx->io_poisoned, __ATOMIC_ACQUIRE) != 0;
 }
 
-/* Caller holds io_lock after initialization. fd: descriptors are transferred
- * to native ownership, so close each distinct endpoint exactly once. */
-static void poison_fd_transport_locked(dis_ctx_t *ctx)
+/* Caller holds io_lock after initialization. Closes active transport endpoints
+ * (either fd: socketpair or Tier-2 io_daemon pipes) and marks the channel
+ * poisoned so desynchronized pipes/sockets are never reused. */
+static void poison_io_transport_locked(dis_ctx_t *ctx)
 {
-	if (!is_fd_transport(ctx)) return;
+	if (!ctx) return;
 	__atomic_store_n(&ctx->io_poisoned, 1, __ATOMIC_RELEASE);
 	if (ctx->io_in_fd >= 0) close(ctx->io_in_fd);
 	if (ctx->io_out_fd >= 0 && ctx->io_out_fd != ctx->io_in_fd) close(ctx->io_out_fd);
 	ctx->io_in_fd = -1;
 	ctx->io_out_fd = -1;
+	if (!is_fd_transport(ctx) && ctx->io_pid > 0) {
+		kill(ctx->io_pid, SIGKILL);
+	}
 }
 
 static int set_nonblocking(int fd)
@@ -339,7 +349,7 @@ int dis_io_init(dis_ctx_t *ctx)
 				(ctx->io_out_fd != ctx->io_in_fd && set_nonblocking(ctx->io_out_fd) != 0)) {
 				dis_set_error("Could not enable nonblocking I/O on fd transport");
 				pthread_mutex_lock(&ctx->io_lock);
-				poison_fd_transport_locked(ctx);
+				poison_io_transport_locked(ctx);
 				pthread_mutex_unlock(&ctx->io_lock);
 				return -1;
 			}
@@ -352,7 +362,7 @@ int dis_io_init(dis_ctx_t *ctx)
 			ELOG("Handshake failed on in-process fd (ret=%d, magic=0x%08x)", r, (unsigned int)magic);
 			dis_set_error("In-process I/O handshake failed on %s", ctx->device_path);
 			pthread_mutex_lock(&ctx->io_lock);
-			poison_fd_transport_locked(ctx);
+			poison_io_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
 			return -1;
 		}
@@ -371,9 +381,27 @@ int dis_io_init(dis_ctx_t *ctx)
 	}
 
 	// 2. Spawn persistent root I/O daemon
+	const char *daemon_bin = find_daemon_binary();
+	if (!daemon_bin) {
+		DLOG("No trusted bitlocker_io daemon binary found; falling back");
+		return 0;
+	}
+	char cmd[1024];
+	int cmd_len = snprintf(cmd, sizeof(cmd), "%s '%s'", daemon_bin, ctx->device_path);
+	if (cmd_len <= 0 || cmd_len >= (int)sizeof(cmd)) {
+		dis_set_error("Daemon command path too long");
+		return -1;
+	}
+
 	int p_to_child[2];
 	int p_from_child[2];
-	if (pipe(p_to_child) != 0 || pipe(p_from_child) != 0) {
+	if (pipe(p_to_child) != 0) {
+		dis_set_error("Failed to create daemon pipes: %s", strerror(errno));
+		return -1;
+	}
+	if (pipe(p_from_child) != 0) {
+		close(p_to_child[0]);
+		close(p_to_child[1]);
 		dis_set_error("Failed to create daemon pipes: %s", strerror(errno));
 		return -1;
 	}
@@ -427,10 +455,6 @@ int dis_io_init(dis_ctx_t *ctx)
 				}
 			}
 		}
-
-		const char *daemon_bin = find_daemon_binary();
-		char cmd[1024];
-		snprintf(cmd, sizeof(cmd), "%s '%s'", daemon_bin, ctx->device_path);
 
 		for (int i = 0; SU_PATHS[i] != NULL; i++) {
 			execl(SU_PATHS[i], "su", "-c", cmd, (char *)NULL);
@@ -488,22 +512,22 @@ void dis_io_destroy(dis_ctx_t *ctx)
 		ctx->io_out_fd = -1;
 		__atomic_store_n(&ctx->io_poisoned, 1, __ATOMIC_RELEASE);
 		pthread_mutex_unlock(&ctx->io_lock);
+	}
 
-		if (ctx->io_pid > 0) {
-			/* Give the daemon a moment to exit on its own, then force-kill
-			 * so no zombie or orphan is left holding the pipe. */
-			int rc = 0;
-			for (int i = 0; i < 50; i++) {
-				rc = waitpid(ctx->io_pid, NULL, WNOHANG);
-				if (rc == ctx->io_pid || rc < 0) break;
-				usleep(10000);
-			}
-			if (rc <= 0) {
-				kill(ctx->io_pid, SIGKILL);
-				waitpid(ctx->io_pid, NULL, 0);
-			}
-			ctx->io_pid = -1;
+	if (ctx->io_pid > 0) {
+		/* Give the daemon a moment to exit on its own, then force-kill
+		 * so no zombie or orphan is left holding the pipe. */
+		int rc = 0;
+		for (int i = 0; i < 50; i++) {
+			rc = waitpid(ctx->io_pid, NULL, WNOHANG);
+			if (rc == ctx->io_pid || rc < 0) break;
+			usleep(10000);
 		}
+		if (rc <= 0) {
+			kill(ctx->io_pid, SIGKILL);
+			waitpid(ctx->io_pid, NULL, 0);
+		}
+		ctx->io_pid = -1;
 	}
 
 	if (ctx->fd >= 0) {
@@ -639,39 +663,46 @@ static int dis_blk_read_internal(dis_ctx_t *ctx, uint8_t *buf, off_t offset, siz
 			return -1;
 		}
 
-		uint8_t req[13];
-		req[0] = CMD_READ;
-		uint64_t disk_off = (uint64_t)(ctx->offset + offset);
-		uint32_t req_len = (uint32_t)len;
-		memcpy(req + 1, &disk_off, 8);
-		memcpy(req + 9, &req_len, 4);
+		size_t done = 0;
+		while (done < len) {
+			size_t chunk = len - done;
+			if (chunk > IO_DAEMON_MAX_CHUNK) chunk = IO_DAEMON_MAX_CHUNK;
 
-		int wr = pipe_write_exact(ctx->io_in_fd, req, sizeof(req), IO_RESPONSE_TIMEOUT_MS);
-		if (wr != sizeof(req)) {
-			ELOG("dis_blk_read: write req failed wr=%d (expected %zu), errno=%d (%s)", wr, sizeof(req), errno, strerror(errno));
-			poison_fd_transport_locked(ctx);
-			pthread_mutex_unlock(&ctx->io_lock);
-			dis_set_error(wr == -ETIMEDOUT ? "Daemon read request write timed out" : "Daemon read request write failed (%d)", wr);
-			return -1;
-		}
+			uint8_t req[13];
+			req[0] = CMD_READ;
+			uint64_t disk_off = (uint64_t)(ctx->offset + offset + (off_t)done);
+			uint32_t req_len = (uint32_t)chunk;
+			memcpy(req + 1, &disk_off, 8);
+			memcpy(req + 9, &req_len, 4);
 
-		int32_t status = 0;
-		int rr = pipe_read_exact(ctx->io_out_fd, &status, sizeof(status), IO_RESPONSE_TIMEOUT_MS);
-		if (rr != sizeof(status) || status != (int32_t)len) {
-			ELOG("dis_blk_read: read status failed rr=%d, status=%d (expected %zu), errno=%d (%s)", rr, status, len, errno, strerror(errno));
-			poison_fd_transport_locked(ctx);
-			pthread_mutex_unlock(&ctx->io_lock);
-			dis_set_error(rr == -ETIMEDOUT ? "Daemon read status timed out" : "Daemon read status failed (result=%d, status=%d, expected=%zu)", rr, (int)status, len);
-			return -1;
-		}
+			int wr = pipe_write_exact(ctx->io_in_fd, req, sizeof(req), IO_RESPONSE_TIMEOUT_MS);
+			if (wr != sizeof(req)) {
+				ELOG("dis_blk_read: write req failed wr=%d (expected %zu), errno=%d (%s)", wr, sizeof(req), errno, strerror(errno));
+				poison_io_transport_locked(ctx);
+				pthread_mutex_unlock(&ctx->io_lock);
+				dis_set_error(wr == -ETIMEDOUT ? "Daemon read request write timed out" : "Daemon read request write failed (%d)", wr);
+				return -1;
+			}
 
-		int pr = pipe_read_exact(ctx->io_out_fd, buf, len, IO_RESPONSE_TIMEOUT_MS);
-		if (pr != (int)len) {
-			ELOG("dis_blk_read: read payload failed pr=%d (expected %zu), errno=%d (%s)", pr, len, errno, strerror(errno));
-			poison_fd_transport_locked(ctx);
-			pthread_mutex_unlock(&ctx->io_lock);
-			dis_set_error(pr == -ETIMEDOUT ? "Daemon read payload timed out" : "Daemon read payload truncated (result=%d, expected=%zu)", pr, len);
-			return -1;
+			int32_t status = 0;
+			int rr = pipe_read_exact(ctx->io_out_fd, &status, sizeof(status), IO_RESPONSE_TIMEOUT_MS);
+			if (rr != sizeof(status) || status != (int32_t)chunk) {
+				ELOG("dis_blk_read: read status failed rr=%d, status=%d (expected %zu), errno=%d (%s)", rr, status, chunk, errno, strerror(errno));
+				poison_io_transport_locked(ctx);
+				pthread_mutex_unlock(&ctx->io_lock);
+				dis_set_error(rr == -ETIMEDOUT ? "Daemon read status timed out" : "Daemon read status failed (result=%d, status=%d, expected=%zu)", rr, (int)status, chunk);
+				return -1;
+			}
+
+			int pr = pipe_read_exact(ctx->io_out_fd, buf + done, chunk, IO_RESPONSE_TIMEOUT_MS);
+			if (pr != (int)chunk) {
+				ELOG("dis_blk_read: read payload failed pr=%d (expected %zu), errno=%d (%s)", pr, chunk, errno, strerror(errno));
+				poison_io_transport_locked(ctx);
+				pthread_mutex_unlock(&ctx->io_lock);
+				dis_set_error(pr == -ETIMEDOUT ? "Daemon read payload timed out" : "Daemon read payload truncated (result=%d, expected=%zu)", pr, chunk);
+				return -1;
+			}
+			done += chunk;
 		}
 
 		pthread_mutex_unlock(&ctx->io_lock);
@@ -690,7 +721,7 @@ static int dis_blk_read_internal(dis_ctx_t *ctx, uint8_t *buf, off_t offset, siz
 
 int dis_blk_read(dis_ctx_t *ctx, uint8_t *buf, off_t offset, size_t len)
 {
-	if (!ctx || !buf || len == 0 || !ctx->device_path[0])
+	if (!ctx || !buf || len == 0 || offset < 0 || !ctx->device_path[0])
 		return -1;
 
 	if (!is_safe_device_path(ctx->device_path)) {
@@ -732,7 +763,7 @@ int dis_blk_read(dis_ctx_t *ctx, uint8_t *buf, off_t offset, size_t len)
 
 static int dis_blk_write_internal(dis_ctx_t *ctx, const uint8_t *buf, off_t offset, size_t len, int check_barrier)
 {
-	if (!ctx || !buf || len == 0 || !ctx->device_path[0])
+	if (!ctx || !buf || len == 0 || offset < 0 || !ctx->device_path[0])
 		return -1;
 	if (io_is_poisoned(ctx)) {
 		dis_set_error("I/O channel is poisoned after a previous protocol failure");
@@ -784,34 +815,41 @@ static int dis_blk_write_internal(dis_ctx_t *ctx, const uint8_t *buf, off_t offs
 			return -1;
 		}
 
-		uint8_t req[13];
-		req[0] = CMD_WRITE;
-		uint64_t disk_off = (uint64_t)(ctx->offset + offset);
-		uint32_t req_len = (uint32_t)len;
-		memcpy(req + 1, &disk_off, 8);
-		memcpy(req + 9, &req_len, 4);
+		size_t done = 0;
+		while (done < len) {
+			size_t chunk = len - done;
+			if (chunk > IO_DAEMON_MAX_CHUNK) chunk = IO_DAEMON_MAX_CHUNK;
 
-		struct iovec iov[2];
-		iov[0].iov_base = req;
-		iov[0].iov_len = sizeof(req);
-		iov[1].iov_base = (void *)buf;
-		iov[1].iov_len = len;
+			uint8_t req[13];
+			req[0] = CMD_WRITE;
+			uint64_t disk_off = (uint64_t)(ctx->offset + offset + (off_t)done);
+			uint32_t req_len = (uint32_t)chunk;
+			memcpy(req + 1, &disk_off, 8);
+			memcpy(req + 9, &req_len, 4);
 
-		int wr = pipe_writev_exact(ctx->io_in_fd, iov, 2, IO_RESPONSE_TIMEOUT_MS);
-		if (wr != (int)(sizeof(req) + len)) {
-			poison_fd_transport_locked(ctx);
-			pthread_mutex_unlock(&ctx->io_lock);
-			dis_set_error(wr == -ETIMEDOUT ? "Daemon write request/payload timed out" : "Daemon write request/payload failed (%d)", wr);
-			return -1;
-		}
+			struct iovec iov[2];
+			iov[0].iov_base = req;
+			iov[0].iov_len = sizeof(req);
+			iov[1].iov_base = (void *)(buf + done);
+			iov[1].iov_len = chunk;
 
-		int32_t status = 0;
-		int rr = pipe_read_exact(ctx->io_out_fd, &status, sizeof(status), IO_RESPONSE_TIMEOUT_MS);
-		if (rr != sizeof(status) || status != (int32_t)len) {
-			poison_fd_transport_locked(ctx);
-			pthread_mutex_unlock(&ctx->io_lock);
-			dis_set_error(rr == -ETIMEDOUT ? "Daemon write completion status timed out" : "Daemon write completion failed (result=%d, status=%d, expected=%zu)", rr, (int)status, len);
-			return -1;
+			int wr = pipe_writev_exact(ctx->io_in_fd, iov, 2, IO_RESPONSE_TIMEOUT_MS);
+			if (wr != (int)(sizeof(req) + chunk)) {
+				poison_io_transport_locked(ctx);
+				pthread_mutex_unlock(&ctx->io_lock);
+				dis_set_error(wr == -ETIMEDOUT ? "Daemon write request/payload timed out" : "Daemon write request/payload failed (%d)", wr);
+				return -1;
+			}
+
+			int32_t status = 0;
+			int rr = pipe_read_exact(ctx->io_out_fd, &status, sizeof(status), IO_RESPONSE_TIMEOUT_MS);
+			if (rr != sizeof(status) || status != (int32_t)chunk) {
+				poison_io_transport_locked(ctx);
+				pthread_mutex_unlock(&ctx->io_lock);
+				dis_set_error(rr == -ETIMEDOUT ? "Daemon write completion status timed out" : "Daemon write completion failed (result=%d, status=%d, expected=%zu)", rr, (int)status, chunk);
+				return -1;
+			}
+			done += chunk;
 		}
 
 		pthread_mutex_unlock(&ctx->io_lock);
@@ -863,7 +901,7 @@ uint64_t dis_blk_get_size(dis_ctx_t *ctx)
 		uint8_t cmd = CMD_SIZE;
 		int wr = pipe_write_exact(ctx->io_in_fd, &cmd, 1, IO_RESPONSE_TIMEOUT_MS);
 		if (wr != 1) {
-			poison_fd_transport_locked(ctx);
+			poison_io_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
 			dis_set_error(wr == -ETIMEDOUT ? "Daemon size request timed out" : "Daemon size request failed (%d)", wr);
 			return 0;
@@ -871,7 +909,7 @@ uint64_t dis_blk_get_size(dis_ctx_t *ctx)
 		uint64_t size = 0;
 		int rr = pipe_read_exact(ctx->io_out_fd, &size, sizeof(size), IO_RESPONSE_TIMEOUT_MS);
 		if (rr != sizeof(size)) {
-			poison_fd_transport_locked(ctx);
+			poison_io_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
 			dis_set_error(rr == -ETIMEDOUT ? "Daemon size response timed out" : "Daemon size response failed (%d)", rr);
 			return 0;
@@ -904,7 +942,7 @@ int dis_blk_sync(dis_ctx_t *ctx)
 		uint8_t cmd = CMD_SYNC;
 		int wr = pipe_write_exact(ctx->io_in_fd, &cmd, 1, IO_RESPONSE_TIMEOUT_MS);
 		if (wr != 1) {
-			poison_fd_transport_locked(ctx);
+			poison_io_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
 			dis_set_error(wr == -ETIMEDOUT ? "Daemon sync request timed out" : "Daemon sync request failed (%d)", wr);
 			return -1;
@@ -912,13 +950,13 @@ int dis_blk_sync(dis_ctx_t *ctx)
 		int32_t status = 0;
 		int rr = pipe_read_exact(ctx->io_out_fd, &status, sizeof(status), IO_RESPONSE_TIMEOUT_MS);
 		if (rr != sizeof(status)) {
-			poison_fd_transport_locked(ctx);
+			poison_io_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
 			dis_set_error(rr == -ETIMEDOUT ? "Daemon sync status timed out" : "Daemon sync status read failed (%d)", rr);
 			return -1;
 		}
 		if (status != 0) {
-			poison_fd_transport_locked(ctx);
+			poison_io_transport_locked(ctx);
 			pthread_mutex_unlock(&ctx->io_lock);
 			return -1;
 		}
