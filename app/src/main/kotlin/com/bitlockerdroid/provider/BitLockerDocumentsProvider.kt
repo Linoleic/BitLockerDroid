@@ -59,6 +59,29 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         private var activeInstance: BitLockerDocumentsProvider? = null
 
         /**
+         * Validates a single document filename segment before joining it onto a
+         * parent directory path. Rejects traversal segments, path separators,
+         * control characters/NUL, and root-level NTFS metadata / hidden SVI names.
+         */
+        internal fun isSafeDocumentSegment(
+            name: String,
+            hideSvi: Boolean = true,
+            isVolumeRoot: Boolean = false
+        ): Boolean {
+            if (name.isEmpty() || name == "." || name == "..") return false
+            for (c in name) {
+                if (c == '/' || c == '\\' || c == '\u0000' || c.code < 0x20 || c.code == 0x7F) {
+                    return false
+                }
+            }
+            if (isVolumeRoot) {
+                if (name.startsWith('$')) return false
+                if (hideSvi && name.equals("System Volume Information", ignoreCase = true)) return false
+            }
+            return true
+        }
+
+        /**
          * Waits (bounded) for all in-flight SAF pipe writes to finish.
          * Safe-eject step: call before closing/locking a session so a write
          * pipeline is never cut off mid-transaction.
@@ -614,9 +637,18 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         return "application/octet-stream"
     }
 
+    private fun refreshIfVirtuallyMounted(core: DislockerCore) {
+        if (com.bitlockerdroid.service.VirtualStorageMountManager.getMount(core.devicePath) != null &&
+            core.pendingWrites.state.value.activeCount == 0
+        ) {
+            core.invalidateLocalCacheOnly()
+        }
+    }
+
     override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor {
         LogFile.write("provider", "queryDocument: docId=$documentId proj=${projection?.joinToString()}")
         try {
+            coreFor(documentId)?.let { refreshIfVirtuallyMounted(it) }
             val result = MatrixCursor(resolveDocumentProjection(projection))
             addDocumentRow(result, documentId)
             if (result.count == 0) {
@@ -645,6 +677,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                 LogFile.write("provider", "queryChildDocuments: coreFor returned null for $parentDocumentId")
                 return result
             }
+            refreshIfVirtuallyMounted(core)
             val record = recordFrom(parentDocumentId)
             val parentPath = core.resolvePath(record) ?: "/"
             val entries = core.reader.listDirectory(record)
@@ -802,13 +835,28 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         return false
     }
 
+    private fun requireWritable(core: DislockerCore, useSecurityException: Boolean = false) {
+        if (PreferenceHelper.isVolumeReadOnly(appContext, core.volumeGuid, core.devicePath)) {
+            if (useSecurityException) {
+                throw SecurityException("Volume is mounted in read-only mode")
+            } else {
+                throw UnsupportedOperationException("Volume mounted in read-only mode")
+            }
+        }
+    }
+
     override fun isChildDocument(parentDocumentId: String, documentId: String): Boolean {
         LogFile.write("provider", "isChildDocument: parent=$parentDocumentId child=$documentId")
         try {
             val core = coreFor(parentDocumentId) ?: return false
+            val childCore = coreFor(documentId) ?: return false
+            if (core !== childCore) {
+                LogFile.write("provider", "isChildDocument: false (cross-volume mismatch)")
+                return false
+            }
             val parentRecord = recordFrom(parentDocumentId)
             val record = recordFrom(documentId)
-            if (record == parentRecord) return false
+            if (parentRecord == -1L || record == -1L || record == parentRecord) return false
             if (parentRecord == core.reader.rootRef) {
                 LogFile.write("provider", "isChildDocument: true (parent is volume root)")
                 return true
@@ -865,13 +913,13 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
     ): String? {
         Log.i(TAG, "createDocument: parent=$parentDocumentId, mime=$mimeType, name=$displayName")
         val core = coreFor(parentDocumentId) ?: throw SecurityException("Volume is locked")
-        val parentDevPath = core.devicePath
-        if (PreferenceHelper.isVolumeReadOnly(appContext, core.volumeGuid, parentDevPath)) {
-            throw UnsupportedOperationException("Volume mounted in read-only mode")
-        }
+        requireWritable(core)
         val writer = core.writer ?: throw UnsupportedOperationException("Writing not supported on this volume")
         val parentRecord = recordFrom(parentDocumentId)
         val parentPath = core.resolvePath(parentRecord) ?: "/"
+        if (!isSafeDocumentSegment(displayName, PreferenceHelper.hideSviFolder, isVolumeRoot = (parentPath == "/"))) {
+            throw IllegalArgumentException("Invalid document name: $displayName")
+        }
 
         val isDir = (mimeType == Document.MIME_TYPE_DIR)
         val existingEntries = try { core.reader.listDirectory(parentRecord) } catch (_: Exception) { emptyList() }
@@ -914,6 +962,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
     override fun deleteDocument(documentId: String) {
         LogFile.write("provider", "deleteDocument: docId=$documentId")
         val core = coreFor(documentId) ?: throw SecurityException("Volume is locked")
+        requireWritable(core)
         val writer = core.writer ?: throw UnsupportedOperationException("Writing not supported on this volume")
         val record = recordFrom(documentId)
         val parentRecord = if (record != -1L) core.parentOf(record) else {
@@ -928,25 +977,16 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                 val pRec = parts[2].substringBefore('/').toLongOrNull() ?: core.reader.rootRef
                 val sub = parts[2].substringAfter('/')
                 val pPath = core.resolvePath(pRec) ?: "/"
+                if (!isSafeDocumentSegment(sub, PreferenceHelper.hideSviFolder, isVolumeRoot = (pPath == "/"))) {
+                    throw SecurityException("Invalid synthetic document path: $sub")
+                }
                 if (pPath == "/") "/$sub" else "$pPath/$sub"
             } else null
         }
 
         if (path == null) {
-            // A real (MFT-backed) record still resolves through its own
-            // parentRecord chain, so an unresolvable record means the docId
-            // was synthetic (create_document marker) and its alias mapping
-            // was lost — e.g. after a process restart. Refuse with an error
-            // instead of silently reporting success while the file survives
-            // on the volume.
-            val recordExists = record > 0 && record != core.reader.rootRef &&
-                try { core.getEntry(record) != null } catch (_: Exception) { false }
-            if (!recordExists) {
-                LogFile.write("provider", "deleteDocument: stale unresolvable docId=$documentId — refusing silent success")
-                throw java.io.FileNotFoundException("Document id is stale and no longer resolvable: $documentId")
-            }
-            LogFile.write("provider", "deleteDocument: Cannot resolve path for docId=$documentId, already non-existent")
-            return
+            LogFile.write("provider", "deleteDocument: unresolvable docId=$documentId — refusing silent success")
+            throw java.io.FileNotFoundException("Document id is not resolvable: $documentId")
         }
 
         // Wait for any active write on this path before deleting
@@ -990,6 +1030,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             throw UnsupportedOperationException("Atomic rollback renaming not supported for document")
         }
         val core = coreFor(documentId) ?: throw SecurityException("Volume is locked")
+        requireWritable(core)
         val writer = core.writer ?: throw UnsupportedOperationException("Writing not supported on this volume")
         val record = recordFrom(documentId)
         val effRecord = core.resolveRecord(record)
@@ -1001,6 +1042,9 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         core.pendingWrites.awaitPath(oldPath)
 
         val parentPath = oldPath.substringBeforeLast('/', "")
+        if (!isSafeDocumentSegment(displayName, PreferenceHelper.hideSviFolder, isVolumeRoot = parentPath.isEmpty())) {
+            throw IllegalArgumentException("Invalid document name: $displayName")
+        }
         val newPath = if (parentPath.isEmpty()) "/$displayName" else "$parentPath/$displayName"
 
         if (oldPath.equals(newPath, ignoreCase = false)) {
@@ -1048,6 +1092,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         Log.i(TAG, "copyDocument: src=$sourceDocumentId, targetParent=$targetParentDocumentId")
         val sourceCore = coreFor(sourceDocumentId) ?: throw SecurityException("Source volume is locked")
         val targetCore = coreFor(targetParentDocumentId) ?: throw SecurityException("Target volume is locked")
+        requireWritable(targetCore)
         val writer = targetCore.writer ?: throw UnsupportedOperationException("Target volume is read-only")
 
         val sourceRecord = recordFrom(sourceDocumentId)
@@ -1116,6 +1161,8 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
         Log.i(TAG, "moveDocument: src=$sourceDocumentId, srcParent=$sourceParentDocumentId, targetParent=$targetParentDocumentId")
         val sourceCore = coreFor(sourceDocumentId) ?: throw SecurityException("Source volume is locked")
         val targetCore = coreFor(targetParentDocumentId) ?: throw SecurityException("Target volume is locked")
+        requireWritable(sourceCore)
+        requireWritable(targetCore)
 
         if (sourceCore.devicePath != targetCore.devicePath) {
             return super.moveDocument(sourceDocumentId, sourceParentDocumentId, targetParentDocumentId)
@@ -1196,10 +1243,7 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
             val effRecord = core.resolveRecord(record)
 
             if (mode.contains("w") || mode.contains("rw")) {
-                val docDevPath = core.devicePath
-                if (PreferenceHelper.isVolumeReadOnly(appContext, core.volumeGuid, docDevPath)) {
-                    throw SecurityException("Volume is mounted in read-only mode")
-                }
+                requireWritable(core, useSecurityException = true)
                 val writer = core.writer ?: throw SecurityException("Volume is read-only")
                 val path: String = (if (record != -1L) core.resolvePath(record) else null)
                     ?: run {
@@ -1208,6 +1252,9 @@ class BitLockerDocumentsProvider : DocumentsProvider() {
                             val pRec = parts[2].substringBefore('/').toLongOrNull() ?: core.reader.rootRef
                             val sub = parts[2].substringAfter('/')
                             val pPath = core.resolvePath(pRec) ?: "/"
+                            if (!isSafeDocumentSegment(sub, PreferenceHelper.hideSviFolder, isVolumeRoot = (pPath == "/"))) {
+                                throw SecurityException("Invalid synthetic document path: $sub")
+                            }
                             val full = if (pPath == "/") "/$sub" else "$pPath/$sub"
                             val entries = try { core.reader.listDirectory(pRec) } catch (_: Exception) { emptyList() }
                             val existing = entries.find { it.name.equals(sub, ignoreCase = true) }
