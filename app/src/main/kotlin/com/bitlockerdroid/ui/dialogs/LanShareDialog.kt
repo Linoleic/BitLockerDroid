@@ -35,6 +35,9 @@ import com.bitlockerdroid.R
 import com.bitlockerdroid.service.UnlockManager
 import com.bitlockerdroid.service.UnlockedVolume
 import com.bitlockerdroid.share.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -44,6 +47,7 @@ fun LanShareDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val effectiveGuid = volume.guid ?: volume.devicePath
 
     val shareStates by LanShareManager.shareStates.collectAsState()
@@ -63,9 +67,12 @@ fun LanShareDialog(
     var showPasswordError by remember { mutableStateOf(false) }
 
     var guideExpanded by remember { mutableStateOf(false) }
+    var isStarting by remember { mutableStateOf(false) }
 
-    val availableAddresses = remember(isRunning) {
-        NetworkUtils.getAvailableLanAddresses()
+    val availableAddresses by produceState(initialValue = emptyList<LanAddress>(), isRunning) {
+        value = withContext(Dispatchers.IO) {
+            NetworkUtils.getAvailableLanAddresses()
+        }
     }
 
     val primaryUrl = currentState?.primaryUrl ?: run {
@@ -475,7 +482,9 @@ fun LanShareDialog(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     Button(
+                        enabled = !isStarting,
                         onClick = onClick@{
+                            if (isStarting) return@onClick
                             val port = portText.toIntOrNull() ?: 8080
                             if (authEnabled && password.isBlank()) {
                                 showPasswordError = true
@@ -498,11 +507,15 @@ fun LanShareDialog(
                                     username = username.trim().ifEmpty { "admin" },
                                     password = password
                                 )
-                                val state = LanShareManager.startSharing(context, config, core)
-                                // Surface bind failures (port exhaustion, occupied
-                                // range) as a toast instead of crashing the dialog
-                                if (!state.isRunning && state.errorMessage != null) {
-                                    Toast.makeText(context, state.errorMessage, Toast.LENGTH_LONG).show()
+                                isStarting = true
+                                coroutineScope.launch {
+                                    val state = withContext(Dispatchers.IO) {
+                                        LanShareManager.startSharing(context, config, core)
+                                    }
+                                    isStarting = false
+                                    if (!state.isRunning && state.errorMessage != null) {
+                                        Toast.makeText(context, state.errorMessage, Toast.LENGTH_LONG).show()
+                                    }
                                 }
                             } else {
                                 Toast.makeText(context, "Volume session unavailable", Toast.LENGTH_SHORT).show()

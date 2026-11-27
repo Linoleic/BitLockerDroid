@@ -63,6 +63,7 @@ fun BenchmarkDialog(
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     fun runTests(testsToRun: Set<BenchmarkTestType>) {
+        if (isRunning) return
         if (core == null) {
             errorMessage = context.getString(R.string.benchmark_session_lost)
             return
@@ -81,6 +82,8 @@ fun BenchmarkDialog(
                     currentProgress = progress
                 }
                 result = result?.mergeWith(newRes) ?: newRes
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 errorMessage = context.getString(R.string.benchmark_error, e.message ?: "")
             } finally {

@@ -456,20 +456,41 @@ class BitLockerSettingsActivity : FragmentActivity() {
 
     private fun promptUnlock(devicePath: String) {
         val detectedVol = UnlockManager.detectedVolumes.firstOrNull { it.devicePath == devicePath }
-        val guid = detectedVol?.guid ?: BitLockerDetector.getVolumeGuid(devicePath)
-        val recoveryKeyId = detectedVol?.recoveryKeyId ?: BitLockerDetector.getRecoveryKeyId(devicePath)
-        LogFile.write("app", "manual unlock requested for $devicePath (guid=$guid, rkId=$recoveryKeyId)")
-        UnlockManager.showUnlockDialog(this, devicePath, 0, guid, recoveryKeyId)
+        if (detectedVol?.guid != null) {
+            LogFile.write("app", "manual unlock requested for $devicePath (guid=${detectedVol.guid}, rkId=${detectedVol.recoveryKeyId})")
+            UnlockManager.showUnlockDialog(this, devicePath, 0, detectedVol.guid, detectedVol.recoveryKeyId)
+            return
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            val guid = BitLockerDetector.getVolumeGuid(devicePath)
+            val recoveryKeyId = BitLockerDetector.getRecoveryKeyId(devicePath)
+            withContext(Dispatchers.Main) {
+                LogFile.write("app", "manual unlock requested for $devicePath (guid=$guid, rkId=$recoveryKeyId)")
+                UnlockManager.showUnlockDialog(this@BitLockerSettingsActivity, devicePath, 0, guid, recoveryKeyId)
+            }
+        }
     }
 
     private fun biometricUnlock(devicePath: String) {
         val detectedVol = UnlockManager.detectedVolumes.firstOrNull { it.devicePath == devicePath }
-        val guid = detectedVol?.guid ?: BitLockerDetector.getVolumeGuid(devicePath)
+        if (detectedVol != null) {
+            startBiometricUnlock(devicePath, detectedVol.guid, detectedVol.deviceName)
+            return
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            val guid = BitLockerDetector.getVolumeGuid(devicePath)
+            withContext(Dispatchers.Main) {
+                startBiometricUnlock(devicePath, guid, null)
+            }
+        }
+    }
+
+    private fun startBiometricUnlock(devicePath: String, guid: String?, deviceName: String?) {
         if (guid.isNullOrBlank()) {
             promptUnlock(devicePath)
             return
         }
-        val friendlyName = detectedVol?.deviceName?.ifBlank { guid } ?: guid
+        val friendlyName = deviceName?.ifBlank { guid } ?: guid
 
         val targetPath = devicePath
         val targetGuid = guid
@@ -745,9 +766,10 @@ class BitLockerSettingsActivity : FragmentActivity() {
     private fun openLogViewer() {
         lifecycleScope.launch(Dispatchers.IO) {
             val text = try {
-                LogFile.readApplication()?.let(::formatLogForDisplay) ?: getString(R.string.no_app_log)
+                val raw = LogFile.readApplication()?.let(::formatLogForDisplay)
+                if (raw != null) LogExportRedactor().redact(raw) else getString(R.string.no_app_log)
             } catch (e: Exception) {
-                getString(R.string.read_log_failed, e.message ?: "")
+                getString(R.string.read_log_failed, LogExportRedactor().redact(e.message ?: ""))
             }
             withContext(Dispatchers.Main) {
                 logContentState.value = text

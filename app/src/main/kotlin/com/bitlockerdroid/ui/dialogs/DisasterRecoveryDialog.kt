@@ -86,17 +86,20 @@ fun DisasterRecoveryDialog(
                 isProcessing = true
                 statusMessage = null
                 try {
-                    val bytes = withContext(Dispatchers.IO) {
-                        if (sessionHandle != 0L) {
+                    val (bytes, lastErr) = withContext(Dispatchers.IO) {
+                        val extracted = if (sessionHandle != 0L) {
                             NativeBridge.nativeExtractFveMetadataFromHandle(sessionHandle)
                         } else {
                             NativeBridge.nativeExtractFveMetadata(devicePath, partitionOffset)
                         }
+                        val err = if (extracted == null || extracted.isEmpty()) {
+                            NativeBridge.nativeGetLastError().ifEmpty { "Extract failed" }
+                        } else ""
+                        extracted to err
                     }
 
                     if (bytes == null || bytes.isEmpty()) {
-                        val errMsg = NativeBridge.nativeGetLastError().ifEmpty { "Extract failed" }
-                        throw java.lang.IllegalStateException(errMsg)
+                        throw java.lang.IllegalStateException(lastErr)
                     }
 
                     val header = FveMetadataContainer.parseHeader(bytes)
@@ -135,8 +138,21 @@ fun DisasterRecoveryDialog(
                 statusMessage = null
                 try {
                     val bytes = withContext(Dispatchers.IO) {
+                        val maxBytes = 8 * 1024 * 1024
                         context.contentResolver.openInputStream(uri)?.use { stream ->
-                            stream.readBytes()
+                            val baos = java.io.ByteArrayOutputStream()
+                            val buf = ByteArray(16 * 1024)
+                            var total = 0
+                            while (true) {
+                                val r = stream.read(buf)
+                                if (r <= 0) break
+                                total += r
+                                if (total > maxBytes) {
+                                    throw IllegalStateException("Metadata file exceeds 8 MB safety limit")
+                                }
+                                baos.write(buf, 0, r)
+                            }
+                            baos.toByteArray()
                         } ?: throw IllegalStateException("Cannot open input stream")
                     }
 
@@ -199,8 +215,12 @@ fun DisasterRecoveryDialog(
     }
 
     AlertDialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        onDismissRequest = { if (!isProcessing) onDismiss() },
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = !isProcessing,
+            dismissOnClickOutside = !isProcessing
+        ),
         modifier = Modifier
             .widthIn(min = 360.dp, max = 560.dp)
             .fillMaxWidth(0.92f)
@@ -208,6 +228,7 @@ fun DisasterRecoveryDialog(
         confirmButton = {
             Button(
                 onClick = onDismiss,
+                enabled = !isProcessing,
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Text(text = stringResource(R.string.done))
@@ -652,13 +673,17 @@ fun DisasterRecoveryDialog(
                             isProcessing = true
                             statusMessage = null
                             try {
-                                val ret = withContext(Dispatchers.IO) {
-                                    NativeBridge.nativeRestoreFveMetadata(
+                                val (ret, lastErr) = withContext(Dispatchers.IO) {
+                                    val r = NativeBridge.nativeRestoreFveMetadata(
                                         devicePath,
                                         partitionOffset,
                                         bytes,
                                         totalVolumeSize
                                     )
+                                    val err = if (r != 0 && r != -101) {
+                                        NativeBridge.nativeGetLastError().ifEmpty { "Error code $r" }
+                                    } else ""
+                                    r to err
                                 }
                                 when (ret) {
                                     0 -> {
@@ -675,8 +700,7 @@ fun DisasterRecoveryDialog(
                                         isErrorMessage = true
                                     }
                                     else -> {
-                                        val errStr = NativeBridge.nativeGetLastError().ifEmpty { "Error code $ret" }
-                                        statusMessage = context.getString(R.string.disaster_meta_restore_failed, errStr)
+                                        statusMessage = context.getString(R.string.disaster_meta_restore_failed, lastErr)
                                         isErrorMessage = true
                                     }
                                 }

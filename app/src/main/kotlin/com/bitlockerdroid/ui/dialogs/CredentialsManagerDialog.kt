@@ -20,6 +20,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.SecureFlagPolicy
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -81,6 +82,11 @@ fun CredentialsManagerDialog(
         onClearAllCredentials()
     }
 
+    fun safeToggleAutoUnlock(credId: String, enabled: Boolean) =
+        runCredentialAction(context.getString(R.string.creds_auto_unlock_enabled)) {
+            onToggleAutoUnlock(credId, enabled)
+        }
+
     fun dismissDialog() {
         dialogActive.set(false)
         onDismiss()
@@ -91,7 +97,10 @@ fun CredentialsManagerDialog(
         // A short window needs room for the list, rather than a large icon/title.
         Dialog(
             onDismissRequest = { dismissDialog() },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                securePolicy = SecureFlagPolicy.SecureOn
+            )
         ) {
             Surface(
                 modifier = Modifier.fillMaxWidth(0.95f).fillMaxHeight(0.95f),
@@ -120,7 +129,7 @@ fun CredentialsManagerDialog(
                     Spacer(modifier = Modifier.height(8.dp))
                     CredentialList(
                         credentials = credentials,
-                        onToggleAutoUnlock = onToggleAutoUnlock,
+                        onToggleAutoUnlock = { id, enabled -> safeToggleAutoUnlock(id, enabled) },
                         onShowPassword = onShowPassword,
                         onDeleteCredential = { safeDelete(it) },
                         modifier = Modifier.weight(1f)
@@ -152,6 +161,7 @@ fun CredentialsManagerDialog(
 
     AlertDialog(
         onDismissRequest = { dismissDialog() },
+        properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
         confirmButton = {
             Button(
                 onClick = { dismissDialog() },
@@ -210,7 +220,7 @@ fun CredentialsManagerDialog(
         text = {
             CredentialList(
                 credentials = credentials,
-                onToggleAutoUnlock = onToggleAutoUnlock,
+                onToggleAutoUnlock = { id, enabled -> safeToggleAutoUnlock(id, enabled) },
                 onShowPassword = onShowPassword,
                 onDeleteCredential = { safeDelete(it) },
                 modifier = Modifier.heightIn(max = 440.dp)

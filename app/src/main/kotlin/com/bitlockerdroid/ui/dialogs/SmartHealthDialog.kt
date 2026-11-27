@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.bitlockerdroid.R
 import com.bitlockerdroid.smart.SmartCounter
 import java.math.BigInteger
@@ -77,7 +78,13 @@ fun SmartHealthDialog(
         refreshTelemetry()
     }
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = { if (!isClosingVolumes) onDismiss() },
+        properties = DialogProperties(
+            dismissOnBackPress = !isClosingVolumes,
+            dismissOnClickOutside = !isClosingVolumes
+        )
+    ) {
         Surface(
             shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface,
@@ -113,7 +120,7 @@ fun SmartHealthDialog(
                         )
                     }
 
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                    IconButton(onClick = onDismiss, enabled = !isClosingVolumes, modifier = Modifier.size(32.dp)) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = stringResource(R.string.smart_close_btn),
@@ -567,7 +574,7 @@ fun SmartHealthDialog(
                             Text(text = stringResource(R.string.smart_refresh_btn))
                         }
                         Spacer(modifier = Modifier.width(8.dp))
-                        Button(onClick = onDismiss, shape = RoundedCornerShape(8.dp)) {
+                        Button(onClick = onDismiss, enabled = !isClosingVolumes, shape = RoundedCornerShape(8.dp)) {
                             Text(text = stringResource(R.string.smart_close_btn))
                         }
                     }
@@ -593,7 +600,9 @@ fun SmartHealthDialog(
                         isClosingVolumes = true
                         scope.launch {
                             val result = try {
-                                onCloseVolumes(devicePath)
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                                    onCloseVolumes(devicePath)
+                                }
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
                             } catch (error: Exception) {

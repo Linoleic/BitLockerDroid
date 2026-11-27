@@ -1,8 +1,11 @@
 package com.bitlockerdroid.ui.dialogs
 
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.Build
+import android.os.PersistableBundle
 import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -103,8 +106,15 @@ fun LogViewerDialog(
                     }
                     OutlinedButton(
                         onClick = {
+                            val redacted = com.bitlockerdroid.util.LogExportRedactor().redact(logContent)
                             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            cm.setPrimaryClip(ClipData.newPlainText("BitUnlocker Log", logContent))
+                            val clip = ClipData.newPlainText("BitUnlocker Log", redacted)
+                            if (Build.VERSION.SDK_INT >= 33) {
+                                clip.description.extras = PersistableBundle().apply {
+                                    putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+                                }
+                            }
+                            cm.setPrimaryClip(clip)
                             Toast.makeText(context, R.string.log_copied, Toast.LENGTH_SHORT).show()
                         },
                         shape = RoundedCornerShape(12.dp)
